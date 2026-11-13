@@ -1,0 +1,28 @@
+#pragma once
+#include "network/IUdpTransport.h"
+#include <QUdpSocket>
+#include <QHostAddress>
+namespace rt {
+    // Construct, bind, read, write and destroy on ONE dedicated worker thread.
+    // Polling synchronous APIs; no readyRead or QTimer is expected on this worker.
+    class QtUdpTransport final:public IUdpTransport {
+        public:
+        void open(const StreamConfig&)override;
+        bool send(const std::uint8_t*,std::size_t)override;
+        bool receive(IncomingDatagram&)override;
+        std::uint16_t localPort()const override {
+            return socket_.localPort();
+        }
+        bool dfEnabled()const override {
+            return df_;
+        }
+        std::string lastError()const override {
+            return error_;
+        }
+        private:QUdpSocket socket_;
+        QHostAddress target_;
+        quint16 port_=0;
+        bool df_=false;
+        std::string error_;
+    };
+}

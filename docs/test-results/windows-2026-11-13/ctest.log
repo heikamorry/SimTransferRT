@@ -1,0 +1,95 @@
+Start testing: Nov 13 17:46 马来西亚半岛标准时间
+----------------------------------------------------------
+1/3 Testing: rt_core
+1/3 Test: rt_core
+Command: "D:/SimTransferRT/build/windows-debug/SimRtCoreTests.exe"
+Directory: D:/SimTransferRT/build/windows-debug/tests
+"rt_core" start time: Nov 13 17:46 马来西亚半岛标准时间
+Output:
+----------------------------------------------------------
+PASS CRC IEEE known vector
+PASS CRC fast path matches reference
+PASS CRC empty
+PASS DATA LE offsets
+PASS DATA roundtrip
+PASS 1MiB geometry
+PASS 2MiB geometry
+PASS size bounds
+PASS fragment bounds
+PASS payload CRC corruption
+PASS header CRC corruption
+PASS wrong length and magic
+PASS unknown flags
+PASS retry preserves fields recomputes CRC
+PASS NACK roundtrip
+PASS NACK max ranges
+PASS NACK invalid reserved and CRC
+PASS NACK range overflow
+PASS merge missing IDs
+PASS module order and mask
+PASS module duplicates rejected
+PASS modules cross fragment boundary and >64K
+PASS oversize sample skipped not stream failed
+PASS module bounds and trailing bytes
+PASS module hotplug snapshot immutable
+PASS three-slot cache exact ID
+PASS document modulo wrap caveat explicit
+PASS opt-in FIFO preserves three across wrap
+PASS modular ID comparison
+PASS no READY needed
+PASS NACK during first send
+PASS same round multiple NACK and pending dedup
+PASS later repeated requests not permanently suppressed
+PASS atomic NACK validation
+PASS expired cache NACK ignored
+PASS persistent loss does not stop stream
+PASS hotplug applies only next sampling frame
+PASS all-off skip explicit policy
+PASS sampling late skips burst catchup
+PASS pacer no burst flush
+PASS 2MiB@1Gb15ms rejected unless explicit lab override
+PASS frame limit drains without FIN
+PASS dispatcher bounded and stop priority
+PASS dispatcher coalesces module mask
+PASS stop local no control packet
+45/45 passed
+<end of output>
+Test time =   0.39 sec
+----------------------------------------------------------
+Test Passed.
+"rt_core" end time: Nov 13 17:46 马来西亚半岛标准时间
+"rt_core" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/3 Testing: rt_application
+2/3 Test: rt_application
+Command: "D:/SimTransferRT/build/windows-debug/SimRtAppTests.exe"
+Directory: D:/SimTransferRT/build/windows-debug/tests
+"rt_application" start time: Nov 13 17:46 马来西亚半岛标准时间
+Output:
+----------------------------------------------------------
+PASS Qt three managers + worker QUdpSocket DATA/NACK + DF + local lifecycle
+<end of output>
+Test time =   0.26 sec
+----------------------------------------------------------
+Test Passed.
+"rt_application" end time: Nov 13 17:46 马来西亚半岛标准时间
+"rt_application" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/3 Testing: rt_gui_smoke
+3/3 Test: rt_gui_smoke
+Command: "D:/SimTransferRT/build/windows-debug/SimTransfer.exe" "--smoke-test"
+Directory: D:/SimTransferRT/build/windows-debug/tests
+"rt_gui_smoke" start time: Nov 13 17:46 马来西亚半岛标准时间
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.99 sec
+----------------------------------------------------------
+Test Passed.
+"rt_gui_smoke" end time: Nov 13 17:46 马来西亚半岛标准时间
+"rt_gui_smoke" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Nov 13 17:46 马来西亚半岛标准时间

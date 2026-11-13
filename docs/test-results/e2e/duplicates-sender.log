@@ -1,0 +1,40 @@
+{
+  "protocol": "UDP multi-module document, LE AA55A55A",
+  "receiver_delivery": "unknown: no ACK/SUCCESS in this protocol",
+  "timestamp_source": "SIMULATED host monotonic microseconds",
+  "detail": "Local run finished; receiver delivery unknown",
+  "running": false,
+  "local_port": 49705,
+  "df_enabled": true,
+  "next_logic_id": 16,
+  "stats": {
+    "sampled": 15,
+    "built": 15,
+    "skippedNoModules": 0,
+    "skippedOverrun": 0,
+    "buildRejected": 0,
+    "firstAttempts": 180,
+    "datagrams": 210,
+    "bytesSent": 296400,
+    "retransmissions": 0,
+    "injectedDrops": 0,
+    "injectedCorrupt": 0,
+    "nacks": 0,
+    "invalidNacks": 0,
+    "cacheMisses": 0,
+    "duplicatePending": 0,
+    "queueDrops": 0,
+    "sourceRejected": 0,
+    "unsentExpired": 0,
+    "sendErrors": 0,
+    "deadlineMisses": 0,
+    "maxSampleLatenessUs": 24,
+    "maxSendLatenessUs": 190,
+    "lastInitialDurationUs": 310,
+    "elapsedUs": 340005
+  }
+}
+
+UDP bound to 127.0.0.1:49705; DF enabled; no READY/FIN/SUCCESS messages
+TS source: SIMULATED host monotonic microsecond counter; module bodies: opaque test bytes
+Local run finished; receiver delivery unknown

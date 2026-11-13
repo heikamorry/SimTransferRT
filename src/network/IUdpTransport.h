@@ -1,0 +1,20 @@
+#pragma once
+#include "core/Types.h"
+#include <memory>
+namespace rt {
+    struct IncomingDatagram {
+        Bytes bytes;
+        std::string sourceIp;
+        std::uint16_t sourcePort=0;
+    };
+    class IUdpTransport {
+        public:
+        virtual ~IUdpTransport()=default;
+        virtual void open(const StreamConfig& config)=0;
+        virtual bool send(const std::uint8_t* data,std::size_t size)=0;
+        virtual bool receive(IncomingDatagram& datagram)=0;
+        virtual std::uint16_t localPort()const=0;
+        virtual bool dfEnabled()const=0;
+        virtual std::string lastError()const=0;
+    };
+}

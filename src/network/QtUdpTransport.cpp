@@ -1,0 +1,72 @@
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <mswsock.h>
+#include <mstcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <cerrno>
+#include <cstring>
+#endif
+#include "network/QtUdpTransport.h"
+#include <QVariant>
+#include <array>
+namespace rt {
+    void QtUdpTransport::open(const StreamConfig& c) {
+        target_=QHostAddress(QString::fromStdString(c.targetIp));
+        QHostAddress local(QString::fromStdString(c.bindIp));
+        port_=c.targetPort;
+        if(target_.protocol()!=QAbstractSocket::IPv4Protocol||target_.isNull()||target_.isMulticast()||target_.toIPv4Address()==0||target_.toIPv4Address()==0xFFFFFFFFu||!port_)
+        throw std::invalid_argument("target must be numeric IPv4 unicast and nonzero port");
+        if(local.protocol()!=QAbstractSocket::IPv4Protocol)throw std::invalid_argument("bind must be numeric IPv4");
+        if(!socket_.bind(local,c.commandPort,QAbstractSocket::DontShareAddress))throw std::runtime_error(socket_.errorString().toStdString());
+        socket_.setSocketOption(QAbstractSocket::SendBufferSizeSocketOption,4*1024*1024);
+        socket_.setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,4*1024*1024);
+#ifdef _WIN32
+        const auto fd=static_cast<SOCKET>(socket_.socketDescriptor());
+        DWORD df=1;
+        if(setsockopt(fd,IPPROTO_IP,IP_DONTFRAGMENT,reinterpret_cast<const char*>(&df),sizeof(df)))throw std::runtime_error("IP_DONTFRAGMENT failed: "+std::to_string(WSAGetLastError()));
+        BOOL reset=FALSE;
+        DWORD ignored=0;
+        WSAIoctl(fd,SIO_UDP_CONNRESET,&reset,sizeof(reset),nullptr,0,&ignored,nullptr,nullptr);
+#elif defined(IP_MTU_DISCOVER)
+        const auto fd=static_cast<int>(socket_.socketDescriptor());
+        int df=IP_PMTUDISC_DO;
+        if(setsockopt(fd,IPPROTO_IP,IP_MTU_DISCOVER,&df,sizeof(df)))throw std::runtime_error(std::string("DF: ")+std::strerror(errno));
+#else
+        throw std::runtime_error("DF enforcement supported on Windows/Linux only");
+#endif
+        df_=true;
+    }
+    bool QtUdpTransport::send(const std::uint8_t* p,std::size_t n) {
+        if(n>MaxDatagram) {
+            error_="datagram exceeds 1472";
+            return false;
+        }
+        if(socket_.writeDatagram(reinterpret_cast<const char*>(p),static_cast<qint64>(n),target_,port_)!=static_cast<qint64>(n)) {
+            error_=socket_.errorString().toStdString();
+            return false;
+        }
+        return true;
+    }
+    bool QtUdpTransport::receive(IncomingDatagram& out) {
+        if(!socket_.hasPendingDatagrams())return false;
+        std::array<char,MaxDatagram+1> buffer {
+        };
+        QHostAddress from;
+        quint16 port=0;
+        auto n=socket_.readDatagram(buffer.data(),static_cast<qint64>(buffer.size()),&from,&port);
+        if(n<0) {
+            error_=socket_.errorString().toStdString();
+            return false;
+        }
+        out.bytes.assign(reinterpret_cast<const std::uint8_t*>(buffer.data()),reinterpret_cast<const std::uint8_t*>(buffer.data())+n);
+        out.sourceIp=from.toString().toStdString();
+        out.sourcePort=port;
+        return true;
+    }
+}

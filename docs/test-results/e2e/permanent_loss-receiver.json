@@ -1,0 +1,20 @@
+{
+  "datagrams": 165,
+  "invalid": 0,
+  "duplicate": 0,
+  "completed": 0,
+  "expired": 15,
+  "requested_fragments": 45,
+  "nack_packets": 45,
+  "recovered": 0,
+  "retry_flag": 0,
+  "metadata_failures": 0,
+  "module_failures": 0,
+  "total_bytes": 0,
+  "max_requests_for_fragment": 3,
+  "active_evictions": 0,
+  "active_frames": 0,
+  "diagnostic_only": true,
+  "receiver_rendering_implemented": false,
+  "timing_note": "Python select loop is a functional test tool, NOT a microsecond timing oracle"
+}

@@ -1,0 +1,8 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {"label":"Sim RT: build Debug","type":"shell","command":"cmd","args":["/d","/c","scripts\\build.cmd"],"options":{"cwd":"${workspaceFolder}"},"problemMatcher":["$msCompile"],"group":{"kind":"build","isDefault":true}},
+    {"label":"Sim RT: build Release","type":"shell","command":"cmd","args":["/d","/c","scripts\\build.cmd Release"],"options":{"cwd":"${workspaceFolder}"},"problemMatcher":["$msCompile"]},
+    {"label":"Sim RT: network tests","type":"shell","command":"cmd","args":["/d","/c","scripts\\test-network.cmd"],"options":{"cwd":"${workspaceFolder}"},"problemMatcher":[]}
+  ]
+}

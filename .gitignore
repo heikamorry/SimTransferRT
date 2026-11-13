@@ -1,0 +1,22 @@
+/build/
+/dist/
+/test-results/
+/.cache/
+/.vs/
+/compile_commands.json
+__pycache__/
+*.pyc
+*.user
+CMakeUserPresets.json
+receiver-report.json
+local-report.json
+received.bin
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12

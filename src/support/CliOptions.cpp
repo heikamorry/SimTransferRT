@@ -37,6 +37,11 @@ namespace rt {
             else if(a=="--file")o.config.modules[0].file=value();
             else if(a=="--link-mbps")o.config.linkMbps=static_cast<unsigned>(number(value(),1000000));
             else if(a=="--allow-oversubscribed")o.config.allowOversubscribed=true;
+            else if(a=="--timing-trace") {
+                const auto v=value();
+                if(v!="on"&&v!="off")throw std::invalid_argument("timing-trace must be on or off");
+                o.config.timingTraceEnabled=v=="on";
+            }
             else if(a=="--cache-policy") {
                 auto v=value();
                 if(v!="modulo"&&v!="fifo")throw std::invalid_argument("cache-policy must be modulo or fifo");
@@ -48,6 +53,7 @@ namespace rt {
             else if(a=="--duplicate-first")o.config.faults.duplicateFirst=parseFragmentIds(value());
             else if(a=="--reverse")o.config.faults.reverseInitial=true;
             else if(a=="--report")o.report=value();
+            else if(a=="--run-id")o.config.runId=value();
             else throw std::invalid_argument("unknown option: "+a);
         }
         if(!nackIpExplicit)o.config.allowedNackIp=o.config.targetIp;
@@ -63,6 +69,7 @@ namespace rt {
         "  --allow-oversubscribed (format testing only; not a timing guarantee)\n"
         "  --cache-policy modulo|fifo (fifo is an explicit proposed erratum)\n"
         "  --drop-first 2,4 --drop-always 2 --corrupt-first 4 --duplicate-first 3 --reverse\n"
-        "  --report report.json\n";
+        "  --report report.json --run-id local-diagnostic-id (never on wire)\n"
+        "  --timing-trace on|off (bounded local anomaly timeline, default on)\n";
     }
 }

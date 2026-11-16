@@ -1,5 +1,9 @@
 # SimTransferRT
 
+本輪檔案變更與驗證摘要 / Change inventory and validation: [2026-11-16](docs/CHANGES_2026-11-16.md)。
+
+最新增量優化與回歸證據：[Windows UDP 發送穩定性](docs/UDP_STABILITY_2026-11-16.md)。CLI 可用 `--timing-trace on|off` 控制有界本地異常時間線；不改線上協定。
+
 **多模組即時 UDP 模擬發送器｜Real-time UDP simulator for multi-module data**
 
 SimTransferRT 0.2.0 是以 C++17 與 Qt 6 開發的模擬發送平台，提供桌面介面、命令列工具、分片重傳及故障注入，協助驗證《UDP 多模組即時資料傳輸協定》。專案包含開發用接收測試樁，不包含正式接收平台或醫療資料渲染。
@@ -134,6 +138,44 @@ While running, change module availability with the **「在线」** checkboxes a
 
 ## CLI 與測試｜CLI and tests
 
+### Windows UDP 診斷與回歸（2026-11-16）
+
+接收測試樁現在會對自己的 socket 設定 `SIO_UDP_CONNRESET=FALSE`，並分別處理收／發 10054。
+正常限時、Ctrl+C 與可捕獲異常退出都會嘗試原子保存 JSON；不可寫路徑會輸出錯誤並以非零碼退出。
+強制殺程序、斷電或不可寫磁碟仍不能保證保存報告。`--quiet` 只關閉常規終端輸出。
+
+The diagnostic stub configures its own Windows UDP socket and handles reset errors defensively.
+Reports distinguish generated NACKs, send attempts, local acceptance, and user-space timer lateness.
+The receiver remains a bounded test tool, not a production receiver.
+
+以下 PowerShell 命令會保留每輪獨立目錄、收發報告、實際建置類型、來源／執行檔雜湊、程序日誌及幀清單對帳：
+
+```powershell
+Set-Location D:\SimTransferRT
+cmd /d /c scripts\build.cmd Release
+cmd /d /c scripts\run.cmd Release
+cmd /d /c scripts\test-network.cmd Release
+cmd /d /c scripts\test-diagnostics.cmd --suite short
+# 3 x (A0-drain 60s + A1 60s)，再 A1 120s；先檢查短測的收齊與停滯情況
+cmd /d /c scripts\test-diagnostics.cmd --suite long
+python tools\probe_windows_udp_reset.py --report artifacts\udp-diagnostics\windows-reset-probe.json
+```
+
+診斷工具預設 Release，會核對 `CMakeCache.txt`，不只相信參數。可用 `--build Debug` 做功能對照。
+短測包括 A0-closed、A0-drain、A1、B64、B1、C、CRC；`--cases A1 --seconds 10` 可單獨重跑。
+性能目標或功能驗收失敗時退出碼為 1，證據仍保留在 `artifacts/udp-diagnostics/<唯一目錄>/`。
+長測不會降低負載、放寬協定逾時或改用 FIFO。A0-drain 不做 CRC／重組，不能驗證接收正確性。
+新版接收器由編排器管理到發送結束後再正常停止，不把發送器冷啟動時間扣入接收窗口。
+
+接收器也支援 `--summary-every 1 --trace-nacks <檔案> --trace-limit 2048 --run-id <本地ID>`。
+`--ready-file` 提供本地啟動同步；`--status-file` 與 `--checkpoint-every 1` 提供可選低頻檢查點。
+這些檔案與 run_id 都不進入 UDP 協定。GUI 可在啟動前設定程序環境 `$env:SIM_RT_RUN_ID='gui-test-id'`，
+按「導出本地報告」保存相同 schema 的 JSON；測完以 `Remove-Item Env:SIM_RT_RUN_ID` 清除本終端設定。
+
+所有此輪網路測試均為 `127.0.0.1` 回環；`linkMbps` 是容量估算輸入。實體 10Gbps、硬體時間戳與硬即時尚未驗證。
+新欄位 `actualInitialDeadlineMisses`、完整首輪耗時分布與取樣間隔偏差，須連同舊計數及未完成首輪一起看。
+完整結果、未達標項與回退方式見 [本次診斷報告](docs/UDP_DIAGNOSTICS_2026-11-16.md)。
+
 直接啟動 CLI 時須在 CMD 中先載入 Qt DLL 與編譯器環境。若要觀察接收結果，請同時執行上述測試樁。
 
 For direct CLI invocation, initialize the Qt DLL and compiler environment in CMD first. Run the receiver stub alongside it to observe reception.
@@ -252,6 +294,7 @@ When using CMake presets directly, update the Qt prefix or copy `CMakeUserPreset
 - [協定欄位 / Protocol reference](docs/PROTOCOL.md)
 - [相容性與邊界決策 / Compatibility decisions](docs/SPEC_DECISIONS.md)
 - [測試與驗收 / Testing and acceptance](docs/TESTING.md)
+- [統一驗收表與導出 / Unified acceptance tables and exports](docs/UDP_ACCEPTANCE_2026-11-16.md)
 - [建置與測試狀態 / Build and test status](docs/BUILD_STATUS.md)
 - [變更紀錄 / Changelog](docs/CHANGELOG.md)
 - [技術參考 / Technical references](docs/TECHNICAL_REFERENCES.md)

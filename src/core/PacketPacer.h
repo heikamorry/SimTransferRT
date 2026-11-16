@@ -14,8 +14,12 @@ namespace rt {
         }
         std::uint64_t due(std::uint16_t ordinal)const {
             const auto gap=std::max<std::uint64_t>(1,std::min<std::uint64_t>(20,InitialWindowUs/count_));
-            const auto planned=start_+std::uint64_t(ordinal)*gap;
+            const auto planned=plannedDue(ordinal);
             return hasLast_?std::max(planned,last_+std::max<std::uint64_t>(1,gap/2)):planned;
+        }
+        std::uint64_t plannedDue(std::uint16_t ordinal)const {
+            const auto gap=std::max<std::uint64_t>(1,std::min<std::uint64_t>(20,InitialWindowUs/count_));
+            return start_+std::uint64_t(ordinal)*gap;
         }
         void emitted(std::uint64_t now) {
             last_=now;

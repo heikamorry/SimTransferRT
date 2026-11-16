@@ -16,5 +16,9 @@ namespace rt {
         virtual std::uint16_t localPort()const=0;
         virtual bool dfEnabled()const=0;
         virtual std::string lastError()const=0;
+        virtual int sendBufferBytes()const {return 0;}
+        virtual int receiveBufferBytes()const {return 0;}
+        virtual int connResetError()const {return 0;}
+        virtual std::string name()const {return "test-adapter";}
     };
 }

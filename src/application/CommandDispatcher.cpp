@@ -1,8 +1,11 @@
 #include "application/CommandDispatcher.h"
+#include "core/SamplingClock.h"
 namespace rt {
     bool CommandDispatcher::post(Command c) {
         std::lock_guard<std::mutex> lock(mutex_);
+        c.queuedUs=monotonicUs();
         if(c.kind==Command::Kind::Stop) {
+            if(!stop_)stopQueuedUs_=c.queuedUs;
             stop_=true;
             return true;
         }
@@ -22,6 +25,7 @@ namespace rt {
             stop_=false;
             Command c;
             c.kind=Command::Kind::Stop;
+            c.queuedUs=stopQueuedUs_;
             return c;
         }
         if(queue_.empty())return std::nullopt;
@@ -33,6 +37,7 @@ namespace rt {
         std::lock_guard<std::mutex> lock(mutex_);
         queue_.clear();
         stop_=false;
+        stopQueuedUs_=0;
     }
     std::size_t CommandDispatcher::size()const {
         std::lock_guard<std::mutex> lock(mutex_);

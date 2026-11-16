@@ -21,15 +21,20 @@ int main(int argc,char**argv) {
         }
         std::signal(SIGINT,signalHandler);
         std::signal(SIGTERM,signalHandler);
+#ifdef SIGBREAK
+        std::signal(SIGBREAK,signalHandler);
+#endif
         rt::NativeUdpTransport udp;
         rt::CommandDispatcher dispatcher;
-        const auto final=rt::runStream(o.config,udp,dispatcher,[&](const auto&) {
+        rt::RunnerHooks hooks;
+        hooks.pollControl=[&] {
             if(interrupted) {
                 rt::Command c;c.kind=rt::Command::Kind::Stop;dispatcher.post(c);
             }
-        },[](const auto&s) {
+        };
+        const auto final=rt::runStream(o.config,udp,dispatcher,[](const auto&) {},[](const auto&s) {
             std::cerr<<s<<'\n';
-        });
+        },hooks);
         const auto report=rt::snapshotJson(final);
         std::cout<<report;
         if(!o.report.empty()) {

@@ -4,7 +4,13 @@
 namespace rt {
     using SnapshotCallback=std::function<void(const Snapshot&)>;
     using LogCallback=std::function<void(const std::string&)>;
+    struct RunnerHooks {
+        std::function<std::uint64_t()> clock;
+        std::function<void(std::uint64_t)> waitUntil;
+        // Optional bounded local control poll; independent of deferred UI publication.
+        std::function<void()> pollControl;
+    };
     // Runs entirely on one worker. Caller owns thread; exceptions propagate only to this explicit boundary.
-    Snapshot runStream(const StreamConfig&,IUdpTransport&,CommandDispatcher&,const SnapshotCallback&,const LogCallback&);
+    Snapshot runStream(const StreamConfig&,IUdpTransport&,CommandDispatcher&,const SnapshotCallback&,const LogCallback&,const RunnerHooks& hooks={});
     std::string snapshotJson(const Snapshot&);
 }

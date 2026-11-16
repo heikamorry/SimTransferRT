@@ -26,13 +26,15 @@ namespace rt {
         if(!socket_.bind(local,c.commandPort,QAbstractSocket::DontShareAddress))throw std::runtime_error(socket_.errorString().toStdString());
         socket_.setSocketOption(QAbstractSocket::SendBufferSizeSocketOption,4*1024*1024);
         socket_.setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,4*1024*1024);
+        sendBuffer_=socket_.socketOption(QAbstractSocket::SendBufferSizeSocketOption).toInt();
+        receiveBuffer_=socket_.socketOption(QAbstractSocket::ReceiveBufferSizeSocketOption).toInt();
 #ifdef _WIN32
         const auto fd=static_cast<SOCKET>(socket_.socketDescriptor());
         DWORD df=1;
         if(setsockopt(fd,IPPROTO_IP,IP_DONTFRAGMENT,reinterpret_cast<const char*>(&df),sizeof(df)))throw std::runtime_error("IP_DONTFRAGMENT failed: "+std::to_string(WSAGetLastError()));
         BOOL reset=FALSE;
         DWORD ignored=0;
-        WSAIoctl(fd,SIO_UDP_CONNRESET,&reset,sizeof(reset),nullptr,0,&ignored,nullptr,nullptr);
+        if(WSAIoctl(fd,SIO_UDP_CONNRESET,&reset,sizeof(reset),nullptr,0,&ignored,nullptr,nullptr))resetError_=WSAGetLastError();
 #elif defined(IP_MTU_DISCOVER)
         const auto fd=static_cast<int>(socket_.socketDescriptor());
         int df=IP_PMTUDISC_DO;

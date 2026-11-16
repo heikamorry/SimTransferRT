@@ -11,6 +11,7 @@ namespace rt {
         kind=Kind::Stop;
         std::uint32_t mask=0;
         Nack nack;
+        std::uint64_t queuedUs=0;
     };
     // MPSC bounded queue; Stop is priority and cannot be blocked by feedback overload.
     // No DATA packet is posted as a command. Feedback is fully parsed before being queued.
@@ -23,5 +24,6 @@ namespace rt {
         private:mutable std::mutex mutex_;
         std::deque<Command> queue_;
         bool stop_=false;
+        std::uint64_t stopQueuedUs_=0;
     };
 }

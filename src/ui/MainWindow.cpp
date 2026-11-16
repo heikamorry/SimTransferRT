@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 #include "ui/ConfigPanel.h"
 #include "ui/FrameTableModel.h"
+#include "application/AcceptanceReport.h"
 #include <QApplication>
 #include <QLabel>
 #include <QPushButton>
@@ -49,6 +50,7 @@ namespace rt {
         actions->addWidget(state_);
         actions->addStretch();
         auto*exportB=new QPushButton(QStringLiteral("导出本地报告"));
+        exportB->setToolTip(QStringLiteral("JSON保留原始统计与验收表；Markdown导出可读验收表。未测项目不会显示为通过。"));
         actions->addWidget(exportB);
         auto*clear=new QPushButton(QStringLiteral("清空日志"));
         actions->addWidget(clear);
@@ -101,13 +103,13 @@ namespace rt {
             }, {
                 "drops",QStringLiteral("故障注入丢片")
             }, {
-                "expired",QStringLiteral("首轮未发即过期")
+                "expired",QStringLiteral("下次采样替换的未发片")
             }, {
-                "late",QStringLiteral("首轮发送超期次数")
+                "late",QStringLiteral("已结束首轮超期（实测）")
             }, {
                 "jitter",QStringLiteral("最大采样调度迟到")
             }, {
-                "duration",QStringLiteral("最近首轮实际跨度")
+                "duration",QStringLiteral("采样至首发完成（用户态）")
             }, {
                 "port",QStringLiteral("NACK监听 / DF")
             }
@@ -194,19 +196,30 @@ namespace rt {
         metrics_["skip"]->setText(QString::number(s.stats.skippedNoModules)+" / "+QString::number(s.stats.buildRejected)+" / "+QString::number(s.stats.skippedOverrun));
         metrics_["drops"]->setText(QString::number(s.stats.injectedDrops));
         metrics_["expired"]->setText(QString::number(s.stats.unsentExpired));
-        metrics_["late"]->setText(QString::number(s.stats.deadlineMisses));
+        metrics_["late"]->setText(QString::number(s.stats.actualInitialDeadlineMisses));
         metrics_["jitter"]->setText(QString::number(s.stats.maxSampleLatenessUs)+" us");
-        metrics_["duration"]->setText(QString::number(s.stats.lastInitialDurationUs)+" us");
+        metrics_["duration"]->setText(QString::number(s.stats.lastSampleToInitialEndUs)+" us");
         metrics_["port"]->setText(QString::number(s.localPort)+(s.dfEnabled?" / ON":" / OFF"));
-        statusBar()->showMessage(QString::fromStdString(s.detail));
+        statusBar()->showMessage(QString::fromStdString(s.detail)+(s.detailsIncluded?QString():QStringLiteral("；统计已更新，分片表等待刷新")));
     }
     void MainWindow::exportReport() {
-        const auto path=QFileDialog::getSaveFileName(this,QStringLiteral("导出发送端本地统计"),"sim-rt-report.json","JSON (*.json)");
-        if(path.isEmpty())return;
+        QFileDialog dialog(this,QStringLiteral("导出发送端本地报告 / 验收表"));
+        dialog.setAcceptMode(QFileDialog::AcceptSave);
+        dialog.setFileMode(QFileDialog::AnyFile);
+        dialog.setNameFilters({QStringLiteral("JSON (*.json)"),QStringLiteral("验收表 (*.md)")});
+        dialog.selectNameFilter(QStringLiteral("JSON (*.json)"));
+        dialog.setDefaultSuffix(QStringLiteral("json"));
+        dialog.selectFile(QStringLiteral("sim-rt-report"));
+        connect(&dialog,&QFileDialog::filterSelected,&dialog,[&dialog](const QString& filter) {
+            dialog.setDefaultSuffix(filter.startsWith(QStringLiteral("验收表"))?QStringLiteral("md"):QStringLiteral("json"));
+        });
+        if(dialog.exec()!=QDialog::Accepted||dialog.selectedFiles().isEmpty())return;
+        const auto path=dialog.selectedFiles().front();
+        const bool markdown=dialog.selectedNameFilter().startsWith(QStringLiteral("验收表"));
         QSaveFile f(path);
-        const auto data=QByteArray::fromStdString(snapshotJson(latest_));
+        const auto data=QByteArray::fromStdString(markdown?acceptanceTableMarkdown(latest_):snapshotJson(latest_));
         if(!f.open(QIODevice::WriteOnly)||f.write(data)!=data.size()||!f.commit())QMessageBox::warning(this,QStringLiteral("保存失败"),f.errorString());
-        else appendLog(QStringLiteral("报告已保存：")+path);
+        else appendLog((markdown?QStringLiteral("验收表已保存："):QStringLiteral("JSON报告已保存："))+path);
     }
     void MainWindow::closeEvent(QCloseEvent*e) {
         controller_.shutdown();

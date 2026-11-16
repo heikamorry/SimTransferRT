@@ -1,57 +1,137 @@
 #!/usr/bin/env python3
-"""Exercise actual sender process over UDP. Accept SimTransferCli.exe or SimRtProbe.
-Exit 0 means functional test matrix passed; it does not certify 50Hz timing on target hardware.
+"""Exercise the actual Qt CLI (or native probe) over isolated loopback UDP ports.
+
+Exit zero means every requested frame has the expected functional outcome.
+Timing misses remain visible and are not part of this small functional matrix.
 """
 from __future__ import annotations
 import argparse
 import json
-import socket
-import subprocess
-import sys
-import time
+import os
 from pathlib import Path
+import subprocess
+import time
+import sys
+import uuid
+from run_diagnostics import acceptance, free_ports, read_json, stop_owned, write_json
+from acceptance_report import combined_acceptance, markdown as acceptance_markdown
 
-def free_port():
-    with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
-        s.bind(('127.0.0.1',0))
-        return s.getsockname()[1]
+CASES = [
+    ('normal', [], [], 'A1'),
+    ('first_loss', ['--drop-first', '2'], [], 'B64'),
+    ('crc_damage', ['--corrupt-first', '4'], [], 'CRC'),
+    ('duplicates', ['--duplicate-first', '1,3'], [], 'A1'),
+    ('reverse', ['--reverse'], [], 'A1'),
+    ('duplicate_nack', ['--drop-first', '2'], ['--duplicate-nack'], 'B64'),
+    ('permanent_loss', ['--drop-always', '2'], [], 'C'),
+    ('wrap', ['--start-id', '4294967294'], [], 'A1'),
+]
+
+
+def run_case(sender_path, out, case):
+    name, extra, stub_extra, acceptance_case = case
+    data_port, command_port = free_ports()
+    sender_report = out / (name + '-sender.json')
+    receiver_report = out / (name + '-receiver.json')
+    ready_path = out / (name + '-ready.json')
+    run_id = out.name + '-' + name
+    receiver_command = [sys.executable, str(Path(__file__).with_name('udp_feedback_stub.py')),
+                        '--port', str(data_port), '--cmd-port', str(command_port),
+                        '--seconds', '0', '--report', str(receiver_report), '--quiet',
+                        '--run-id', run_id, '--ready-file', str(ready_path), *stub_extra]
+    sender_command = [str(sender_path), '--port', str(data_port), '--cmd-port', str(command_port),
+                      '--nack-port', str(data_port), '--frames', '15', '--frame-bytes', '16384',
+                      '--report', str(sender_report), '--run-id', run_id, *extra]
+    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+    sender = receiver = None
+    failure = None
+    cleanup_errors, forced = [], []
+    with (out / (name + '-sender.log')).open('w', encoding='utf-8') as sender_log, \
+         (out / (name + '-receiver.log')).open('w', encoding='utf-8') as receiver_log:
+        try:
+            receiver = subprocess.Popen(receiver_command, stdout=receiver_log, stderr=subprocess.STDOUT,
+                                        creationflags=creationflags)
+            ready_deadline = time.monotonic() + 5
+            while not ready_path.exists():
+                if receiver.poll() is not None or time.monotonic() > ready_deadline:
+                    raise RuntimeError('receiver failed before readiness; see receiver log')
+                time.sleep(.01)
+            sender = subprocess.Popen(sender_command, stdout=sender_log, stderr=subprocess.STDOUT,
+                                      creationflags=creationflags)
+            sender.wait(timeout=6)
+        except (Exception, KeyboardInterrupt) as exc:
+            failure = type(exc).__name__ + ': ' + str(exc)
+        finally:
+            # Only our process objects are touched, sender first. A failed cleanup
+            # must not skip receiver cleanup or discard the original error context.
+            try:
+                if stop_owned(sender):
+                    forced.append('sender')
+            except Exception as exc:
+                cleanup_errors.append('sender: ' + repr(exc))
+            try:
+                if receiver and receiver.poll() is None:
+                    # Lifetime is relative to sender completion, not receiver startup.
+                    # A cold Debug startup must not consume the reception window.
+                    # The sender already drains its cache; this bounded tail lets the
+                    # receiver finish outstanding 2ms/10ms work before graceful exit.
+                    time.sleep(.2)
+                    if stop_owned(receiver):
+                        forced.append('receiver')
+            except Exception as exc:
+                cleanup_errors.append('receiver: ' + repr(exc))
+    sender_data = read_json(sender_report) or {}
+    receiver_data = read_json(receiver_report) or {}
+    evaluation = acceptance(acceptance_case, sender_data, receiver_data, 15, run_id)
+    sender_stats = sender_data.get('stats', {})
+    sender_exit = sender.returncode if sender else None
+    receiver_exit = receiver.returncode if receiver else None
+    passed = (failure is None and not cleanup_errors and not forced and sender_exit == 0 and
+              receiver_exit == 0 and evaluation['functional_target_pass'] is True)
+    result = {'case': name, 'run_id': run_id, 'pass': passed, 'failure': failure,
+              'sender_exit': sender_exit, 'receiver_exit': receiver_exit,
+              'cleanup_errors': cleanup_errors, 'forced_kills': forced,
+              'completed': receiver_data.get('completed'), 'expired': receiver_data.get('expired'),
+              'sender_frames': sender_stats.get('built'), 'retransmissions': sender_stats.get('retransmissions'),
+              'deadline_misses': sender_stats.get('deadlineMisses'),
+              'actual_deadline_misses': sender_stats.get('actualInitialDeadlineMisses'),
+              'functional_failures': evaluation['functional_failures'],
+              'reception': evaluation['reception'],
+              'note': 'functional 16KiB/15-frame loopback test, not hard-real-time acceptance'}
+    joint = dict(result, case=acceptance_case, functional_target_pass=evaluation['functional_target_pass'])
+    acceptance_table = combined_acceptance(sender_data, receiver_data, joint)
+    result['acceptance_table_status'] = acceptance_table['overall_status']
+    write_json(out / (name + '-acceptance.json'), acceptance_table)
+    (out / (name + '-acceptance.md')).write_text(acceptance_markdown(acceptance_table), encoding='utf-8')
+    write_json(out / (name + '-environment.json'),
+               {'run_id': run_id, 'network_path': 'IPv4 loopback',
+                'sender_command': sender_command, 'receiver_command': receiver_command,
+                'sender_pid': sender.pid if sender else None, 'receiver_pid': receiver.pid if receiver else None,
+                'sender_build_reported': sender_data.get('build_type'),
+                'sender_exit': sender_exit, 'receiver_exit': receiver_exit,
+                'failure': failure, 'cleanup_errors': cleanup_errors, 'forced_kills': forced})
+    return result
+
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--sender',required=True);p.add_argument('--out',default='test-results/e2e');args=p.parse_args()
-    sender=str(Path(args.sender).resolve());out=Path(args.out).resolve();out.mkdir(parents=True,exist_ok=True)
-    tools=Path(__file__).resolve().parent
-    cases=[('normal',[],[]),('first_loss',['--drop-first','2'],[]),('crc_damage',['--corrupt-first','4'],[]),
-           ('duplicates',['--duplicate-first','1,3'],[]),('reverse',['--reverse'],[]),
-           ('duplicate_nack',['--drop-first','2'],['--duplicate-nack']),
-           ('permanent_loss',['--drop-always','2'],[]),('wrap',['--start-id','4294967294'],[])]
-    results=[]
-    for name,extra,stub_extra in cases:
-        data_port,cmd_port=free_port(),free_port()
-        while data_port==cmd_port:cmd_port=free_port()
-        sr=out/(name+'-sender.json');rr=out/(name+'-receiver.json')
-        with (out/(name+'-receiver.log')).open('w',encoding='utf-8') as log:
-            receiver=subprocess.Popen([sys.executable,str(tools/'udp_feedback_stub.py'),'--port',str(data_port),'--cmd-port',str(cmd_port),'--seconds','1.4','--report',str(rr),'--quiet',*stub_extra],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
-            try:
-                ready = receiver.stdout.readline()
-                log.write(ready);log.flush()
-                if not ready.startswith('LISTEN '):
-                    raise RuntimeError('receiver failed before readiness: '+ready)
-                run=subprocess.run([sender,'--port',str(data_port),'--cmd-port',str(cmd_port),'--frames','15','--frame-bytes','16384','--report',str(sr),*extra],capture_output=True,text=True,timeout=6)
-                (out/(name+'-sender.log')).write_text(run.stdout+'\n'+run.stderr,encoding='utf-8')
-                remaining, _ = receiver.communicate(timeout=4)
-                log.write(remaining)
-            finally:
-                if receiver.poll() is None:receiver.kill();receiver.wait()
-        if not sr.exists() or not rr.exists():
-            results.append({'case':name,'pass':False,'reason':'missing report'});continue
-        a=json.loads(sr.read_text());b=json.loads(rr.read_text());stats=a['stats']
-        ok=run.returncode==0 and stats['built']==15 and stats['datagrams']>0 and a['df_enabled']
-        if name=='permanent_loss':ok=ok and b['expired']>0 and b['max_requests_for_fragment']==3
-        else:ok=ok and b['completed']>0 and b['module_failures']==0
-        if name in ('first_loss','crc_damage','duplicate_nack'):ok=ok and stats['retransmissions']>0 and b['recovered']>0
-        results.append({'case':name,'pass':bool(ok),'completed':b['completed'],'expired':b['expired'],'sender_frames':stats['built'],'retransmissions':stats['retransmissions'],'deadline_misses':stats['deadlineMisses'],'note':'functional, not hard-real-time acceptance'})
-        print(json.dumps(results[-1]),flush=True)
-    (out/'summary.json').write_text(json.dumps(results,indent=2),encoding='utf-8')
-    return 0 if all(r['pass'] for r in results) else 1
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--sender', required=True, type=Path)
+    parser.add_argument('--out', default='test-results/e2e', type=Path)
+    args = parser.parse_args()
+    sender_path = args.sender.resolve()
+    out = args.out.resolve() / ('e2e-' + uuid.uuid4().hex[:12])
+    out.mkdir(parents=True, exist_ok=False)
+    results = []
+    for case in CASES:
+        result = run_case(sender_path, out, case)
+        results.append(result)
+        write_json(out / 'summary.json', results)  # Keep finished cases even if a later case fails.
+        print(json.dumps(result), flush=True)
+        if (result['failure'] or '').startswith('KeyboardInterrupt:'):
+            break
+    print('Reports: ' + str(out), flush=True)
+    return 0 if len(results) == len(CASES) and all(result['pass'] for result in results) else 1
 
-if __name__=='__main__':raise SystemExit(main())
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -11,9 +11,12 @@ namespace rt {
         shutdown();
     }
     void SessionManager::publish(const Snapshot&s) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        latest_=s;
-        dirty_=true;
+        std::shared_ptr<const Snapshot> next=std::make_shared<const Snapshot>(s);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            latest_.swap(next);
+            dirty_=true;
+        } // Old detail storage is released outside the lock.
     }
     void SessionManager::log(const std::string&s) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -27,14 +30,14 @@ namespace rt {
             worker_.reset();
         }
         dispatcher_.clear();
+        Snapshot preparing;
+        preparing.nextLogicId=c.initialLogicId;
+        preparing.config=c;preparing.runId=c.runId;
+        preparing.running=true;
+        preparing.detail="Preparing module data (no wire handshake)";
+        publish(preparing);
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            latest_= {
-            };
-            latest_.nextLogicId=c.initialLogicId;
-            latest_.running=true;
-            latest_.detail="Preparing module data (no wire handshake)";
-            dirty_=true;
             logs_.clear();
         }
         busy_=true;
@@ -51,9 +54,10 @@ namespace rt {
                     });
                 }
                 catch(const std::exception&e) {
-                    Snapshot failure; {
-                        std::lock_guard<std::mutex> lock(mutex_);failure=latest_;
+                    std::shared_ptr<const Snapshot> previous; {
+                        std::lock_guard<std::mutex> lock(mutex_);previous=latest_;
                     }
+                    Snapshot failure=*previous;
                     failure.running=false;failure.detail=std::string("Local failure: ")+e.what();publish(failure);log(failure.detail);
                 }
                 catch(...) {
@@ -84,18 +88,18 @@ namespace rt {
         if(!dispatcher_.post(std::move(c)))emit logMessage(QStringLiteral("控制队列已满，模块变更未接受"));
     }
     void SessionManager::poll() {
-        Snapshot s;
+        std::shared_ptr<const Snapshot> snapshot;
         bool dirty=false;
         std::deque<std::string> logs;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             dirty=dirty_;
-            if(dirty)s=latest_;
+            if(dirty)snapshot=latest_;
             dirty_=false;
             logs.swap(logs_);
         }
         for(const auto&l:logs)emit logMessage(QString::fromStdString(l));
-        if(dirty)emit snapshotChanged(s);
+        if(dirty)emit snapshotChanged(*snapshot);
         if(busy_&&done_.load(std::memory_order_acquire)) {
             if(worker_) {
                 worker_->wait();
@@ -105,13 +109,14 @@ namespace rt {
             timer_.stop();
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                s=latest_;
+                snapshot=latest_;
             }
-            Snapshot summary=s;
+            Snapshot summary=*snapshot;
             summary.frames.clear();
+            summary.timingTrace={}; // History retains counters, not anomaly event payloads.
             history_.push_back(std::move(summary));
             if(history_.size()>20)history_.pop_front();
-            emit snapshotChanged(s);
+            emit snapshotChanged(*snapshot);
             emit runEnded();
         }
     }

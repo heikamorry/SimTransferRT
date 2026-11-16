@@ -1,9 +1,13 @@
 add_library(sim_rt_core STATIC
     protocol/Checksum.cpp protocol/PacketCodec.cpp
     core/Types.cpp core/LogicalFrameBuilder.cpp core/RealtimeStream.cpp core/SamplingClock.cpp
-    application/CommandDispatcher.cpp application/StreamRunner.cpp support/CliOptions.cpp
+    application/CommandDispatcher.cpp application/StreamRunner.cpp application/AcceptanceReport.cpp support/CliOptions.cpp
 )
 target_include_directories(sim_rt_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(sim_rt_core PRIVATE SIM_BUILD_TYPE="$<CONFIG>")
+execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" OUTPUT_VARIABLE SIM_GIT_REV OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+execute_process(COMMAND git diff --quiet WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}" RESULT_VARIABLE SIM_GIT_DIRTY ERROR_QUIET)
+target_compile_definitions(sim_rt_core PRIVATE SIM_SOURCE_REV="${SIM_GIT_REV}" SIM_SOURCE_DIRTY="${SIM_GIT_DIRTY}")
 target_link_libraries(sim_rt_core PUBLIC Threads::Threads)
 set_target_properties(sim_rt_core PROPERTIES AUTOMOC OFF AUTORCC OFF)
 add_library(sim_rt_native STATIC network/NativeUdpTransport.cpp)

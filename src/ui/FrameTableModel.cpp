@@ -41,6 +41,7 @@ namespace rt {
         }
     }
     void FrameTableModel::apply(const Snapshot&s) {
+        if(!s.detailsIncluded)return;
         beginResetModel();
         rows_.clear();
         for(const auto&frame:s.frames)for(const auto&f:frame.fragments)rows_.push_back( {

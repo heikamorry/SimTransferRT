@@ -5,12 +5,13 @@
 #include <QTimer>
 #include <atomic>
 #include <mutex>
+#include <memory>
 #include <QThread>
 #include <deque>
 Q_DECLARE_METATYPE(rt::Snapshot)
 namespace rt {
     // QObject stays on the GUI/application thread. All network work lives in worker_.
-    // A bounded mailbox decouples high-rate I/O from 10Hz UI snapshots.
+    // One immutable latest snapshot; only pointer exchange holds the mailbox lock.
     class SessionManager final:public QObject {
         Q_OBJECT
         public:
@@ -38,7 +39,7 @@ namespace rt {
             true
         };
         std::mutex mutex_;
-        Snapshot latest_;
+        std::shared_ptr<const Snapshot> latest_=std::make_shared<const Snapshot>();
         bool dirty_=false,busy_=false;
         std::deque<std::string> logs_;
         std::deque<Snapshot> history_;

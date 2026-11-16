@@ -19,10 +19,15 @@ namespace rt {
         std::string lastError()const override {
             return error_;
         }
+        int sendBufferBytes()const override {return sendBuffer_;}
+        int receiveBufferBytes()const override {return receiveBuffer_;}
+        int connResetError()const override {return resetError_;}
+        std::string name()const override {return "Qt QUdpSocket";}
         private:QUdpSocket socket_;
         QHostAddress target_;
         quint16 port_=0;
         bool df_=false;
         std::string error_;
+        int sendBuffer_=0,receiveBuffer_=0,resetError_=0;
     };
 }

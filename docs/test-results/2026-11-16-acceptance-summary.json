@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-16",
+  "scope": "Recorded Windows loopback validation of the source before this documentation-only GitHub publication step. Functional regression pass is not full realtime compliance.",
+  "base_commit": "c1e9bc69a33121981e8511464e795f639661f081",
+  "checks": {
+    "release_ctest_6_of_6": true,
+    "debug_ctest_6_of_6": true,
+    "release_udp_8_of_8": true,
+    "release_python_133": true,
+    "debug_udp_8_of_8": true,
+    "debug_python_133": true,
+    "historical_report_unchanged": true,
+    "native_stop": true
+  },
+  "release_sender_sha256": "f7f699e62ef70af9921ee96ce6c5999deb46a363ddca928bdde7b20bd34462ac",
+  "functional_regressions": {
+    "ctest_groups_per_configuration": 6,
+    "configurations": [
+      "Debug",
+      "Release"
+    ],
+    "python_tests": 133,
+    "udp_cases_per_configuration": 8
+  },
+  "a1_120_seconds": {
+    "frame_bytes": 1048576,
+    "target_hz": 50,
+    "built": 6000,
+    "completed": 6000,
+    "expired": 0,
+    "sender_exit": 0,
+    "receiver_exit": 0,
+    "failure": null,
+    "initial_incomplete": 0,
+    "initial_deadline_misses": 3,
+    "sample_interval_violations": 2,
+    "initial_packet_gap_violations": 4,
+    "initial_duration": {
+      "count": 6000,
+      "max_us": 15811,
+      "over_limit": 3,
+      "p50_us": 14700,
+      "p95_us": 14700,
+      "p999_us": 14900,
+      "p99_us": 14800
+    },
+    "sampling_deviation": {
+      "count": 5999,
+      "max_us": 1163,
+      "over_limit": 2,
+      "p50_us": 200,
+      "p95_us": 600,
+      "p999_us": 1000,
+      "p99_us": 800
+    },
+    "initial_packet_gap_deviation": {
+      "count": 4380000,
+      "max_us": 1513,
+      "over_limit": 4,
+      "p50_us": 0,
+      "p95_us": 100,
+      "p999_us": 100,
+      "p99_us": 100
+    },
+    "overall_acceptance": "fail"
+  },
+  "raw_evidence": "Local ignored artifacts/udp-stability/acceptance-20261116/; source and regression tests are versioned in this repository.",
+  "limitations": [
+    "User-space timestamps, not NIC wire timestamps.",
+    "Hardware module sampling skew, production playout and synchronized rendering remain unmeasured.",
+    "The 120-second run retains realtime failures; no claim of stable realtime compliance."
+  ]
+}

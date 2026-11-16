@@ -3,6 +3,7 @@
 #include "core/LogicalFrameBuilder.h"
 #include "core/RealtimeStream.h"
 #include "application/CommandDispatcher.h"
+#include "application/StreamRunner.h"
 #include <iostream>
 #include <functional>
 #include <fstream>
@@ -50,6 +51,119 @@ namespace {
 int main(int argc,char**argv) {
     using Test=std::pair<const char*,std::function<void()>>;
     const std::vector<Test> tests= {
+        {
+            "feedback flood remains bounded, new samples and stop progress",[] {
+                struct Flood final: IUdpTransport {
+                    Datagram packet;
+                    std::uint64_t sent=0;
+                    Flood(){Nack n;n.logicId=1;n.ranges.assign(363,Range{0,4});packet=encodeNack(n);}
+                    void open(const StreamConfig&)override{}
+                    bool send(const std::uint8_t*,std::size_t)override{++sent;return true;}
+                    bool receive(IncomingDatagram& d)override{d.bytes.assign(packet.bytes.begin(),packet.bytes.begin()+packet.size);d.sourceIp="127.0.0.1";return true;}
+                    std::uint16_t localPort()const override{return 1;}
+                    bool dfEnabled()const override{return true;}
+                    std::string lastError()const override{return {};}
+                } flood;
+                auto c=small();c.frameLimit=3;CommandDispatcher commands;
+                const auto a=runStream(c,flood,commands,[](const auto&){},[](const auto&){});
+                require(a.stats.sampled==3&&flood.sent>=12&&a.stats.elapsedUs<2000000);
+                require(a.stats.nackParsed>0&&a.stats.retryQueueHighWater<=12);
+                c.frameLimit=0;bool posted=false;
+                const auto b=runStream(c,flood,commands,[&](const auto& snap){
+                    if(!posted&&snap.stats.sampled){Command stop;commands.post(stop);posted=true;}
+                },[](const auto&){});
+                require(posted&&!b.running&&b.stats.elapsedUs<2000000);
+            }
+        },
+        {
+            "planned send lateness includes encode time before socket call",[] {
+                auto c=small();c.modules[0].dataBytes=10;unsigned reads=0;
+                RealtimeStream s(c,0,[&]{return ++reads<=4?0ull:100ull;});
+                s.tick(0,[](const auto*,auto){return true;});
+                require(s.snapshot(100).stats.maxPlannedSendLatenessUs==100);
+            }
+        },
+        {
+            "actual send completion uses injected clock; TS and legacy span unchanged",[] {
+                auto c=small();c.modules[0].dataBytes=10;
+                std::uint64_t now=100;
+                RealtimeStream s(c,100,[&]{return now;});
+                s.tick(now,[&](const auto* p,auto n){require(decodeData(p,n).timestampUs==100);now+=16000;return true;});
+                const auto a=s.snapshot(now);
+                require(a.stats.lastInitialDurationUs==0&&a.stats.lastSampleToInitialEndUs==16000);
+                require(a.stats.deadlineMisses==0&&a.stats.actualInitialDeadlineMisses==1);
+                require(a.initialDuration.count==1&&a.initialDuration.maxUs==16000&&a.initialDuration.overLimit==1);
+                require(a.initialCallSpan.maxUs==16000&&a.stats.sendProfile.totalUs==16000);
+            }
+        },
+        {
+            "cancellation and replacement conserve planned first fragments",[] {
+                RealtimeStream s(small(),0);
+                auto send=[](const auto*,auto){return true;};
+                s.tick(0,send);s.tick(20000,send);s.stop();s.stop();
+                const auto a=s.snapshot(20000).stats;
+                require(a.initialFragmentsPlanned==8&&a.firstAttempts==2&&a.unsentExpired==3&&a.unsentAtStop==3);
+                require(a.initialIncompleteFrames==2&&a.initialFinishedFrames==0&&a.initialPendingFragments==0);
+                require(a.initialFragmentsPlanned==a.firstAttempts+a.unsentExpired+a.unsentAtStop+a.initialPendingFragments);
+            }
+        },
+        {
+            "failed or injected first sends excluded from submitted distribution",[] {
+                auto c=small();c.modules[0].dataBytes=10;
+                RealtimeStream s(c,0);s.tick(0,[](const auto*,auto){return false;});
+                require(s.snapshot(0).stats.initialFinishedFrames==1&&s.snapshot(0).initialDuration.count==0);
+                c.faults.dropFirst.insert(0);RealtimeStream dropped(c,0);
+                dropped.tick(0,[](const auto*,auto){return true;});
+                require(dropped.snapshot(0).stats.initialFinishedFrames==1&&dropped.snapshot(0).initialDuration.count==0);
+            }
+        },
+        {
+            "sampling interval deviation is independent of absolute lateness",[] {
+                RealtimeStream s(small(),0);auto send=[](const auto*,auto){return true;};
+                s.tick(1000,send);s.tick(21000,send);s.tick(41500,send);
+                const auto a=s.snapshot(41500);
+                require(a.samplingIntervals.count==2&&a.samplingIntervals.maxUs==20500);
+                require(a.samplingDeviation.maxUs==500&&a.stats.maxSampleLatenessUs==1500);
+                require(a.stats.samplingSpanUs==40500&&a.stats.samplingActiveUs==60500);
+            }
+        },
+        {
+            "planned versus adjusted pacing lateness remains visible",[] {
+                PacketPacer p;p.begin(0,731);p.emitted(1000);
+                require(p.plannedDue(1)==20&&p.due(1)==1010);
+                RealtimeStream s(small(),0);auto send=[](const auto*,auto){return true;};
+                s.tick(0,send);s.tick(1000,send);s.tick(1010,send);
+                require(s.snapshot(1010).stats.maxPlannedSendLatenessUs>=970);
+            }
+        },
+        {
+            "overlapping NACK worst case bounded and later repeat still eligible",[] {
+                RealtimeStream s(small(),0);advance(s,0,100);
+                Nack n;n.logicId=1;n.ranges.assign(363,Range{0,4});
+                s.acceptNack(n);
+                auto a=s.snapshot(100).stats;
+                require(a.requestedFragments==1452&&a.duplicatePending==1448&&a.retryQueueHighWater==4);
+                advance(s,110,1000);s.acceptNack(n);advance(s,1010,2000);
+                require(s.snapshot(2000).stats.retransmissions==8);
+            }
+        },
+        {
+            "cache miss diagnostics bounded and wrap-safe",[] {
+                auto c=small();c.initialLogicId=0xFFFFFFFFu;RealtimeStream s(c,0);advance(s,0,21000);
+                for(unsigned i=0;i<40;++i)s.acceptNack(Nack{0xFFFFFFFEu,{{0,1}}});
+                const auto a=s.snapshot(21000);
+                require(a.cacheMissEvents.size()==32&&a.cacheMissEventsDropped==8);
+                require(a.cacheMissEvents.back().distance==2&&a.cacheMissEvents.back().latest==0);
+            }
+        },
+        {
+            "clock reversal detected both between and during ticks",[] {
+                RealtimeStream s(small(),0);s.tick(100,[](const auto*,auto){return true;});
+                throws([&]{s.tick(99,[](const auto*,auto){return true;});});
+                RealtimeStream bad(small(),100,[]{return 99;});
+                throws([&]{bad.tick(100,[](const auto*,auto){return true;});});
+            }
+        },
         {
             "CRC IEEE known vector",[] {
                 std::string s="123456789";
@@ -597,7 +711,9 @@ int main(int argc,char**argv) {
                 c.kind=Command::Kind::NackFeedback;
                 require(!d.post(c));
                 c.kind=Command::Kind::Stop;
-                require(d.post(c)&&d.take()->kind==Command::Kind::Stop);
+                require(d.post(c));
+                const auto stop=d.take();
+                require(stop->kind==Command::Kind::Stop&&stop->queuedUs>0);
             }
         },
         {

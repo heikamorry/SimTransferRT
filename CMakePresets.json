@@ -9,6 +9,7 @@
       "binaryDir": "${sourceDir}/build/windows-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_DEPENDS_USE_COMPILER": "FALSE",
         "CMAKE_PREFIX_PATH": "C:/Qt/6.12.0/msvc2022_64",
         "SIM_WITH_QT": "ON",
         "SIM_BUILD_TESTS": "ON"

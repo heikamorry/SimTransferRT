@@ -64,7 +64,7 @@ namespace rt {
             100,1000,2500,10000
         })link_->addItem(QString::number(n)+" Mbit/s",n);
         link_->setCurrentIndex(1);
-        f->addRow(QStringLiteral("实际链路速率"),link_);
+        f->addRow(QStringLiteral("链路容量估算"),link_);
         cache_=new QComboBox;
         cache_->addItem(QStringLiteral("原文：logic_id % 3"));
         cache_->addItem(QStringLiteral("候选勘误：FIFO 三帧"));
@@ -166,6 +166,8 @@ namespace rt {
     }
     StreamConfig ConfigPanel::config()const {
         StreamConfig c;
+        // Optional local diagnostics correlation; never serialized into DATA/NACK.
+        c.runId=qgetenv("SIM_RT_RUN_ID").toStdString();
         c.targetIp=target_->text().trimmed().toStdString();
         c.bindIp=bind_->text().trimmed().toStdString();
         c.allowedNackIp=source_->text().trimmed().toStdString();

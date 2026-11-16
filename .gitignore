@@ -20,3 +20,13 @@ received.bin
 *.key
 *.pfx
 *.p12
+
+# Local diagnostic evidence and source/build snapshots; never overwrite old runs.
+/artifacts/udp-diagnostics/
+/artifacts/udp-diagnostics-*.zip
+/artifacts/udp-stability/
+/artifacts/udp-stability-*.zip
+
+# Local GUI/plugin output, not project source or versioned validation summaries.
+/PkgExplorerPlugin.dll.log
+/sim-rt-report*.json

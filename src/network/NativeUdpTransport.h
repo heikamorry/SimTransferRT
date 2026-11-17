@@ -12,6 +12,7 @@ namespace rt {
         std::uint16_t localPort()const override;
         bool dfEnabled()const override;
         std::string lastError()const override;
+        std::string name()const override {return "Native IPv4 UDP";}
         private:struct Impl;
         std::unique_ptr<Impl> p_;
     };

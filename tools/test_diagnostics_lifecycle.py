@@ -72,7 +72,8 @@ class DiagnosticsLifecycleTests(unittest.TestCase):
                  patch.object(run_diagnostics, 'acceptance', return_value={
                      'functional_target_pass': True, 'functional_failures': [], 'reception': {},
                      'timing_target_pass': True, 'sender_inventory_pass': True,
-                     'sampling_jitter_target_pass': True, 'initial_dispatch_target_pass': True}), patch('builtins.print'):
+                     'sampling_jitter_target_pass': True, 'initial_dispatch_target_pass': True,
+                     'packet_gap_target_pass': True}), patch('builtins.print'):
                 result = run_diagnostics.run_case(args, root, mode, 10, 0)
             configuration = json.loads((Path(result['directory']) / 'environment.json').read_text())
         return events, result, configuration

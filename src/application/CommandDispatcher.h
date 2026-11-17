@@ -19,6 +19,8 @@ namespace rt {
         public:
         bool post(Command command);
         std::optional<Command> take();
+        // Consume priority Stop without dequeuing ordinary work at a sampling deadline.
+        std::optional<Command> takeStop();
         void clear();
         std::size_t size()const;
         private:mutable std::mutex mutex_;

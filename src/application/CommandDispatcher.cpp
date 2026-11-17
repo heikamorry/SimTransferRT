@@ -33,6 +33,15 @@ namespace rt {
         queue_.pop_front();
         return c;
     }
+    std::optional<Command> CommandDispatcher::takeStop() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if(!stop_)return std::nullopt;
+        stop_=false;
+        Command c;
+        c.kind=Command::Kind::Stop;
+        c.queuedUs=stopQueuedUs_;
+        return c;
+    }
     void CommandDispatcher::clear() {
         std::lock_guard<std::mutex> lock(mutex_);
         queue_.clear();

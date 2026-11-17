@@ -181,7 +181,8 @@ namespace rt {
             stats_.retryQueueHighWater=std::max(stats_.retryQueueHighWater,std::uint64_t(retries_.size()));
         }
     }
-    void RealtimeStream::observeSendCall(std::uint64_t sendStart,bool retry,bool firstCopy,std::size_t datagramBytes)noexcept {
+    void RealtimeStream::observeSendCall(std::uint64_t sendStart,std::uint64_t sendEnd,std::uint32_t logicId,std::uint16_t index,
+                                         bool retry,bool firstCopy,bool accepted,std::size_t datagramBytes)noexcept {
         ++stats_.socketSendCalls;
         const auto bytes=static_cast<std::uint64_t>(datagramBytes);
         if(!stats_.minObservedDatagramBytes||bytes<stats_.minObservedDatagramBytes)stats_.minObservedDatagramBytes=bytes;
@@ -204,13 +205,29 @@ namespace rt {
             const auto deviation=gap>nominal?gap-nominal:nominal-gap;
             initialPacketGaps_.add(gap);
             initialPacketGapDeviation_.add(deviation,999);
-            if(deviation>=1000)++stats_.initialPacketGapViolations;
+            if(deviation>=1000) {
+                ++stats_.initialPacketGapViolations;
+                if(trace_.enabled()) {
+                    TimingTraceContext context;
+                    context.present=true;context.hasPrevious=true;context.hasPlanned=true;context.sendResultKnown=true;context.accepted=accepted;
+                    context.previousStartUs=previousInitialCallUs_;context.previousEndUs=previousInitialEndUs_;
+                    context.currentStartUs=sendStart;context.currentEndUs=sendEnd;
+                    context.previousPlannedUs=pacer_.plannedDue(previousInitialOrdinal_);
+                    context.currentPlannedUs=pacer_.plannedDue(nextIndex_);context.previousLogicId=logicId;
+                    context.previousFragmentIndex=previousInitialIndex_;context.fragmentIndex=index;
+                    context.previousOrdinal=previousInitialOrdinal_;context.ordinal=nextIndex_;
+                    context.traffic=TraceTraffic::InitialFirst;
+                    trace_.record(TraceKind::InitialPacketGap,sendEnd,logicId,deviation,context.traffic,nextIndex_);
+                    trace_.trigger(TraceReason::InitialPacketGap,sendEnd,logicId,deviation,context);
+                }
+            }
             if(!stats_.minInitialNominalGapUs||nominal<stats_.minInitialNominalGapUs)stats_.minInitialNominalGapUs=nominal;
             stats_.maxInitialNominalGapUs=std::max(stats_.maxInitialNominalGapUs,nominal);
         } else ++stats_.initialGapSegments;
-        previousInitialCallUs_=sendStart;previousInitialOrdinal_=nextIndex_;hasInitialCall_=true;
+        previousInitialCallUs_=sendStart;previousInitialEndUs_=sendEnd;previousInitialOrdinal_=nextIndex_;
+        previousInitialIndex_=index;hasInitialCall_=true;
     }
-    void RealtimeStream::transmit(const Frame& f,std::uint16_t index,bool retry,std::uint64_t now,const SendFunction& send) {
+    std::uint64_t RealtimeStream::transmit(const Frame& f,std::uint16_t index,bool retry,std::uint64_t now,const SendFunction& send) {
         auto& row=rowFor(f.logicId).fragments.at(index);
         if(retry) {
             ++row.retries;
@@ -229,18 +246,20 @@ namespace rt {
                 hasInitialCall_=false; // A missing send call splits adjacency, even inside a frame.
             }
             row.state=FragmentState::InjectedDrop;
-            return;
+            return now; // No send completion; this frame is excluded from complete-initial distributions.
         }
         const auto encodeStart=clockNow(now);
         auto packet=encodeData(f,index,retry);
         const auto encodeEnd=clockNow(encodeStart);
         stats_.encodeCrcProfile.add(encodeEnd-encodeStart);
-        trace_.recordSpanIfSlow(TraceKind::EncodeBegin,TraceKind::EncodeEnd,encodeStart,encodeEnd,f.logicId,index);
+        trace_.recordSpanIfSlow(TraceKind::EncodeBegin,TraceKind::EncodeEnd,encodeStart,encodeEnd,f.logicId,index,
+                                retry?TraceTraffic::Retry:TraceTraffic::InitialFirst,retry?UINT16_MAX:nextIndex_);
         if(!retry&&fault.corruptFirst.count(index)) {
             packet.bytes[HeaderSize]^=1;
             ++stats_.injectedCorrupt;
         }
         const int copies=(!retry&&fault.duplicateFirst.count(index))?2:1;
+        auto lastCompletion=now;
         for(int copy=0;copy<copies;++copy) {
             const auto sendStart=clockNow(now);
             if(!retry)stats_.maxPlannedSendLatenessUs=std::max(stats_.maxPlannedSendLatenessUs,sendStart-pacer_.plannedDue(nextIndex_));
@@ -248,11 +267,25 @@ namespace rt {
                 firstInitialCall_=sendStart;
                 trace_.record(TraceKind::InitialBegin,sendStart,f.logicId,currentStart_);
             }
-            observeSendCall(sendStart,retry,copy==0,packet.size);
             const bool accepted=send(packet.bytes.data(),packet.size);
             const auto sendEnd=clockNow(sendStart);
+            lastCompletion=sendEnd;
             stats_.sendProfile.add(sendEnd-sendStart);
-            trace_.recordSpanIfSlow(TraceKind::SendBegin,TraceKind::SendEnd,sendStart,sendEnd,f.logicId,index);
+            const auto traffic=retry?TraceTraffic::Retry:(copy==0?TraceTraffic::InitialFirst:TraceTraffic::InitialDuplicate);
+            trace_.recordSpanIfSlow(TraceKind::SendBegin,TraceKind::SendEnd,sendStart,sendEnd,f.logicId,index,
+                                    traffic,retry?UINT16_MAX:nextIndex_);
+            // Retention copies must happen after the send-completion observation,
+            // so they cannot inflate the measured socket-call wall time.
+            observeSendCall(sendStart,sendEnd,f.logicId,index,retry,copy==0,accepted,packet.size);
+            if(trace_.enabled()&&sendEnd-sendStart>=TimingTrace::SlowSendThresholdUs) {
+                TimingTraceContext context;
+                context.present=true;context.currentStartUs=sendStart;context.currentEndUs=sendEnd;
+                context.hasPlanned=!retry;
+                if(!retry)context.currentPlannedUs=pacer_.plannedDue(nextIndex_);
+                context.fragmentIndex=index;context.ordinal=retry?UINT16_MAX:nextIndex_;
+                context.traffic=traffic;context.sendResultKnown=true;context.accepted=accepted;
+                trace_.trigger(TraceReason::SlowSend,sendEnd,f.logicId,sendEnd-sendStart,context);
+            }
             if(accepted) {
                 ++stats_.datagrams;
                 stats_.bytesSent+=packet.size;
@@ -265,6 +298,7 @@ namespace rt {
                 row.state=FragmentState::SendError;
             }
         }
+        return lastCompletion;
     }
     void RealtimeStream::tick(std::uint64_t now,const SendFunction& send) {
         if(!running_)return;
@@ -275,8 +309,17 @@ namespace rt {
             if(stats_.sampled) {
                 const auto interval=now-stats_.lastSampleUs;
                 const auto deviation=interval>SamplingPeriodUs?interval-SamplingPeriodUs:SamplingPeriodUs-interval;
-                if(deviation>=1000)trace_.trigger(TraceReason::SamplingDeviation,now,nextId_,deviation);
+                if(deviation>=1000&&trace_.enabled()) {
+                    TimingTraceContext context;
+                    context.present=true;context.hasPrevious=true;context.hasPlanned=true;
+                    context.previousStartUs=stats_.lastSampleUs;context.previousEndUs=stats_.lastSampleUs;
+                    context.currentStartUs=now;context.currentEndUs=now;
+                    context.previousPlannedUs=previousSamplePlannedUs_;context.currentPlannedUs=nextSample_;
+                    context.previousLogicId=previousSampleLogicId_;
+                    trace_.trigger(TraceReason::SamplingDeviation,now,nextId_,deviation,context);
+                }
             }
+            previousSamplePlannedUs_=nextSample_;previousSampleLogicId_=nextId_;
             const auto missed=(now-nextSample_)/SamplingPeriodUs;
             stats_.skippedOverrun+=missed;
             nextSample_+=missed*SamplingPeriodUs;
@@ -306,13 +349,15 @@ namespace rt {
             stats_.maxSendLatenessUs=std::max(stats_.maxSendLatenessUs,now-due);
             stats_.maxPlannedSendLatenessUs=std::max(stats_.maxPlannedSendLatenessUs,now-pacer_.plannedDue(nextIndex_));
             const auto* f=cache_.find(currentId_);
+            auto finished=now;
             if(f) {
                 auto index=config_.faults.reverseInitial?static_cast<std::uint16_t>(currentCount_-1-nextIndex_):nextIndex_;
-                transmit(*f,index,false,now,send);
+                finished=transmit(*f,index,false,now,send);
             }
             // Preserve the legacy dispatch-start pacing anchor; work time never resets TS.
             pacer_.emitted(now);
-            const auto finished=clockNow(now);
+            // Actual final send completion is retained before trace/counter work.
+            // The runner reads a fresh clock for its next scheduling decision.
             ++nextIndex_;
             if(nextIndex_==currentCount_) {
                 // Legacy field retains its pre-work tick-entry span for historical compatibility.

@@ -57,19 +57,72 @@ int main() {
             require(w.events.front().sequence==89&&w.events.front().atUs==88);
             require(w.events.back().sequence==603&&w.events.back().atUs==603);
         }},
-        {"trace bounds incident count and accounts for every suppressed trigger",[] {
+        {"trace reserves per-reason slots and retains worst incidents with honest accounting",[] {
             TimingTrace trace;
-            for(unsigned window=0;window<10;++window) {
-                trace.record(TraceKind::Sample,window*1000,window);
-                trace.trigger(TraceReason::SamplingDeviation,window*1000,window,1000);
-                if(window<8)trace.trigger(TraceReason::InitialAbandoned,window*1000,window,3);
-                for(unsigned i=0;i<128;++i)trace.record(TraceKind::SendEnd,window*1000+i,window,i);
+            // Even an ongoing stream of waiting incidents cannot occupy another reason's quota.
+            for(unsigned i=0;i<20;++i) {
+                trace.record(TraceKind::WaitEnd,i,1);
+                trace.trigger(TraceReason::WaitLateness,i,1,1000+i);
             }
+            for(std::size_t reason=0;reason<TraceReasonCount;++reason)if(reason!=3) {
+                trace.record(TraceKind::Sample,100+reason,2);
+                trace.trigger(static_cast<TraceReason>(reason),100+reason,2,2000);
+            }
+            trace.trigger(TraceReason::WaitLateness,200,1,500);
             const auto r=trace.report();
-            require(r.windows.size()==8&&r.totalTriggers==18&&r.triggersNotCaptured==10);
-            require(r.triggersByReason[0]==10&&r.notCapturedByReason[0]==2);
-            require(r.triggersByReason[2]==8&&r.notCapturedByReason[2]==8);
-            for(const auto& w:r.windows)require(w.complete&&w.afterCount==128&&w.events.size()<=640);
+            require(r.windows.size()==7&&r.totalTriggers==26&&r.windowsEvicted==18&&r.triggersNotCaptured==1);
+            require(r.totalTriggers==r.windows.size()+r.windowsEvicted+r.triggersNotCaptured);
+            require(r.evictedByReason[3]==18&&r.notCapturedByReason[3]==1);
+            for(std::size_t reason=0;reason<TraceReasonCount;++reason) {
+                std::size_t retained=0;
+                for(const auto& w:r.windows)if(static_cast<std::size_t>(w.reason)==reason)++retained;
+                require(retained==(reason==3?2u:1u),"waiting incident displaced another reason");
+                require(r.triggersByReason[reason]==retained+r.evictedByReason[reason]+r.notCapturedByReason[reason]);
+            }
+        }},
+        {"all trace quotas retain top two values and overlapping post-windows stay bounded",[] {
+            TimingTrace trace;std::uint64_t sequence=0;
+            for(std::size_t reason=0;reason<TraceReasonCount;++reason) {
+                for(const auto value:{1000u,2000u,1500u,500u,1500u}) {
+                    trace.record(TraceKind::Sample,++sequence,static_cast<std::uint32_t>(reason));
+                    trace.trigger(static_cast<TraceReason>(reason),sequence,static_cast<std::uint32_t>(reason),value);
+                }
+            }
+            for(unsigned i=0;i<128;++i)trace.record(TraceKind::WaitEnd,++sequence);
+            const auto r=trace.report();
+            require(r.windows.size()==TimingTrace::WindowCapacity&&r.windows.size()==12);
+            require(r.totalTriggers==30&&r.windowsEvicted==6&&r.triggersNotCaptured==12);
+            for(const auto& w:r.windows) {
+                require(w.value==1500||w.value==2000,"retention did not preserve greatest severity");
+                require(w.complete&&w.afterCount==TimingTrace::AfterCapacity&&w.events.size()==w.beforeCount+w.afterCount);
+                require(w.events.size()<=TimingTrace::BeforeCapacity+TimingTrace::AfterCapacity);
+                for(std::size_t i=1;i<w.events.size();++i)require(w.events[i].sequence==w.events[i-1].sequence+1);
+            }
+        }},
+        {"equal-severity tie retains earlier trigger even without intervening events",[] {
+            TimingTrace trace;trace.record(TraceKind::WaitEnd,0);
+            trace.trigger(TraceReason::WaitLateness,0,1,1000);
+            trace.trigger(TraceReason::WaitLateness,0,2,1000);
+            trace.trigger(TraceReason::WaitLateness,0,3,2000);
+            const auto r=trace.report();
+            require(r.windows.size()==2&&r.windowsEvicted==1);
+            require(std::any_of(r.windows.begin(),r.windows.end(),[](const auto& w){return w.logicId==1;}));
+            require(std::none_of(r.windows.begin(),r.windows.end(),[](const auto& w){return w.logicId==2;}));
+        }},
+        {"replacing an active window resets post-count and stop freezes partial windows",[] {
+            TimingTrace trace;
+            trace.record(TraceKind::Sample,0,1);trace.trigger(TraceReason::SamplingDeviation,0,1,1000);
+            for(unsigned i=1;i<=10;++i)trace.record(TraceKind::WaitEnd,i);
+            trace.trigger(TraceReason::SamplingDeviation,10,2,2000);
+            for(unsigned i=11;i<=20;++i)trace.record(TraceKind::WaitEnd,i);
+            trace.trigger(TraceReason::SamplingDeviation,20,3,3000);
+            for(unsigned i=21;i<=23;++i)trace.record(TraceKind::WaitEnd,i);
+            trace.finish();trace.record(TraceKind::Stop,24);
+            const auto r=trace.report();
+            require(r.windows.size()==2&&r.windowsEvicted==1&&r.triggersNotCaptured==0);
+            require(r.windows[0].value==2000&&r.windows[0].afterCount==13&&!r.windows[0].complete);
+            require(r.windows[1].value==3000&&r.windows[1].afterCount==3&&!r.windows[1].complete);
+            for(const auto& w:r.windows)require(w.events.back().atUs==23);
         }},
         {"compact states preserve existing fault, retry and UI strings",[] {
             auto c=small();c.faults.dropFirst.insert(0);c.faults.duplicateFirst.insert(1);
@@ -130,9 +183,25 @@ int main() {
             const auto s=stream.snapshot(now);const auto r=stream.timingTrace().report();
             require(s.stats.actualInitialDeadlineMisses==1&&s.stats.deadlineMisses==0);
             require(s.stats.lastSampleToInitialEndUs==15001&&s.stats.initialFullySubmittedFrames==1);
-            require(r.windows.size()==1&&r.windows[0].reason==TraceReason::InitialDeadline);
-            require(r.windows[0].triggerUs==15001&&r.windows[0].value==15001);
-            require(r.windows[0].events.back().kind==TraceKind::InitialEnd);
+            require(r.windows.size()==2,"slow send and initial deadline must both be retained");
+            const auto found=std::find_if(r.windows.begin(),r.windows.end(),[](const auto& w){return w.reason==TraceReason::InitialDeadline;});
+            require(found!=r.windows.end()&&found->triggerUs==15001&&found->value==15001);
+            require(found->events.back().kind==TraceKind::InitialEnd);
+        }},
+        {"initial completion excludes post-send diagnostic bookkeeping observations",[] {
+            bool sent=false;unsigned postSendClockReads=0;
+            RealtimeStream stream(small(10),0,[&] {
+                if(!sent)return std::uint64_t(0);
+                return ++postSendClockReads==1?std::uint64_t(1500):std::uint64_t(20000);
+            });
+            stream.tick(0,[&](const std::uint8_t*,std::size_t){sent=true;return true;});
+            const auto s=stream.snapshot(20000);
+            require(postSendClockReads==1,"completion was remeasured after diagnostic work");
+            require(s.stats.lastSampleToInitialEndUs==1500&&s.initialDuration.maxUs==1500&&s.initialCallSpan.maxUs==1500);
+            require(s.stats.actualInitialDeadlineMisses==0&&s.stats.lastInitialDurationUs==0);
+            const auto r=stream.timingTrace().report();
+            require(r.windows.size()==1&&r.windows[0].reason==TraceReason::SlowSend);
+            require(r.windows[0].events.back().kind==TraceKind::InitialEnd&&r.windows[0].events.back().atUs==1500);
         }},
         {"one millisecond period deviation triggers while metrics retain original meaning",[] {
             RealtimeStream stream(small(10),0);
@@ -166,7 +235,7 @@ int main() {
             stream.timingTrace().record(TraceKind::CommandsBegin,now+=10,stream.currentLogicId());
             stream.stop(now+=10);stream.timingTrace().finish();
             const auto report=stream.timingTrace().report();
-            require(report.windows.size()==1);
+            require(report.windows.size()==2,"replacement and explicit stop need separate retained windows");
             const auto& events=report.windows[0].events;
             for(std::size_t i=1;i<events.size();++i)require(events[i].atUs>=events[i-1].atUs,"trace observation timestamps moved backwards");
             require(events.back().kind==TraceKind::Stop&&events.back().atUs==now);
@@ -240,6 +309,49 @@ int main() {
                 }
             }
             require(a.timingTrace().report().totalEvents>0&&b.timingTrace().report().totalEvents==0);
+        }},
+        {"sample trigger retains both timestamps even after prior sample leaves rolling history",[] {
+            RealtimeStream stream(small(10),0);stream.tick(0,accept);
+            for(unsigned i=0;i<700;++i)stream.timingTrace().record(TraceKind::WaitBegin,100+i);
+            stream.tick(21000,accept);
+            const auto r=stream.timingTrace().report();const auto& w=r.windows.at(0);const auto& c=w.context;
+            require(w.reason==TraceReason::SamplingDeviation&&c.present&&c.hasPrevious);
+            require(c.previousStartUs==0&&c.currentStartUs==21000&&c.previousPlannedUs==0&&c.currentPlannedUs==20000);
+            require(c.previousLogicId==1&&w.logicId==2&&c.hasPlanned);
+            require(std::none_of(w.events.begin(),w.events.end(),[](const auto& e){return e.kind==TraceKind::Sample&&e.atUs==0;}));
+        }},
+        {"exact-threshold gap trace preserves reverse-order neighboring calls and failed result",[] {
+            auto c=small(2870);c.faults.reverseInitial=true;
+            RealtimeStream stream(c,0);
+            const auto reject=[](const std::uint8_t*,std::size_t){return false;};
+            stream.tick(0,reject);stream.tick(1020,reject);
+            const auto r=stream.timingTrace().report();const auto& w=r.windows.at(0);const auto& x=w.context;
+            require(w.reason==TraceReason::InitialPacketGap&&w.value==1000&&w.triggerUs==1020);
+            require(x.present&&x.hasPrevious&&x.previousStartUs==0&&x.previousEndUs==0&&x.currentStartUs==1020&&x.currentEndUs==1020);
+            require(x.previousPlannedUs==0&&x.currentPlannedUs==20&&x.previousLogicId==1);
+            require(x.previousOrdinal==0&&x.ordinal==1&&x.previousFragmentIndex==2&&x.fragmentIndex==1);
+            require(x.traffic==TraceTraffic::InitialFirst&&x.sendResultKnown&&!x.accepted);
+            require(stream.snapshot(1020).stats.initialPacketGapViolations==1);
+        }},
+        {"slow send threshold and duplicate retry identity survive per-reason replacement",[] {
+            std::uint64_t now=0;auto c=small(10);c.faults.duplicateFirst.insert(0);
+            RealtimeStream stream(c,0,[&]{return now;});unsigned calls=0;
+            auto send=[&](const std::uint8_t*,std::size_t){now+=1000+100*calls++;return true;};
+            stream.tick(0,send);
+            auto r=stream.timingTrace().report();
+            require(r.windows.size()==2&&r.windows[0].value==1000&&r.windows[0].context.traffic==TraceTraffic::InitialFirst);
+            require(r.windows[1].value==1100&&r.windows[1].context.traffic==TraceTraffic::InitialDuplicate);
+            Nack nack;nack.logicId=1;nack.ranges.push_back({0,1});stream.acceptNack(nack);
+            now=3000;stream.tick(now,send);r=stream.timingTrace().report();
+            require(r.windows.size()==2&&r.windowsEvicted==1&&r.triggersNotCaptured==0);
+            const auto found=std::find_if(r.windows.begin(),r.windows.end(),[](const auto& w){return w.context.traffic==TraceTraffic::Retry;});
+            require(found!=r.windows.end()&&found->value==1200&&found->context.ordinal==UINT16_MAX&&!found->context.hasPlanned);
+            require(found->context.sendResultKnown&&found->context.accepted&&found->context.fragmentIndex==0);
+            require(found->context.currentStartUs==3000&&found->context.currentEndUs==4200);
+            require(std::any_of(found->events.begin(),found->events.end(),[](const auto& e){return e.kind==TraceKind::SendEnd&&e.traffic==TraceTraffic::Retry;}));
+            std::uint64_t fastNow=0;RealtimeStream fast(small(10),0,[&]{return fastNow;});
+            fast.tick(0,[&](const std::uint8_t*,std::size_t){fastNow=999;return true;});
+            require(fast.timingTrace().report().totalTriggers==0,"999us send must not trigger 1000us threshold");
         }},
         {"sampling violation counts include equality without relying on trace",[] {
             auto c=small(10);c.timingTraceEnabled=false;

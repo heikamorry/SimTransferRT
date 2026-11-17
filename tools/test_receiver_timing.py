@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from receiver_model import ReceiverModel, TimingHistogram
-from rt_protocol import STEP, build_modules, decode_nack, encode_data
+from rt_protocol import STEP, ProtocolError, build_modules, decode_data, decode_modules, decode_nack, encode_data
 from udp_feedback_stub import ReceiverRuntime, parser
 
 
@@ -34,7 +34,7 @@ class ReceiverTimingTests(unittest.TestCase):
 
     def test_no_observations_are_not_passing_samples(self):
         timing = self.timing(ReceiverModel())
-        self.assertEqual(timing['version'], 1)
+        self.assertEqual(timing['version'], 2)
         self.assertTrue(all(value == 0 for value in timing['evidence'].values()))
         for histogram in timing['histograms'].values():
             self.assertFalse(histogram['observed'])
@@ -54,6 +54,97 @@ class ReceiverTimingTests(unittest.TestCase):
         self.assertEqual(timing['evidence']['discovered_fragments'], 0)
         self.assertEqual(timing['events']['total'], 1)
         self.assertEqual(timing['events']['records'][0]['kind'], 'frame_complete')
+        self.assertIsNone(timing['events']['records'][0]['validation_completed_us'])
+        self.assertFalse(timing['histograms']['frame_first_seen_to_validation_complete']['observed'])
+
+    def test_validation_completion_includes_final_decode_and_module_checks(self):
+        now = [0.0]
+        callback_times = []
+        def complete(*args):
+            callback_times.append(now[0])
+            now[0] += .010  # Callback time is deliberately outside validation.
+        model = ReceiverModel(complete, clock=lambda: now[0], completion_clock=lambda: now[0])
+        wires = packets(fragments=2)
+        model.ingest(wires[0], 0)
+        now[0] = .000080
+        def timed_decode(packet):
+            value = decode_data(packet)
+            now[0] += .000040
+            return value
+        def timed_modules(mask, body):
+            value = decode_modules(mask, body)
+            now[0] += .000160
+            return value
+        with patch('receiver_model.decode_data', side_effect=timed_decode), \
+                patch('receiver_model.decode_modules', side_effect=timed_modules):
+            model.ingest(wires[1], .000080)
+        timing = self.timing(model)
+        hist = timing['histograms']
+        self.assertEqual(hist['frame_first_seen_to_complete']['max_us'], 80)
+        self.assertEqual(hist['frame_first_seen_to_validation_complete']['max_us'], 280)
+        self.assertEqual(hist['last_ingest_to_validation_complete']['max_us'], 200)
+        self.assertEqual(timing['evidence']['validation_completed_frames'], 1)
+        self.assertEqual(timing['events']['version'], 2)
+        event = timing['events']['records'][0]
+        self.assertEqual((event['at_us'], event['validation_completed_us']), (80, 280))
+        self.assertAlmostEqual(callback_times[0], .000280)
+        report = model.report_details(now[0])
+        self.assertAlmostEqual(report['last_completed']['monotonic_s'], .000080)
+        self.assertAlmostEqual(report['last_validation_completed']['monotonic_s'], .000280)
+        self.assertAlmostEqual(report['last_validation_complete_age_s'], .010)
+
+    def test_completion_clock_does_not_advance_nack_logical_time(self):
+        model = ReceiverModel(completion_clock=lambda: .050)
+        gap(model)
+        self.assertEqual(count_requests(model.poll(0)), 1)
+        model.ingest(packets(2, fragments=1)[0], .001)
+        self.assertEqual(model._last_now, .001)
+        self.assertEqual(count_requests(model.poll(.010)), 1)
+        timing = self.timing(model)
+        self.assertEqual(timing['histograms']['request_interval']['max_us'], 10000)
+        self.assertEqual(timing['histograms']['frame_first_seen_to_validation_complete']['max_us'], 49000)
+        self.assertEqual(model.stats['expired'], 0)
+
+    def test_failed_validation_never_records_a_completion_timestamp(self):
+        for failure in ('crc', 'modules'):
+            with self.subTest(failure=failure):
+                with patch('receiver_model.time.monotonic') as completion_clock:
+                    model = ReceiverModel(completion_clock=completion_clock)
+                    wire = packets(fragments=1)[0]
+                    if failure == 'crc':
+                        wire = wire[:-1] + bytes([wire[-1] ^ 1])
+                        model.ingest(wire, 0)
+                    else:
+                        with patch('receiver_model.decode_modules', side_effect=ProtocolError('bad modules')):
+                            model.ingest(wire, 0)
+                    completion_clock.assert_not_called()
+                self.assertEqual(model.stats['completed'], 0)
+                self.assertFalse(self.timing(model)['histograms']['frame_first_seen_to_validation_complete']['observed'])
+
+    def test_invalid_completion_observation_does_not_change_delivery(self):
+        for timestamp in (-1, float('nan'), float('inf')):
+            with self.subTest(timestamp=timestamp):
+                model = ReceiverModel(completion_clock=lambda: timestamp)
+                model.ingest(packets(fragments=1)[0], 0)
+                timing = self.timing(model)
+                self.assertEqual(model.stats['completed'], 1)
+                self.assertEqual(timing['evidence']['invalid_completion_timestamps'], 1)
+                self.assertFalse(timing['histograms']['frame_first_seen_to_validation_complete']['observed'])
+                self.assertIsNone(timing['events']['records'][0]['validation_completed_us'])
+
+    def test_runtime_injects_same_completion_clock_as_ingress(self):
+        now = [5.0]
+        with patch('udp_feedback_stub.provenance', return_value={'pid': 1}):
+            runtime = ReceiverRuntime(parser().parse_args(['--quiet']), clock=lambda: now[0])
+        def timed_modules(mask, body):
+            result = decode_modules(mask, body)
+            now[0] += .002
+            return result
+        with patch('receiver_model.decode_modules', side_effect=timed_modules):
+            runtime.model.ingest(packets(fragments=1)[0], 5.0)
+        report = runtime.report()
+        self.assertEqual(report['receiver_timing']['histograms']['frame_first_seen_to_validation_complete']['max_us'], 2000)
+        self.assertEqual(report['receiver_timing']['histograms']['frame_first_seen_to_complete']['max_us'], 0)
 
     def test_delayed_first_poll_and_exact_retry_expiry_boundaries(self):
         model = ReceiverModel()

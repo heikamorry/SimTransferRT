@@ -45,6 +45,9 @@ namespace {
         std::uint64_t sendCostUs=2,receiveCostUs=5,initialPackets=0,retryPackets=0;
         std::uint32_t newestLogic=0;
         std::set<std::uint32_t> initialLogicIds,masks;
+        std::vector<DataPacket> firstFragments;
+        std::function<void()> onReceive;
+        std::function<void(const DataPacket&)> onSend;
         std::uint64_t firstTailFinishedUs=0;
         void open(const StreamConfig&)override {
             owner=std::this_thread::get_id();opened=true;
@@ -61,7 +64,9 @@ namespace {
                 ++initialPackets;
                 initialLogicIds.insert(packet.logicId);
                 masks.insert(packet.moduleMask);
+                if(packet.fragmentIndex==0)firstFragments.push_back(packet);
             }
+            if(onSend)onSend(packet);
             if(delayFirstTail&&!packet.retransmission&&packet.logicId==1&&
                packet.fragmentIndex+1==packet.fragmentCount) {
                 clock.now+=4800;
@@ -71,6 +76,7 @@ namespace {
         }
         bool receive(IncomingDatagram& datagram)override {
             sameOwner();
+            if(onReceive)onReceive();
             if(!flood||!newestLogic)return false;
             clock.now+=receiveCostUs;
             const auto packet=encodeNack(Nack{newestLogic,{{0,1}}});
@@ -96,6 +102,13 @@ namespace {
         config.runId="virtual-stability";
         config.frameLimit=frames;
         config.modules[0].dataBytes=1048571; // Full frame remains 1 MiB / 731 fragments.
+        return config;
+    }
+    StreamConfig smallConfiguration(std::uint64_t frames) {
+        auto config=configuration(frames);
+        config.modules[0].dataBytes=10;
+        ModuleConfig alternative;alternative.id=1;alternative.online=false;alternative.dataBytes=10;
+        config.modules.push_back(alternative);
         return config;
     }
     Snapshot run(StreamConfig config,FakeUdp& udp,CommandDispatcher& commands,
@@ -295,6 +308,233 @@ namespace {
                 begin.value==plannedWake&&end.value==plannedWake&&begin.atUs<plannedWake&&
                 end.atUs==plannedWake+1500,"wait trace must preserve the future deadline and actual return time");
     }
+    void testLateWakeSamplesBeforeFeedbackAndQueuedMask() {
+        VirtualClock clock;FakeUdp udp(clock);CommandDispatcher commands;
+        std::vector<Observation> observations;
+        auto hooks=clock.hooks();
+        const auto ordinaryWait=hooks.waitUntil;
+        bool overslept=false;
+        hooks.waitUntil=[&](std::uint64_t deadline) {
+            ordinaryWait(deadline);
+            if(!overslept&&deadline>=clock.start+20000) {
+                clock.now=clock.start+20500;overslept=true;
+                Command mask;mask.kind=Command::Kind::SetMask;mask.mask=2;
+                require(commands.post(mask),"deadline mask must enter the queue");
+            }
+        };
+        const auto noOverdueLowPriorityWork=[&] {
+            if(overslept)require(udp.firstFragments.size()>=2,
+                "late wake dispatched low-priority work before the already-due sample");
+        };
+        udp.onReceive=noOverdueLowPriorityWork;
+        hooks.pollControl=noOverdueLowPriorityWork;
+        const auto result=runStream(smallConfiguration(3),udp,commands,[&](const Snapshot& snapshot) {
+            observations.push_back({clock.now,snapshot});
+        },[](const std::string&){},hooks);
+        requireFinal(result,observations);
+        require(overslept&&udp.firstFragments.size()==3,"late-wake fixture did not produce three frames");
+        require(udp.firstFragments[1].timestampUs==clock.start+20500,
+                "second sample must use the wait-return time without feedback delay");
+        require(udp.firstFragments[1].moduleMask==1&&udp.firstFragments[2].moduleMask==2,
+                "a mask queued at the deadline applies only after command dispatch, on the following sample");
+    }
+    void testReceiveCrossingDeadlineYieldsBeforeNextItem() {
+        VirtualClock clock;FakeUdp udp(clock);CommandDispatcher commands;
+        std::vector<Observation> observations;
+        bool crossed=false;
+        udp.onReceive=[&] {
+            if(crossed)require(udp.firstFragments.size()>=2,
+                "receive loop started another item before servicing the crossed sampling deadline");
+            if(!crossed&&clock.now>=clock.start+19000&&clock.now<clock.start+20000) {
+                clock.now=clock.start+20020;crossed=true;udp.flood=true;
+            }
+        };
+        auto hooks=clock.hooks();
+        hooks.pollControl=[&] {
+            if(crossed)require(udp.firstFragments.size()>=2,
+                "control polling delayed a sample after receive crossed its deadline");
+        };
+        const auto result=runStream(smallConfiguration(3),udp,commands,[&](const Snapshot& snapshot) {
+            observations.push_back({clock.now,snapshot});
+        },[](const std::string&){},hooks);
+        requireFinal(result,observations);
+        require(crossed&&udp.firstFragments[1].timestampUs==clock.start+20020+udp.receiveCostUs,
+                "sample must run immediately after the indivisible receive/decode item returns");
+        require(result.stats.feedbackBudgetHits>0,"an over-budget receive item must be counted");
+        require(result.stats.nacks>0&&udp.retryPackets>0,"yielding feedback must still process and send NACK retries");
+    }
+    void testSlowControlPollYieldsBeforeQueuedCommands() {
+        VirtualClock clock;FakeUdp udp(clock);CommandDispatcher commands;
+        std::vector<Observation> observations;
+        bool crossed=false;
+        auto hooks=clock.hooks();
+        hooks.pollControl=[&] {
+            if(!crossed&&clock.now>=clock.start+19000&&clock.now<clock.start+20000) {
+                Command mask;mask.kind=Command::Kind::SetMask;mask.mask=2;
+                require(commands.post(mask),"slow poll must queue its mask");
+                clock.now=clock.start+20010;crossed=true;
+            }
+        };
+        const auto result=runStream(smallConfiguration(3),udp,commands,[&](const Snapshot& snapshot) {
+            observations.push_back({clock.now,snapshot});
+        },[&](const std::string& message) {
+            if(message.find("Module mask applied")==0)
+                require(udp.firstFragments.size()>=2,"slow control poll dispatched a mask before the due sample");
+        },hooks);
+        requireFinal(result,observations);
+        require(crossed&&udp.firstFragments[1].timestampUs==clock.start+20010,
+                "poll return must recheck the sampling deadline before ordinary commands");
+        require(udp.firstFragments[1].moduleMask==1&&udp.firstFragments[2].moduleMask==2,
+                "deferred control command must still affect the next eligible sample");
+        require(result.stats.commandBudgetHits==1,"slow poll ending the command phase must count its budget hit once");
+    }
+    void testSlowCommandYieldsBeforeNextCommand() {
+        VirtualClock clock;FakeUdp udp(clock);CommandDispatcher commands;
+        std::vector<Observation> observations;
+        bool posted=false,crossed=false;
+        clock.onWait=[&] {
+            if(!posted&&clock.now>=clock.start+19000&&clock.now<clock.start+20000) {
+                Command mask;mask.kind=Command::Kind::SetMask;mask.mask=2;
+                require(commands.post(mask),"slow command fixture mask must queue");
+                Command nack;nack.kind=Command::Kind::NackFeedback;nack.nack=Nack{1,{{0,1}}};
+                require(commands.post(nack),"slow command fixture NACK must queue");
+                posted=true;
+            }
+        };
+        udp.onSend=[&](const DataPacket& packet) {
+            if(!packet.retransmission&&packet.logicId==2)
+                require(crossed&&commands.size()==1,"command loop did not yield before dispatching the next NACK");
+        };
+        const auto result=runStream(smallConfiguration(3),udp,commands,[&](const Snapshot& snapshot) {
+            observations.push_back({clock.now,snapshot});
+        },[&](const std::string& message) {
+            if(message.find("Module mask applied")==0) {clock.now=clock.start+20030;crossed=true;}
+        },clock.hooks());
+        requireFinal(result,observations);
+        require(posted&&crossed&&udp.firstFragments[1].timestampUs==clock.start+20030,
+                "sample must run immediately after a command crosses its deadline");
+        require(udp.firstFragments[1].moduleMask==2,"a dispatched mask must affect the next sample");
+        require(result.stats.nacks==1&&udp.retryPackets==1,"yielding the command loop must preserve the queued NACK");
+        require(result.stats.commandBudgetHits==1,"last slow command must count exactly one budget hit");
+    }
+    void testPriorityStopPreventsStartupAndLateWakeSamples() {
+        {
+            VirtualClock clock;FakeUdp udp(clock);CommandDispatcher commands;
+            std::vector<Observation> observations;
+            Command stop;stop.kind=Command::Kind::Stop;require(commands.post(stop),"initial Stop must queue");
+            udp.onReceive=[] {require(false,"queued startup Stop must precede receive");};
+            const auto result=run(smallConfiguration(3),udp,commands,clock,observations);
+            requireFinal(result,observations);
+            require(result.stats.sampled==0&&udp.initialPackets==0,"queued startup Stop must not produce an extra frame");
+        }
+        {
+            VirtualClock clock;FakeUdp udp(clock);CommandDispatcher commands;
+            std::vector<Observation> observations;
+            bool posted=false;
+            clock.onWait=[&] {
+                if(!posted&&clock.now>=clock.start+20000) {
+                    clock.now+=500;
+                    Command stop;stop.kind=Command::Kind::Stop;
+                    require(commands.post(stop),"late-wake Stop must queue");posted=true;
+                }
+            };
+            udp.onReceive=[&] {require(!posted,"late-wake Stop must precede receive");};
+            const auto result=run(smallConfiguration(3),udp,commands,clock,observations);
+            requireFinal(result,observations);
+            require(posted&&result.stats.sampled==1&&udp.initialPackets==1,
+                    "queued Stop must beat an already-due second sample");
+        }
+    }
+    void testSlowEmptyReceiveCountsBudgetHit() {
+        VirtualClock clock;FakeUdp udp(clock);CommandDispatcher commands;
+        std::vector<Observation> observations;
+        bool delayed=false;
+        udp.onReceive=[&] {if(!delayed){clock.now+=80;delayed=true;}};
+        const auto result=run(smallConfiguration(1),udp,commands,clock,observations);
+        requireFinal(result,observations);
+        require(delayed&&result.stats.feedbackBudgetHits==1,
+                "the final empty receive must count its observed 80us budget overrun");
+        require(result.stats.nackDatagramsReceived==0,"empty receive fixture must not invent NACKs");
+    }
+    void testTraceJsonDistinguishesAbsentPlanFromTimeZero() {
+        Snapshot snapshot;
+        snapshot.timingTrace.enabled=true;
+        snapshot.timingTrace.windowsEvicted=3;
+        TimingTraceWindow window;
+        window.reason=TraceReason::SlowSend;
+        window.context.present=true;
+        window.context.traffic=TraceTraffic::Retry;
+        window.context.currentPlannedUs=0;
+        window.context.hasPlanned=false;
+        TimingTraceEvent event;
+        event.kind=TraceKind::SendEnd;event.traffic=TraceTraffic::Retry;
+        window.events.push_back(event);
+        snapshot.timingTrace.windows.push_back(window);
+        const auto noPlan=snapshotJson(snapshot);
+        require(noPlan.find("\"current_planned_us\":null")!=std::string::npos,
+                "retry trace must export an absent nominal initial plan as null");
+        require(noPlan.find("\"has_planned\":false")!=std::string::npos&&
+                noPlan.find("\"traffic\":\"Retry\"")!=std::string::npos&&
+                noPlan.find("\"windows_evicted\":3")!=std::string::npos,
+                "trace JSON must retain plan presence, traffic class and eviction evidence");
+        snapshot.timingTrace.windows[0].context.hasPlanned=true;
+        snapshot.timingTrace.windows[0].context.traffic=TraceTraffic::InitialFirst;
+        const auto zeroPlan=snapshotJson(snapshot);
+        require(zeroPlan.find("\"has_planned\":true")!=std::string::npos&&
+                zeroPlan.find("\"current_planned_us\":0")!=std::string::npos,
+                "a present plan at timestamp zero must not be serialized as missing");
+    }
+    void testCancellationSurvivesContinuousSamplingOverload() {
+        VirtualClock clock;FakeUdp udp(clock);CommandDispatcher commands;
+        std::vector<Observation> observations;
+        udp.sendCostUs=25000; // Every return is already beyond the next 20ms sample.
+        std::size_t ordinaryPolls=0;
+        auto hooks=clock.hooks();
+        hooks.pollControl=[&] {++ordinaryPolls;};
+        hooks.cancelRequested=[&] {return udp.initialPackets>=3;};
+        const auto result=runStream(smallConfiguration(0),udp,commands,[&](const Snapshot& snapshot) {
+            observations.push_back({clock.now,snapshot});
+        },[](const std::string&){},hooks);
+        requireFinal(result,observations);
+        require(ordinaryPolls==1,"overload fixture must leave only the pre-start ordinary control poll");
+        require(result.stats.sampled==3&&udp.initialPackets==3,
+                "priority flag cancellation must stop overload without an extra sampled frame");
+        require(clock.now-clock.start<76000,"overload cancellation must complete at the next scheduling boundary");
+
+        VirtualClock cancelledClock;FakeUdp cancelledUdp(cancelledClock);CommandDispatcher cancelledCommands;
+        std::vector<Observation> cancelledObservations;
+        auto cancelledHooks=cancelledClock.hooks();cancelledHooks.cancelRequested=[] {return true;};
+        const auto cancelled=runStream(smallConfiguration(0),cancelledUdp,cancelledCommands,
+            [&](const Snapshot& snapshot){cancelledObservations.push_back({cancelledClock.now,snapshot});},
+            [](const std::string&){},cancelledHooks);
+        requireFinal(cancelled,cancelledObservations);
+        require(cancelled.stats.sampled==0&&cancelledUdp.initialPackets==0,
+                "an already-set cancellation flag must prevent the initial sample");
+    }
+    void testInterruptedFeedbackResumesWithoutCommandStarvation() {
+        for(const bool slowPoll:{false,true}) {
+            VirtualClock clock;FakeUdp udp(clock);CommandDispatcher commands;
+            std::vector<Observation> observations;
+            udp.flood=!slowPoll;udp.receiveCostUs=22000;
+            Command mask;mask.kind=Command::Kind::SetMask;mask.mask=2;
+            require(commands.post(mask),"feedback-resume mask must queue");
+            if(slowPoll) {
+                Command nack;nack.kind=Command::Kind::NackFeedback;nack.nack=Nack{1,{{0,1}}};
+                require(commands.post(nack),"feedback-resume NACK must queue");
+            }
+            auto hooks=clock.hooks();
+            std::size_t polls=0;
+            hooks.pollControl=[&] {if(++polls>1&&slowPoll)clock.now+=22000;};
+            const auto result=runStream(smallConfiguration(6),udp,commands,[&](const Snapshot& snapshot) {
+                observations.push_back({clock.now,snapshot});
+            },[](const std::string&){},hooks);
+            requireFinal(result,observations);
+            require(udp.firstFragments.size()==6&&udp.firstFragments[2].moduleMask==2,
+                    "repeated slow receive/poll must resume ordinary commands before the third sample");
+            require(result.stats.nacks>0&&udp.retryPackets>0,
+                    "resuming an interrupted feedback phase must preserve NACK processing and retries");
+        }
+    }
 }
 
 int main() {
@@ -306,6 +546,15 @@ int main() {
         {"all-offline final snapshot is complete",testAllOfflineFinalSnapshotIsExplicitlyComplete},
         {"control poll stops before the first snapshot",testControlPollStopsBeforeFirstPublication},
         {"one future wait oversleep records its actual lateness",testFutureWaitOversleepIsMeasuredOnce},
+        {"late wake samples before feedback and queued mask",testLateWakeSamplesBeforeFeedbackAndQueuedMask},
+        {"receive crossing sampling deadline yields before next item",testReceiveCrossingDeadlineYieldsBeforeNextItem},
+        {"slow control poll yields before ordinary commands",testSlowControlPollYieldsBeforeQueuedCommands},
+        {"slow command yields before the next queued command",testSlowCommandYieldsBeforeNextCommand},
+        {"priority Stop prevents startup and late-wake samples",testPriorityStopPreventsStartupAndLateWakeSamples},
+        {"slow final empty receive counts its budget hit",testSlowEmptyReceiveCountsBudgetHit},
+        {"trace JSON distinguishes absent plan from timestamp zero",testTraceJsonDistinguishesAbsentPlanFromTimeZero},
+        {"priority cancellation survives continuous sampling overload",testCancellationSurvivesContinuousSamplingOverload},
+        {"interrupted feedback resumes without starving commands",testInterruptedFeedbackResumesWithoutCommandStarvation},
     };
     std::size_t failures=0;
     for(const auto& test:tests) {

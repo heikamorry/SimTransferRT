@@ -26,6 +26,8 @@ namespace rt {
         const std::uint64_t threadId=0;
 #endif
         bool publishDeferred=false;
+        enum class FeedbackPhase { Receive, ControlPoll, Commands };
+        auto feedbackPhase=FeedbackPhase::Receive;
         constexpr std::uint64_t PublishPeriodUs=100000,MaxPublishDeferralUs=100000,PublishSafetyMarginUs=1000;
         auto nextFeedback=clock(),nextPublish=nextFeedback;
         std::uint64_t lastSendErrors=0;
@@ -33,75 +35,121 @@ namespace rt {
         log("TS source: SIMULATED host monotonic microsecond counter; module bodies: opaque test bytes");
         if(config.cachePolicy==CachePolicy::FifoErratum)log("EXPLICIT ERRATUM MODE: FIFO cache replaces documented logic_id%3 indexing");
         if(config.allowOversubscribed)log("FORMAT-ONLY overload testing allowed; 15ms deadline is NOT assured");
+        // Discover an already-requested local Stop before starting the sampling
+        // clock. Later control polls are ordinary bounded work, never a reason to
+        // postpone a sampling deadline that has already arrived.
+        if(hooks.pollControl)hooks.pollControl();
         stream.resetSchedule(clock());
+        const auto stopRequested=[&] {
+            if(hooks.cancelRequested&&hooks.cancelRequested()) {
+                stream.stop(clock());
+                return true;
+            }
+            if(auto c=commands.takeStop()) {
+                const auto at=clock();
+                if(at>=c->queuedUs)metrics.commandMaxWaitUs=std::max(metrics.commandMaxWaitUs,at-c->queuedUs);
+                stream.stop(at);
+                return true;
+            }
+            return false;
+        };
         while(stream.running()) {
+            // Also runs immediately after waitUntil returns. Only cancellation/Stop
+            // precedes a due sample; receive, control polling and ordinary
+            // commands wait until the next scheduling turn.
+            if(stopRequested())break;
             auto now=clock();
-            if(now>=nextFeedback) {
-                IncomingDatagram d;
-                const auto feedbackStart=clock();
-                for(int i=0;i<32;++i) {
-                    if(i&&clock()-feedbackStart>=50){++metrics.feedbackBudgetHits;break;}
-                    const auto receiveStart=clock();
-                    trace.record(TraceKind::ReceiveBegin,receiveStart,stream.currentLogicId());
-                    const bool received=udp.receive(d);
-                    const auto receiveEnd=clock();
-                    metrics.receiveProfile.add(receiveEnd-receiveStart);
-                    trace.record(TraceKind::ReceiveEnd,receiveEnd,stream.currentLogicId(),received?d.bytes.size():0);
-                    if(!received)break;
-                    ++metrics.nackDatagramsReceived;
-                    if((!config.allowedNackIp.empty()&&config.allowedNackIp!="*"&&d.sourceIp!=config.allowedNackIp)||(config.allowedNackPort&&d.sourcePort!=config.allowedNackPort)) {
-                        stream.rejectedSource();
-                        continue;
+            if(now>=nextFeedback&&now<stream.nextSamplingDeadlineUs()) {
+                if(feedbackPhase==FeedbackPhase::Receive) {
+                    IncomingDatagram d;
+                    const auto feedbackStart=clock();
+                    for(int i=0;i<32;++i) {
+                        if(stopRequested())break;
+                        const auto itemStart=clock();
+                        if(itemStart>=stream.nextSamplingDeadlineUs()||itemStart-feedbackStart>=50)break;
+                        const auto receiveStart=clock();
+                        trace.record(TraceKind::ReceiveBegin,receiveStart,stream.currentLogicId());
+                        const bool received=udp.receive(d);
+                        const auto receiveEnd=clock();
+                        metrics.receiveProfile.add(receiveEnd-receiveStart);
+                        trace.record(TraceKind::ReceiveEnd,receiveEnd,stream.currentLogicId(),received?d.bytes.size():0);
+                        if(!received)break;
+                        ++metrics.nackDatagramsReceived;
+                        if((!config.allowedNackIp.empty()&&config.allowedNackIp!="*"&&d.sourceIp!=config.allowedNackIp)||(config.allowedNackPort&&d.sourcePort!=config.allowedNackPort)) {
+                            stream.rejectedSource();
+                            continue;
+                        }
+                        const auto decodeStart=clock();
+                        try {
+                            Command c;
+                            c.kind=Command::Kind::NackFeedback;
+                            c.nack=decodeNack(d.bytes.data(),d.bytes.size());
+                            ++metrics.nackParsed;
+                            if(!commands.post(std::move(c)))stream.queueRejected();
+                        }
+                        catch(const ProtocolError&) {
+                            stream.badNack();
+                        }
+                        metrics.decodeProfile.add(clock()-decodeStart);
                     }
-                    const auto decodeStart=clock();
-                    try {
-                        Command c;
-                        c.kind=Command::Kind::NackFeedback;
-                        c.nack=decodeNack(d.bytes.data(),d.bytes.size());
-                        ++metrics.nackParsed;
-                        if(!commands.post(std::move(c)))stream.queueRejected();
-                    }
-                    catch(const ProtocolError&) {
-                        stream.badNack();
-                    }
-                    metrics.decodeProfile.add(clock()-decodeStart);
+                    // Count the final item too, including a slow empty receive.
+                    // A budget bounds dispatch, not the duration of a syscall.
+                    if(clock()-feedbackStart>=50)++metrics.feedbackBudgetHits;
+                    feedbackPhase=FeedbackPhase::ControlPoll;
                 }
                 // Bounded work prevents a feedback flood from starving initial DATA transmission.
-                const auto commandStart=clock();
-                trace.record(TraceKind::CommandsBegin,commandStart,stream.currentLogicId());
-                if(hooks.pollControl)hooks.pollControl();
-                metrics.commandQueueHighWater=std::max(metrics.commandQueueHighWater,std::uint64_t(commands.size()));
-                for(int i=0;i<32;++i) {
-                    if(i&&clock()-commandStart>=50){++metrics.commandBudgetHits;break;}
-                    auto c=commands.take();
-                    if(!c)break;
-                    metrics.commandMaxWaitUs=std::max(metrics.commandMaxWaitUs,clock()-c->queuedUs);
-                    if(c->kind==Command::Kind::Stop) {
-                        stream.stop(clock());
-                        break;
-                    }
-                    if(c->kind==Command::Kind::NackFeedback)stream.acceptNack(c->nack);
-                    else if(c->kind==Command::Kind::SetMask) {
-                        try {
-                            stream.setModuleMask(c->mask);
-                            log("Module mask applied at next sample: "+std::to_string(c->mask));
+                if(stream.running()&&!stopRequested()&&clock()<stream.nextSamplingDeadlineUs()) {
+                    const auto commandStart=clock();
+                    trace.record(TraceKind::CommandsBegin,commandStart,stream.currentLogicId());
+                    if(feedbackPhase==FeedbackPhase::ControlPoll&&hooks.pollControl)hooks.pollControl();
+                    feedbackPhase=FeedbackPhase::Commands;
+                    metrics.commandQueueHighWater=std::max(metrics.commandQueueHighWater,std::uint64_t(commands.size()));
+                    bool commandsVisited=false;
+                    for(int i=0;i<32;++i) {
+                        if(stopRequested())break;
+                        const auto itemStart=clock();
+                        if(itemStart>=stream.nextSamplingDeadlineUs()||itemStart-commandStart>=50)break;
+                        commandsVisited=true;
+                        auto c=commands.take();
+                        if(!c)break;
+                        if(itemStart>=c->queuedUs)metrics.commandMaxWaitUs=std::max(metrics.commandMaxWaitUs,itemStart-c->queuedUs);
+                        if(c->kind==Command::Kind::Stop) {
+                            stream.stop(clock());
+                            break;
                         }
-                        catch(const std::exception&e) {
-                            log(std::string("Rejected mask: ")+e.what());
+                        if(c->kind==Command::Kind::NackFeedback)stream.acceptNack(c->nack);
+                        else if(c->kind==Command::Kind::SetMask) {
+                            try {
+                                stream.setModuleMask(c->mask);
+                                log("Module mask applied at next sample: "+std::to_string(c->mask));
+                            }
+                            catch(const std::exception&e) {
+                                log(std::string("Rejected mask: ")+e.what());
+                            }
                         }
                     }
+                    const auto commandEnd=clock();
+                    if(commandEnd-commandStart>=50)++metrics.commandBudgetHits;
+                    metrics.commandProfile.add(commandEnd-commandStart);
+                    trace.record(TraceKind::CommandsEnd,commandEnd,stream.currentLogicId(),commandEnd-commandStart);
+                    // Resume after an interrupted receive/poll instead of
+                    // repeating it forever while ordinary commands starve.
+                    if(commandsVisited&&commandEnd<stream.nextSamplingDeadlineUs())feedbackPhase=FeedbackPhase::Receive;
                 }
-                const auto commandEnd=clock();
-                metrics.commandProfile.add(commandEnd-commandStart);
-                trace.record(TraceKind::CommandsEnd,commandEnd,stream.currentLogicId(),commandEnd-commandStart);
-                nextFeedback=clock()+(stream.initialPending()?100u:1000u);
+                // When sampling interrupts either phase, resume control work on
+                // the following turn instead of deferring it another full poll
+                // interval. A mask still queued at the deadline affects the
+                // first sample AFTER its command is applied, never retroactively.
+                now=clock();
+                if(now<stream.nextSamplingDeadlineUs())nextFeedback=now+(stream.initialPending()?100u:1000u);
             }
+            if(!stream.running()||stopRequested())break;
             now=clock();
             stream.tick(now,[&](const auto*p,std::size_t n) {
                 return udp.send(p,n);
             });
             now=clock();
-            if(now>=nextPublish&&stream.running()) {
+            if(now>=nextPublish&&stream.running()&&now<stream.nextSamplingDeadlineUs()) {
                 const auto samplingDeadline=stream.nextSamplingDeadlineUs();
                 const bool detailed=!stream.initialPending()&&samplingDeadline>=now&&
                     samplingDeadline-now>=PublishSafetyMarginUs;
@@ -159,24 +207,29 @@ namespace rt {
     namespace {
         void writeTimingTrace(std::ostream& o,const Snapshot& snapshot) {
             const auto& trace=snapshot.timingTrace;
-            o<<"  \"timing_trace\": {\"version\":2,\"enabled\":"<<(snapshot.config.timingTraceEnabled?"true":"false")
+            o<<"  \"timing_trace\": {\"version\":3,\"enabled\":"<<(snapshot.config.timingTraceEnabled?"true":"false")
              <<",\"exported\":"<<(trace.enabled?"true":"false")
              <<",\"packet_stage_min_us\":"<<TimingTrace::SlowStageThresholdUs
              <<",\"wait_lateness_event_min_us\":"<<TimingTrace::SlowStageThresholdUs
+             <<",\"slow_send_trigger_min_us\":"<<TimingTrace::SlowSendThresholdUs
              <<",\"wait_lateness_requires_future_deadline\":true"
              <<",\"event_policy\":\"all frame/build/initial and receive/command/publish boundaries; packet stages and future-wait lateness >=100us only; profiles still cover every operation\""
              <<",\"clock\":\"host monotonic microseconds (QPC-derived on Windows), not NIC timestamps\""
-             <<",\"capture_policy\":\"first non-overlapping incidents; fixed event counts, not a fixed time window; overlapping/full-capacity triggers are counted\""
+             <<",\"capture_policy\":\"greatest two values per reason; earlier trigger wins ties; overlapping post-windows allowed; fixed event counts, not fixed time; not a representative sample\""
+             <<",\"sequence_policy\":\"recording order; deferred span start timestamps may precede earlier recorded events\""
+             <<",\"accounting\":\"total_triggers = triggers_not_captured + windows_evicted + retained windows; not_captured means never admitted, evicted means admitted then replaced\""
              <<",\"before_capacity\":"<<TimingTrace::BeforeCapacity<<",\"after_capacity\":"<<TimingTrace::AfterCapacity
+             <<",\"windows_per_reason\":"<<TimingTrace::WindowsPerReason
              <<",\"window_capacity\":"<<TimingTrace::WindowCapacity<<",\"total_events\":"<<trace.totalEvents
              <<",\"total_triggers\":"<<trace.totalTriggers<<",\"triggers_not_captured\":"<<trace.triggersNotCaptured
+             <<",\"windows_evicted\":"<<trace.windowsEvicted
              <<",\"rolling_events_overwritten\":"<<trace.eventsOverwritten
-             <<",\"event_values\":\"Sample=planned sampling deadline before skipped-period adjustment; WaitBegin/WaitEnd=planned wake deadline; InitialBegin=original sample timestamp; InitialEnd=sample-to-last-attempt us; InitialAbandoned=unsent fragment count; EncodeBegin/EncodeEnd/SendBegin/SendEnd=fragment index; PublishBegin=1 detailed/0 light; ReceiveEnd=received bytes; CommandsEnd/PublishEnd=duration us; other events=0\""
+             <<",\"event_values\":\"Sample=planned sampling deadline before skipped-period adjustment; WaitBegin/WaitEnd=planned wake deadline; InitialBegin=original sample timestamp; InitialEnd=sample-to-last-attempt us; InitialAbandoned=unsent fragment count; InitialPacketGap=absolute gap deviation us; EncodeBegin/EncodeEnd/SendBegin/SendEnd=fragment index; PublishBegin=1 detailed/0 light; ReceiveEnd=received bytes; CommandsEnd/PublishEnd=duration us; other events=0\""
              <<",\"triggers_by_reason\": [";
             for(std::size_t i=0;i<trace.triggersByReason.size();++i) {
                 if(i)o<<',';
                 o<<"{\"reason\":\""<<traceReasonName(static_cast<TraceReason>(i))<<"\",\"count\":"<<trace.triggersByReason[i]
-                 <<",\"not_captured\":"<<trace.notCapturedByReason[i]<<'}';
+                 <<",\"not_captured\":"<<trace.notCapturedByReason[i]<<",\"evicted\":"<<trace.evictedByReason[i]<<'}';
             }
             o<<"],\"windows\":[";
             for(std::size_t i=0;i<trace.windows.size();++i) {
@@ -185,12 +238,33 @@ namespace rt {
                 o<<"{\"reason\":\""<<traceReasonName(w.reason)<<"\",\"trigger_us\":"<<w.triggerUs
                  <<",\"trigger_sequence\":"<<w.triggerSequence<<",\"logic_id\":"<<w.logicId<<",\"value\":"<<w.value
                  <<",\"before_count\":"<<w.beforeCount<<",\"after_count\":"<<w.afterCount
-                 <<",\"post_window_complete\":"<<(w.complete?"true":"false")<<",\"events\":[";
+                 <<",\"post_window_complete\":"<<(w.complete?"true":"false")<<",\"context\":";
+                const auto& c=w.context;
+                if(!c.present)o<<"null";
+                else {
+                    o<<"{\"has_previous\":"<<(c.hasPrevious?"true":"false")
+                     <<",\"has_planned\":"<<(c.hasPlanned?"true":"false")
+                     <<",\"traffic\":\""<<traceTrafficName(c.traffic)<<"\""
+                     <<",\"previous_logic_id\":"<<c.previousLogicId
+                     <<",\"previous_start_us\":"<<c.previousStartUs<<",\"previous_end_us\":"<<c.previousEndUs
+                     <<",\"current_start_us\":"<<c.currentStartUs<<",\"current_end_us\":"<<c.currentEndUs
+                     <<",\"previous_planned_us\":"<<(c.hasPrevious&&c.hasPlanned?std::to_string(c.previousPlannedUs):"null")
+                     <<",\"current_planned_us\":"<<(c.hasPlanned?std::to_string(c.currentPlannedUs):"null")
+                     <<",\"previous_fragment_index\":"<<(c.previousFragmentIndex==UINT16_MAX?"null":std::to_string(c.previousFragmentIndex))
+                     <<",\"fragment_index\":"<<(c.fragmentIndex==UINT16_MAX?"null":std::to_string(c.fragmentIndex))
+                     <<",\"previous_ordinal\":"<<(c.previousOrdinal==UINT16_MAX?"null":std::to_string(c.previousOrdinal))
+                     <<",\"ordinal\":"<<(c.ordinal==UINT16_MAX?"null":std::to_string(c.ordinal))
+                     <<",\"send_result_known\":"<<(c.sendResultKnown?"true":"false")
+                     <<",\"accepted\":"<<(c.sendResultKnown?(c.accepted?"true":"false"):"null")<<'}';
+                }
+                o<<",\"events\":[";
                 for(std::size_t j=0;j<w.events.size();++j) {
                     if(j)o<<',';
                     const auto& e=w.events[j];
                     o<<"{\"sequence\":"<<e.sequence<<",\"at_us\":"<<e.atUs<<",\"kind\":\""<<traceKindName(e.kind)
-                     <<"\",\"logic_id\":"<<e.logicId<<",\"value\":"<<e.value<<'}';
+                     <<"\",\"logic_id\":"<<e.logicId<<",\"value\":"<<e.value
+                     <<",\"traffic\":\""<<traceTrafficName(e.traffic)<<"\",\"ordinal\":"
+                     <<(e.ordinal==UINT16_MAX?"null":std::to_string(e.ordinal))<<'}';
                 }
                 o<<"]}";
             }

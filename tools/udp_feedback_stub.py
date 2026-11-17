@@ -56,7 +56,7 @@ class ReceiverRuntime:
         self.last_warning = {}
         self.trace = deque(maxlen=args.trace_limit)
         self.trace_records = 0
-        self.model = ReceiverModel(self.complete)
+        self.model = ReceiverModel(self.complete, clock=clock, completion_clock=clock)
         self.started = self.clock()
         self.started_utc = datetime.now(timezone.utc).isoformat()
         self.info = provenance()
@@ -241,7 +241,7 @@ class ReceiverRuntime:
             report['receiver_timing']['runtime'] = dict(
                 mode='drain: no protocol timing observations' if self.args.drain else 'diagnostic reassembly/NACK',
                 duplicate_nack_injection=self.args.duplicate_nack,
-                observation_points='ingest/poll processing timestamps; request generation precedes socket sendto',
+                observation_points='ingest/poll entry timestamps; validation completion uses a fresh same-clock read after CRC/reassembly/module checks, before callback; request generation precedes socket sendto',
                 poll_cadence='after at most 64 datagrams or a checked 250us batch; select timeout 1ms; OS scheduling can exceed these budgets')
         report.update(self.metrics)
         report.update(report_schema_version=2, run_id=self.args.run_id, environment=self.info,

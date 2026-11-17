@@ -70,7 +70,9 @@ def _number(value):
 
 def _hist(report, name):
     timing = report.get('receiver_timing', {})
-    if not isinstance(timing, dict) or timing.get('version') != 1:
+    if not isinstance(timing, dict) or timing.get('version') not in (1, 2):
+        return None
+    if name in ('frame_first_seen_to_validation_complete', 'last_ingest_to_validation_complete') and timing['version'] < 2:
         return None
     histograms = timing.get('histograms', {})
     h = histograms.get(name) if isinstance(histograms, dict) else None
@@ -114,7 +116,7 @@ def sender_rows(sender):
 
 def receiver_rows(report):
     t = report.get('receiver_timing', {})
-    e = t.get('evidence', {}) if isinstance(t, dict) and t.get('version') == 1 else {}
+    e = t.get('evidence', {}) if isinstance(t, dict) and t.get('version') in (1, 2) else {}
     if not isinstance(e, dict): e = {}
     rows = []
     def add_metric(identifier, requirement, name, threshold, *, violations=None, expected=None,
@@ -184,9 +186,15 @@ def receiver_rows(report):
     add_metric('nack_recovery', '请求缺片补回耗时', 'first_request_to_recovery',
                '协议未给固定RTT上限；不依赖重传flags', evaluate=False,
                reason='首请求到补回；最后请求到补回另见原始直方图。')
-    add_metric('receiver_reassembly_timing', '接收重组耗时', 'frame_first_seen_to_complete',
-               '首片用户态处理到完整重组；无独立固定上限', evaluate=False,
-               expected='completed_frames', reason='不是采样到屏幕的端到端延迟。')
+    add_metric('receiver_ingest_span', '首片至末片进入处理跨度（旧指标）', 'frame_first_seen_to_complete',
+               '首片至末片进入ingest；无独立固定上限', evaluate=False,
+               expected='completed_frames', reason='保留旧数值口径；不含末片CRC、拼接和模块校验的处理尾耗时。')
+    add_metric('receiver_reassembly_timing', '首片处理入口至重组校验完成', 'frame_first_seen_to_validation_complete',
+               '末片CRC、完整帧拼接及模块校验后重新读时钟；无独立固定上限', evaluate=False,
+               expected='validation_completed_frames', reason='需要v2完成时钟观测；不含回调/渲染，不是发送采样到屏幕的端到端延迟。')
+    add_metric('receiver_validation_tail', '末片处理入口至重组校验完成', 'last_ingest_to_validation_complete',
+               '末片ingest入口至校验后时钟；无独立固定上限', evaluate=False,
+               expected='validation_completed_frames', reason='包含末片解码、CRC、拼接和模块校验；墙钟跨度不等于纯CPU耗时。')
     rows.append(row('receiver_delivery', '收发联合完整性',
                     '成功构建帧ID与接收终态清单逐一核对', '按本次场景的预期接收结局',
                     f'本地完整={report.get("completed", "未检测")}，作废={report.get("expired", "未检测")}',
@@ -212,7 +220,7 @@ def combined_acceptance(sender, receiver, summary):
     process_ok = (type(summary.get('sender_exit')) is int and summary['sender_exit'] == 0 and
                   type(summary.get('receiver_exit')) is int and summary['receiver_exit'] == 0 and
                   summary.get('failure') is None)
-    full = (summary.get('case') in ('A1', 'B64', 'B1', 'C', 'CRC') and
+    full = (summary.get('case') in ('A64', 'A1', 'B64', 'B1', 'C', 'CRC') and
             not str(receiver.get('mode', '')).startswith('drain'))
     # Recompute from original reports instead of trusting a summary's claim.
     # Late import avoids the orchestrator/report-renderer import cycle.

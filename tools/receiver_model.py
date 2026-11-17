@@ -10,6 +10,7 @@ from bisect import bisect_left
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 import heapq
+import math
 import time
 from rt_protocol import Data, ProtocolError, decode_data, decode_modules, nack_packets, newer
 
@@ -104,7 +105,7 @@ class ReceiverModel:
     TAIL_SECONDS, RETRY_SECONDS, EPSILON = 0.002, 0.010, 1e-9
     TIMING_EVENT_CAPACITY, TIMING_EVENT_FRAGMENT_LIMIT = 128, 8
 
-    def __init__(self, on_complete=None, *, clock=time.monotonic,
+    def __init__(self, on_complete=None, *, clock=time.monotonic, completion_clock=None,
                  replay_window=4096, max_active=32):
         if replay_window < 256 or max_active < 1:
             raise ValueError('replay_window >= 256 and max_active >= 1 required')
@@ -119,6 +120,10 @@ class ReceiverModel:
                           tail_registrations=0, timer_high_water=0,
                           timer_compactions=0, max_timer_lateness_us=0)
         self.on_complete, self.clock = on_complete, clock
+        # Explicit opt-in: callers passing virtual ingest times must not silently
+        # combine them with a real wall clock. Runtime supplies the same clock
+        # for ingress and post-validation observations. This never advances _now.
+        self.completion_clock = completion_clock
         self.max_active, self.replay_window = max_active, replay_window
         self._latest, self._retired_bits = None, 0
         self._replay_mask = (1 << replay_window) - 1
@@ -126,7 +131,8 @@ class ReceiverModel:
         self._ready = OrderedDict()
         self._last_now = None
         self._events = dict(first_received=None, last_received=None,
-                            first_completed=None, last_completed=None)
+                            first_completed=None, last_completed=None,
+                            first_validation_completed=None, last_validation_completed=None)
         self._manifest = {key: FrameRanges() for key in
                           ('seen', 'completed', 'expired', 'resource_limit',
                            'metadata_mismatch', 'module_invalid')}
@@ -137,6 +143,7 @@ class ReceiverModel:
             'tail_silence_age', 'tail_newer_frame_age', 'third_request_to_expiry',
             'missing_discovery_to_frame_expiry', 'first_request_to_recovery',
             'last_request_to_recovery', 'frame_first_seen_to_complete',
+            'frame_first_seen_to_validation_complete', 'last_ingest_to_validation_complete',
             'frame_first_seen_to_expiry')}
         self._timing_evidence = dict(discovered_fragments=0, first_requests=0,
             retry_intervals=0, early_retry_intervals=0, third_expiry_fragments=0,
@@ -145,7 +152,8 @@ class ReceiverModel:
             recovered_fragments=0, recovered_without_retry_flag=0,
             resolved_before_first_request=0, tail_silence_discoveries=0,
             tail_newer_frame_discoveries=0, late_request_deadlines=0,
-            cancelled_missing_fragments=0)
+            cancelled_missing_fragments=0, validation_completed_frames=0,
+            invalid_completion_timestamps=0)
         self._timing_events = deque(maxlen=self.TIMING_EVENT_CAPACITY)
         self._timing_event_total = 0
 
@@ -194,13 +202,20 @@ class ReceiverModel:
         histograms['request_scheduler_lateness'].add(now - due)
         return metadata, ordinal, due
 
-    def _retirement_timing(self, logic, state, status, now):
+    def _retirement_timing(self, logic, state, status, now, validation_completed_at=None):
         histograms, evidence = self._timing_histograms, self._timing_evidence
         if status == 'complete':
             evidence['completed_frames'] += 1
             histograms['frame_first_seen_to_complete'].add(now - state.first_seen)
+            if validation_completed_at is not None:
+                evidence['validation_completed_frames'] += 1
+                histograms['frame_first_seen_to_validation_complete'].add(validation_completed_at - state.first_seen)
+                histograms['last_ingest_to_validation_complete'].add(validation_completed_at - now)
+                self._event('validation_completed', logic, validation_completed_at)
             self._timing_event('frame_complete', logic, now,
-                               first_seen_us=self._timestamp_us(state.first_seen), ts=state.first.ts)
+                               first_seen_us=self._timestamp_us(state.first_seen), ts=state.first.ts,
+                               validation_completed_us=(None if validation_completed_at is None else
+                                                        self._timestamp_us(validation_completed_at)))
             return
         if status != 'three-requests-exhausted':
             evidence['cancelled_missing_fragments'] += len(state.missing)
@@ -306,10 +321,10 @@ class ReceiverModel:
         if state.missing:
             self._ready[logic] = None
 
-    def retire(self, logic, status):
+    def retire(self, logic, status, *, validation_completed_at=None):
         state = self.frames.pop(logic, None)
         if state is not None:
-            self._retirement_timing(logic, state, status, self._last_now)
+            self._retirement_timing(logic, state, status, self._last_now, validation_completed_at)
         self._ready.pop(logic, None)
         self.terminal[logic] = status
         while len(self.terminal) > 256:
@@ -409,10 +424,16 @@ class ReceiverModel:
                 self.stats['module_failures'] += 1
                 self.retire(d.logic_id, 'module-invalid')
                 return
+            # Read after final DATA CRC, ordered concatenation and module decode,
+            # before accounting/callbacks. Keep NACK deadlines on ingest's now.
+            validated_at = self.completion_clock() if self.completion_clock is not None else None
+            if validated_at is not None and (not math.isfinite(validated_at) or validated_at < now):
+                self._timing_evidence['invalid_completion_timestamps'] += 1
+                validated_at = None  # Bad observation cannot change protocol state.
             self.stats['completed'] += 1
             self.stats['total_bytes'] += len(body)
             self._event('completed', d.logic_id, now)
-            self.retire(d.logic_id, 'complete')
+            self.retire(d.logic_id, 'complete', validation_completed_at=validated_at)
             if self.on_complete:
                 self.on_complete(d, body, modules)
 
@@ -474,7 +495,7 @@ class ReceiverModel:
         return result
 
     def timing_report(self):
-        return dict(version=1, units='us',
+        return dict(version=2, units='us',
             clock='user-space monotonic processing timestamps; not NIC/kernel arrival or cross-host latency',
             policy=dict(retry_interval_us=10000, tail_silence_us=2000, maximum_requests=3,
                 third_request_wait_us=10000, nominal_discovery_to_expiry_us=30000,
@@ -486,6 +507,11 @@ class ReceiverModel:
                 request_budget='generation consumes a request even if local sendto fails; duplicate-nack injection may transmit extra copies',
                 newer_frame_timing='predicate and registration share the ingest processing timestamp, so delay is zero by construction; tail_newer_frame_age measures time since last unique fragment',
                 frame_expiry='earliest still-missing discovery to frame retirement; third_request_to_expiry includes only actually due third-request fragments',
+                legacy_completion='frame_first_seen_to_complete, first_completed/last_completed and frame_complete.at_us retain first/final fragment ingest-entry timestamps; excludes final-fragment processing',
+                validation_completion='frame_first_seen_to_validation_complete ends at a fresh clock read after final DATA CRC, frame concatenation and module validation; before callback/accounting, not rendering or sender-sample latency',
+                validation_tail='last_ingest_to_validation_complete includes final-fragment decode, assembly and module validation; not isolated CPU time',
+                completion_clock_enabled=self.completion_clock is not None,
+                completion_clock_contract='same monotonic domain as ingest now; absent or invalid observations remain unmeasured; never updates the NACK logical clock',
                 strict_deadline_claim=False),
             denominators=dict(discovery_to_first_request='first_requests', request_interval='retry_intervals',
                 request_scheduler_lateness='first_requests + retry_intervals',
@@ -495,6 +521,8 @@ class ReceiverModel:
                 third_request_to_expiry='third_expiry_fragments; later incomplete fragments cancelled by the same frame expiry excluded',
                 missing_discovery_to_frame_expiry='expired_frames', first_request_to_recovery='recovered_fragments',
                 last_request_to_recovery='recovered_fragments', frame_first_seen_to_complete='completed_frames',
+                frame_first_seen_to_validation_complete='validation_completed_frames',
+                last_ingest_to_validation_complete='validation_completed_frames',
                 frame_first_seen_to_expiry='expired_frames'),
             evidence_denominators=dict(first_request_same_poll_violations='first_requests',
                 early_retry_intervals='retry_intervals', early_expiries='expired_frames (retired without any third-request fragment actually due)',
@@ -503,7 +531,9 @@ class ReceiverModel:
                 late_request_deadlines='first_requests + retry_intervals'),
             evidence=dict(self._timing_evidence),
             histograms={name: histogram.summary() for name, histogram in self._timing_histograms.items()},
-            events=dict(policy='most recent diagnostic events; one discovery batch/request round per frame, not full per-packet logs',
+            events=dict(version=2,
+                completion_fields='frame_complete.at_us=final fragment ingest entry (legacy); validation_completed_us=post CRC/reassembly/module validation, null when unobserved',
+                policy='most recent diagnostic events; one discovery batch/request round per frame, not full per-packet logs',
                 capacity=self.TIMING_EVENT_CAPACITY, fragment_detail_limit=self.TIMING_EVENT_FRAGMENT_LIMIT,
                 total=self._timing_event_total, retained=len(self._timing_events),
                 dropped=self._timing_event_total-len(self._timing_events), records=list(self._timing_events)))
@@ -511,8 +541,11 @@ class ReceiverModel:
     def report_details(self, now=None):
         now = self.clock() if now is None else now
         last = self._events['last_completed']
+        validated = self._events['last_validation_completed']
         return dict(self._events, active_logic_ids=list(self.frames),
                     last_complete_age_s=None if last is None else max(0, now - last['monotonic_s']),
+                    last_validation_complete_age_s=(None if validated is None else
+                                                    max(0, now - validated['monotonic_s'])),
                     frame_manifest={key: value.ranges for key, value in self._manifest.items()},
                     manifest_range_semantics='inclusive uint32 [first,last]; wrap uses separate ranges',
                     manifest_truncated=any(value.dropped for value in self._manifest.values()),

@@ -4,6 +4,8 @@
 
 最新增量優化與回歸證據：[Windows UDP 發送穩定性](docs/UDP_STABILITY_2026-11-16.md)。CLI 可用 `--timing-trace on|off` 控制有界本地異常時間線；不改線上協定。
 
+64 KiB Release 最新修復與復測：[到期採樣、分片間隔及接收完成計時](docs/TIMING_FIX_2026-11-17.md)。新增 `A64` 場景；`A1` 仍為 1 MiB。最新 trace 按原因保留最嚴重事件，整體驗收已包含分片間隔。
+
 **多模組即時 UDP 模擬發送器｜Real-time UDP simulator for multi-module data**
 
 SimTransferRT 0.2.0 是以 C++17 與 Qt 6 開發的模擬發送平台，提供桌面介面、命令列工具、分片重傳及故障注入，協助驗證《UDP 多模組即時資料傳輸協定》。專案包含開發用接收測試樁，不包含正式接收平台或醫療資料渲染。
@@ -162,7 +164,7 @@ python tools\probe_windows_udp_reset.py --report artifacts\udp-diagnostics\windo
 ```
 
 診斷工具預設 Release，會核對 `CMakeCache.txt`，不只相信參數。可用 `--build Debug` 做功能對照。
-短測包括 A0-closed、A0-drain、A1、B64、B1、C、CRC；`--cases A1 --seconds 10` 可單獨重跑。
+短測包括 A64、A0-closed、A0-drain、A1、B64、B1、C、CRC；`--cases A64 --seconds 600` 可單獨做 64 KiB 的 10 分鐘測試，`A1` 為 1 MiB。
 性能目標或功能驗收失敗時退出碼為 1，證據仍保留在 `artifacts/udp-diagnostics/<唯一目錄>/`。
 長測不會降低負載、放寬協定逾時或改用 FIFO。A0-drain 不做 CRC／重組，不能驗證接收正確性。
 新版接收器由編排器管理到發送結束後再正常停止，不把發送器冷啟動時間扣入接收窗口。
@@ -306,3 +308,14 @@ This README is bilingual. The remaining technical documentation is currently pri
 `SHA256SUMS.txt` 記錄 Git 中檔案內容的 SHA-256；文字以 Git 儲存的 LF 換行計算，本機 `.cmd` 的 CRLF 換行可能產生不同雜湊。
 
 `SHA256SUMS.txt` records SHA-256 hashes of Git blob contents, using Git's LF line endings. Local `.cmd` files checked out with CRLF may have different hashes.
+
+## V2 多帧方案 B｜V2 multi-frame Plan B
+
+0.3.0 新增独立采集准备、统一发送、Aurora BX、正式接收消费及 100Mbps／1GbE／2.5GbE 三档切换。GUI 默认 V2；原 V1 界面使用 `--v1`，原 CLI 脚本保持兼容，V2 CLI 使用 `--protocol v2`。
+
+运行 `scripts\build-v2.cmd` 在独立目录重新构建 Release 并执行测试。实际硬件同步、网卡出线和真实电生理波形需独立验证；软件功能通过不等于严格实时指标全部达标。
+
+Version 0.3.0 adds separate preparation workers, one shared sender, Aurora BX, receiver consumers and three network profiles. Build with `scripts\build-v2.cmd`; legacy V1 entries remain available. Hardware synchronization, physical egress and real EP waveform interpretation require separate evidence.
+
+- [V2 实现约定与使用说明 / Implementation contract and usage](docs/V2_IMPLEMENTATION_CONTRACT_2026-11-17.md)
+- [方案 B 逐项验证 / Plan B validation](docs/V2_PLAN_B_VALIDATION_2026-11-17.md)

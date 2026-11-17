@@ -19,6 +19,7 @@ from acceptance_report import combined_acceptance, markdown as acceptance_markdo
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = {
+    'A64': (65536, [], 'full'),
     'A0-closed': (1048576, [], None),
     'A0-drain': (1048576, [], 'drain'),
     'A1': (1048576, [], 'full'),
@@ -303,13 +304,35 @@ def realtime_acceptance(name, sender):
             initial_missing.append('stats.initialFullySubmittedFrames')
         elif _counter(stats.get('built')) and stats['initialFullySubmittedFrames'] != stats['built']:
             initial_failures.append('initialFullySubmittedFrames must cover every built frame without injected drops')
-    result = {'acceptance_schema_version': 3,
+    gap = timing.get('initial_packet_gap_abs_deviation', {}) if isinstance(timing, dict) else {}
+    if not isinstance(gap, dict):
+        gap = {}
+    gap_missing, gap_failures = [], []
+    for key in ('count', 'max_us', 'over_limit'):
+        if not _counter(gap.get(key)):
+            gap_missing.append('timing.initial_packet_gap_abs_deviation.' + key)
+    for key in ('initialFirstCopySendCalls', 'initialGapSegments', 'initialPacketGapViolations'):
+        if not _counter(stats.get(key)):
+            gap_missing.append('stats.' + key)
+    if not gap_missing:
+        expected = stats['initialFirstCopySendCalls'] - stats['initialGapSegments']
+        if expected <= 0 or gap['count'] != expected:
+            gap_missing.append('gap count must cover all first-copy calls minus segments, with at least one gap')
+        if gap['over_limit'] != stats['initialPacketGapViolations'] or gap['over_limit'] > gap['count']:
+            gap_missing.append('gap violation counter must match the histogram population')
+        if gap['max_us'] >= 1000 or gap['over_limit']:
+            gap_failures.append('all initial packet gap deviations must be < 1000us')
+    result = {'acceptance_schema_version': 4,
+              'packet_gap_limit_us_exclusive': 1000,
+              'packet_gap_max_us': gap.get('max_us'),
+              'packet_gap_observations': gap.get('count'),
               'sampling_jitter_limit_us_exclusive': 1000,
               'sampling_jitter_population': 'all actual samples, including incomplete or expired frames; sampled - 1 intervals',
               'sampling_jitter_max_us': deviation.get('max_us'),
               'sampling_jitter_observations': deviation.get('count')}
     for prefix, missing, failures in [('sampling_jitter', jitter_missing, jitter_failures),
-                                      ('initial_dispatch', initial_missing, initial_failures)]:
+                                      ('initial_dispatch', initial_missing, initial_failures),
+                                      ('packet_gap', gap_missing, gap_failures)]:
         verdict = False if failures else None if missing else True
         result.update({prefix + '_target_pass': verdict,
                        prefix + '_status': 'fail' if verdict is False else 'unverified' if verdict is None else 'pass',
@@ -381,6 +404,7 @@ def case_passed(summary):
              else summary.get('receiver_exit') == 0) and summary.get('timing_target_pass') is True and
             summary.get('sampling_jitter_target_pass') is True and
             summary.get('initial_dispatch_target_pass') is True and
+            summary.get('packet_gap_target_pass') is True and
             summary.get('sender_inventory_pass') is True and
             (summary.get('functional_target_pass') is True or
              (summary.get('case') in ('A0-closed', 'A0-drain') and summary.get('functional_target_pass') is None)))
@@ -392,9 +416,9 @@ def write_suite_summary(suite_dir, results):
              'Functional outcomes and measured timing targets are evaluated separately. '
              'A0 modes do not verify protocol delivery.', '',
              'The historical Timing flag is retained; Jitter requires max <1000us across all sample intervals, '
-             'and Initial requires every built frame to finish initial dispatch. Missing evidence is unverified.', '',
-             '| Case | Seconds | Built | Completed | Expired | Functional | Timing | Jitter | Initial | Report |',
-             '|---|---:|---:|---:|---:|---|---|---|---|---|']
+             'Initial requires every built frame to finish initial dispatch, and Gap requires max <1000us across all initial first-copy gaps. Missing evidence is unverified.', '',
+             '| Case | Seconds | Built | Completed | Expired | Functional | Timing | Jitter | Initial | Gap | Report |',
+             '|---|---:|---:|---:|---:|---|---|---|---|---|---|']
     def status(value):
         return 'PASS' if value is True else 'FAIL' if value is False else 'not evaluated'
     for result in results:
@@ -403,7 +427,8 @@ def write_suite_summary(suite_dir, results):
             result['case'], result['seconds'], result.get('built'), result.get('completed'),
             result.get('expired'), status(result.get('functional_target_pass')),
             status(result.get('timing_target_pass')), result.get('sampling_jitter_status', 'unverified'),
-            result.get('initial_dispatch_status', 'unverified'), '[details](' + directory + '/summary.md)')) + ' |')
+            result.get('initial_dispatch_status', 'unverified'), result.get('packet_gap_status', 'unverified'),
+            '[details](' + directory + '/summary.md)')) + ' |')
     lines += ['', 'Individual reports retain missing-frame classifications, failures, '
                    'process exit codes, metrics, and reproduction commands.']
     (suite_dir / 'summary.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')

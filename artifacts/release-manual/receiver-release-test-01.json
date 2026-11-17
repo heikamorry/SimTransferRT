@@ -1,0 +1,1634 @@
+{
+  "datagrams": 1841012,
+  "invalid": 0,
+  "duplicate": 0,
+  "completed": 40022,
+  "expired": 0,
+  "requested_fragments": 0,
+  "nack_packets": 0,
+  "recovered": 0,
+  "retry_flag": 0,
+  "metadata_failures": 0,
+  "module_failures": 0,
+  "total_bytes": 2622881792,
+  "max_requests_for_fragment": 0,
+  "active_evictions": 0,
+  "valid": 1841012,
+  "crc_failures": 0,
+  "geometry_failures": 0,
+  "late": 0,
+  "stale_window_rejections": 0,
+  "active_high_water": 1,
+  "tail_registrations": 0,
+  "timer_high_water": 1,
+  "timer_compactions": 0,
+  "max_timer_lateness_us": 718,
+  "first_received": {
+    "logic_id": 54272,
+    "monotonic_s": 36789.7367532
+  },
+  "last_received": {
+    "logic_id": 94293,
+    "monotonic_s": 37590.1576979
+  },
+  "first_completed": {
+    "logic_id": 54272,
+    "monotonic_s": 36789.7376284
+  },
+  "last_completed": {
+    "logic_id": 94293,
+    "monotonic_s": 37590.1576979
+  },
+  "active_logic_ids": [],
+  "last_complete_age_s": 42.13248989999556,
+  "frame_manifest": {
+    "seen": [
+      [
+        54272,
+        94293
+      ]
+    ],
+    "completed": [
+      [
+        54272,
+        94293
+      ]
+    ],
+    "expired": [],
+    "resource_limit": [],
+    "metadata_mismatch": [],
+    "module_invalid": []
+  },
+  "manifest_range_semantics": "inclusive uint32 [first,last]; wrap uses separate ranges",
+  "manifest_truncated": false,
+  "manifest_dropped_events": {
+    "seen": 0,
+    "completed": 0,
+    "expired": 0,
+    "resource_limit": 0,
+    "metadata_mismatch": 0,
+    "module_invalid": 0
+  },
+  "replay_window_frames": 4096,
+  "max_active_frames": 32,
+  "timer_entries": 0,
+  "receiver_timing": {
+    "version": 1,
+    "units": "us",
+    "clock": "user-space monotonic processing timestamps; not NIC/kernel arrival or cross-host latency",
+    "policy": {
+      "retry_interval_us": 10000,
+      "tail_silence_us": 2000,
+      "maximum_requests": 3,
+      "third_request_wait_us": 10000,
+      "nominal_discovery_to_expiry_us": 30000,
+      "scheduler_epsilon_us": 0.001,
+      "first_request_round": "first available poll after ingest discovery, or current poll for silence discovery",
+      "no_observations": "observed=false and null extrema/quantiles: not measured, never a passing timing observation",
+      "duration_resolution": "nearest microsecond; nonnegative durations clamp sub-epsilon negative lateness to zero; early counters compare original seconds with scheduler epsilon",
+      "quantiles": "all observations; fixed 100us bucket upper bounds through 100ms; overflow uses observed maximum",
+      "request_budget": "generation consumes a request even if local sendto fails; duplicate-nack injection may transmit extra copies",
+      "newer_frame_timing": "predicate and registration share the ingest processing timestamp, so delay is zero by construction; tail_newer_frame_age measures time since last unique fragment",
+      "frame_expiry": "earliest still-missing discovery to frame retirement; third_request_to_expiry includes only actually due third-request fragments",
+      "strict_deadline_claim": false
+    },
+    "denominators": {
+      "discovery_to_first_request": "first_requests",
+      "request_interval": "retry_intervals",
+      "request_scheduler_lateness": "first_requests + retry_intervals",
+      "silence_tail_lateness": "tail_silence_discoveries (frames with newly discovered tail fragments)",
+      "newer_frame_to_tail_discovery": "tail_newer_frame_discoveries (frames with newly discovered tail fragments)",
+      "tail_silence_age": "tail_silence_discoveries",
+      "tail_newer_frame_age": "tail_newer_frame_discoveries",
+      "third_request_to_expiry": "third_expiry_fragments; later incomplete fragments cancelled by the same frame expiry excluded",
+      "missing_discovery_to_frame_expiry": "expired_frames",
+      "first_request_to_recovery": "recovered_fragments",
+      "last_request_to_recovery": "recovered_fragments",
+      "frame_first_seen_to_complete": "completed_frames",
+      "frame_first_seen_to_expiry": "expired_frames"
+    },
+    "evidence_denominators": {
+      "first_request_same_poll_violations": "first_requests",
+      "early_retry_intervals": "retry_intervals",
+      "early_expiries": "expired_frames (retired without any third-request fragment actually due)",
+      "request_budget_exceeded": "first_requests + retry_intervals",
+      "recovered_without_retry_flag": "recovered_fragments",
+      "late_request_deadlines": "first_requests + retry_intervals"
+    },
+    "evidence": {
+      "discovered_fragments": 0,
+      "first_requests": 0,
+      "retry_intervals": 0,
+      "early_retry_intervals": 0,
+      "third_expiry_fragments": 0,
+      "early_expiries": 0,
+      "first_request_same_poll_violations": 0,
+      "request_budget_exceeded": 0,
+      "expired_frames": 0,
+      "completed_frames": 40022,
+      "recovered_fragments": 0,
+      "recovered_without_retry_flag": 0,
+      "resolved_before_first_request": 0,
+      "tail_silence_discoveries": 0,
+      "tail_newer_frame_discoveries": 0,
+      "late_request_deadlines": 0,
+      "cancelled_missing_fragments": 0
+    },
+    "histograms": {
+      "discovery_to_first_request": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "request_interval": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "request_scheduler_lateness": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "silence_tail_lateness": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "newer_frame_to_tail_discovery": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "tail_silence_age": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "tail_newer_frame_age": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "third_request_to_expiry": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "missing_discovery_to_frame_expiry": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "first_request_to_recovery": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "last_request_to_recovery": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      },
+      "frame_first_seen_to_complete": {
+        "observed": true,
+        "count": 40022,
+        "min_us": 376,
+        "max_us": 3538,
+        "mean_us": 791.1713307680776,
+        "sum_us": 31664259,
+        "overflow_count": 0,
+        "p50_us": 800,
+        "p95_us": 1100,
+        "p99_us": 1300,
+        "p999_us": 1700
+      },
+      "frame_first_seen_to_expiry": {
+        "observed": false,
+        "count": 0,
+        "min_us": null,
+        "max_us": null,
+        "mean_us": null,
+        "sum_us": 0,
+        "overflow_count": 0,
+        "p50_us": null,
+        "p95_us": null,
+        "p99_us": null,
+        "p999_us": null
+      }
+    },
+    "events": {
+      "policy": "most recent diagnostic events; one discovery batch/request round per frame, not full per-packet logs",
+      "capacity": 128,
+      "fragment_detail_limit": 8,
+      "total": 40022,
+      "retained": 128,
+      "dropped": 39894,
+      "records": [
+        {
+          "sequence": 39895,
+          "kind": "frame_complete",
+          "logic_id": 94166,
+          "at_us": 37587617634,
+          "first_seen_us": 37587616703,
+          "ts": 37587616480
+        },
+        {
+          "sequence": 39896,
+          "kind": "frame_complete",
+          "logic_id": 94167,
+          "at_us": 37587637619,
+          "first_seen_us": 37587636977,
+          "ts": 37587636707
+        },
+        {
+          "sequence": 39897,
+          "kind": "frame_complete",
+          "logic_id": 94168,
+          "at_us": 37587657946,
+          "first_seen_us": 37587657300,
+          "ts": 37587657016
+        },
+        {
+          "sequence": 39898,
+          "kind": "frame_complete",
+          "logic_id": 94169,
+          "at_us": 37587677962,
+          "first_seen_us": 37587677301,
+          "ts": 37587677049
+        },
+        {
+          "sequence": 39899,
+          "kind": "frame_complete",
+          "logic_id": 94170,
+          "at_us": 37587698307,
+          "first_seen_us": 37587697627,
+          "ts": 37587697392
+        },
+        {
+          "sequence": 39900,
+          "kind": "frame_complete",
+          "logic_id": 94171,
+          "at_us": 37587717397,
+          "first_seen_us": 37587716687,
+          "ts": 37587716480
+        },
+        {
+          "sequence": 39901,
+          "kind": "frame_complete",
+          "logic_id": 94172,
+          "at_us": 37587737960,
+          "first_seen_us": 37587737243,
+          "ts": 37587737045
+        },
+        {
+          "sequence": 39902,
+          "kind": "frame_complete",
+          "logic_id": 94173,
+          "at_us": 37587757758,
+          "first_seen_us": 37587757059,
+          "ts": 37587756845
+        },
+        {
+          "sequence": 39903,
+          "kind": "frame_complete",
+          "logic_id": 94174,
+          "at_us": 37587777772,
+          "first_seen_us": 37587776903,
+          "ts": 37587776783
+        },
+        {
+          "sequence": 39904,
+          "kind": "frame_complete",
+          "logic_id": 94175,
+          "at_us": 37587797845,
+          "first_seen_us": 37587797129,
+          "ts": 37587796933
+        },
+        {
+          "sequence": 39905,
+          "kind": "frame_complete",
+          "logic_id": 94176,
+          "at_us": 37587817438,
+          "first_seen_us": 37587816619,
+          "ts": 37587816526
+        },
+        {
+          "sequence": 39906,
+          "kind": "frame_complete",
+          "logic_id": 94177,
+          "at_us": 37587837920,
+          "first_seen_us": 37587837277,
+          "ts": 37587837014
+        },
+        {
+          "sequence": 39907,
+          "kind": "frame_complete",
+          "logic_id": 94178,
+          "at_us": 37587857659,
+          "first_seen_us": 37587856943,
+          "ts": 37587856742
+        },
+        {
+          "sequence": 39908,
+          "kind": "frame_complete",
+          "logic_id": 94179,
+          "at_us": 37587877765,
+          "first_seen_us": 37587877035,
+          "ts": 37587876840
+        },
+        {
+          "sequence": 39909,
+          "kind": "frame_complete",
+          "logic_id": 94180,
+          "at_us": 37587898059,
+          "first_seen_us": 37587897385,
+          "ts": 37587897148
+        },
+        {
+          "sequence": 39910,
+          "kind": "frame_complete",
+          "logic_id": 94181,
+          "at_us": 37587917778,
+          "first_seen_us": 37587916800,
+          "ts": 37587916566
+        },
+        {
+          "sequence": 39911,
+          "kind": "frame_complete",
+          "logic_id": 94182,
+          "at_us": 37587937395,
+          "first_seen_us": 37587936680,
+          "ts": 37587936479
+        },
+        {
+          "sequence": 39912,
+          "kind": "frame_complete",
+          "logic_id": 94183,
+          "at_us": 37587958190,
+          "first_seen_us": 37587957326,
+          "ts": 37587957073
+        },
+        {
+          "sequence": 39913,
+          "kind": "frame_complete",
+          "logic_id": 94184,
+          "at_us": 37587977928,
+          "first_seen_us": 37587977110,
+          "ts": 37587976983
+        },
+        {
+          "sequence": 39914,
+          "kind": "frame_complete",
+          "logic_id": 94185,
+          "at_us": 37587997845,
+          "first_seen_us": 37587996856,
+          "ts": 37587996588
+        },
+        {
+          "sequence": 39915,
+          "kind": "frame_complete",
+          "logic_id": 94186,
+          "at_us": 37588017953,
+          "first_seen_us": 37588017308,
+          "ts": 37588017038
+        },
+        {
+          "sequence": 39916,
+          "kind": "frame_complete",
+          "logic_id": 94187,
+          "at_us": 37588037606,
+          "first_seen_us": 37588036939,
+          "ts": 37588036661
+        },
+        {
+          "sequence": 39917,
+          "kind": "frame_complete",
+          "logic_id": 94188,
+          "at_us": 37588057394,
+          "first_seen_us": 37588056622,
+          "ts": 37588056482
+        },
+        {
+          "sequence": 39918,
+          "kind": "frame_complete",
+          "logic_id": 94189,
+          "at_us": 37588077613,
+          "first_seen_us": 37588076922,
+          "ts": 37588076700
+        },
+        {
+          "sequence": 39919,
+          "kind": "frame_complete",
+          "logic_id": 94190,
+          "at_us": 37588097931,
+          "first_seen_us": 37588097302,
+          "ts": 37588097016
+        },
+        {
+          "sequence": 39920,
+          "kind": "frame_complete",
+          "logic_id": 94191,
+          "at_us": 37588117684,
+          "first_seen_us": 37588117067,
+          "ts": 37588116766
+        },
+        {
+          "sequence": 39921,
+          "kind": "frame_complete",
+          "logic_id": 94192,
+          "at_us": 37588137642,
+          "first_seen_us": 37588136962,
+          "ts": 37588136735
+        },
+        {
+          "sequence": 39922,
+          "kind": "frame_complete",
+          "logic_id": 94193,
+          "at_us": 37588157713,
+          "first_seen_us": 37588156584,
+          "ts": 37588156479
+        },
+        {
+          "sequence": 39923,
+          "kind": "frame_complete",
+          "logic_id": 94194,
+          "at_us": 37588178167,
+          "first_seen_us": 37588177303,
+          "ts": 37588177166
+        },
+        {
+          "sequence": 39924,
+          "kind": "frame_complete",
+          "logic_id": 94195,
+          "at_us": 37588197959,
+          "first_seen_us": 37588197256,
+          "ts": 37588197030
+        },
+        {
+          "sequence": 39925,
+          "kind": "frame_complete",
+          "logic_id": 94196,
+          "at_us": 37588217427,
+          "first_seen_us": 37588216603,
+          "ts": 37588216479
+        },
+        {
+          "sequence": 39926,
+          "kind": "frame_complete",
+          "logic_id": 94197,
+          "at_us": 37588237663,
+          "first_seen_us": 37588236963,
+          "ts": 37588236738
+        },
+        {
+          "sequence": 39927,
+          "kind": "frame_complete",
+          "logic_id": 94198,
+          "at_us": 37588257640,
+          "first_seen_us": 37588257013,
+          "ts": 37588256729
+        },
+        {
+          "sequence": 39928,
+          "kind": "frame_complete",
+          "logic_id": 94199,
+          "at_us": 37588277981,
+          "first_seen_us": 37588277258,
+          "ts": 37588277043
+        },
+        {
+          "sequence": 39929,
+          "kind": "frame_complete",
+          "logic_id": 94200,
+          "at_us": 37588298173,
+          "first_seen_us": 37588297205,
+          "ts": 37588296915
+        },
+        {
+          "sequence": 39930,
+          "kind": "frame_complete",
+          "logic_id": 94201,
+          "at_us": 37588317450,
+          "first_seen_us": 37588316753,
+          "ts": 37588316534
+        },
+        {
+          "sequence": 39931,
+          "kind": "frame_complete",
+          "logic_id": 94202,
+          "at_us": 37588337522,
+          "first_seen_us": 37588336653,
+          "ts": 37588336480
+        },
+        {
+          "sequence": 39932,
+          "kind": "frame_complete",
+          "logic_id": 94203,
+          "at_us": 37588357697,
+          "first_seen_us": 37588356965,
+          "ts": 37588356776
+        },
+        {
+          "sequence": 39933,
+          "kind": "frame_complete",
+          "logic_id": 94204,
+          "at_us": 37588378282,
+          "first_seen_us": 37588377326,
+          "ts": 37588377166
+        },
+        {
+          "sequence": 39934,
+          "kind": "frame_complete",
+          "logic_id": 94205,
+          "at_us": 37588397986,
+          "first_seen_us": 37588397296,
+          "ts": 37588397064
+        },
+        {
+          "sequence": 39935,
+          "kind": "frame_complete",
+          "logic_id": 94206,
+          "at_us": 37588417690,
+          "first_seen_us": 37588416880,
+          "ts": 37588416780
+        },
+        {
+          "sequence": 39936,
+          "kind": "frame_complete",
+          "logic_id": 94207,
+          "at_us": 37588437546,
+          "first_seen_us": 37588436852,
+          "ts": 37588436604
+        },
+        {
+          "sequence": 39937,
+          "kind": "frame_complete",
+          "logic_id": 94208,
+          "at_us": 37588458078,
+          "first_seen_us": 37588456816,
+          "ts": 37588456599
+        },
+        {
+          "sequence": 39938,
+          "kind": "frame_complete",
+          "logic_id": 94209,
+          "at_us": 37588477829,
+          "first_seen_us": 37588476861,
+          "ts": 37588476624
+        },
+        {
+          "sequence": 39939,
+          "kind": "frame_complete",
+          "logic_id": 94210,
+          "at_us": 37588498031,
+          "first_seen_us": 37588497326,
+          "ts": 37588497080
+        },
+        {
+          "sequence": 39940,
+          "kind": "frame_complete",
+          "logic_id": 94211,
+          "at_us": 37588517942,
+          "first_seen_us": 37588517279,
+          "ts": 37588516972
+        },
+        {
+          "sequence": 39941,
+          "kind": "frame_complete",
+          "logic_id": 94212,
+          "at_us": 37588537944,
+          "first_seen_us": 37588537197,
+          "ts": 37588536935
+        },
+        {
+          "sequence": 39942,
+          "kind": "frame_complete",
+          "logic_id": 94213,
+          "at_us": 37588557579,
+          "first_seen_us": 37588556832,
+          "ts": 37588556670
+        },
+        {
+          "sequence": 39943,
+          "kind": "frame_complete",
+          "logic_id": 94214,
+          "at_us": 37588577658,
+          "first_seen_us": 37588576968,
+          "ts": 37588576721
+        },
+        {
+          "sequence": 39944,
+          "kind": "frame_complete",
+          "logic_id": 94215,
+          "at_us": 37588598299,
+          "first_seen_us": 37588597296,
+          "ts": 37588597102
+        },
+        {
+          "sequence": 39945,
+          "kind": "frame_complete",
+          "logic_id": 94216,
+          "at_us": 37588618041,
+          "first_seen_us": 37588617172,
+          "ts": 37588616984
+        },
+        {
+          "sequence": 39946,
+          "kind": "frame_complete",
+          "logic_id": 94217,
+          "at_us": 37588637454,
+          "first_seen_us": 37588636621,
+          "ts": 37588636479
+        },
+        {
+          "sequence": 39947,
+          "kind": "frame_complete",
+          "logic_id": 94218,
+          "at_us": 37588658044,
+          "first_seen_us": 37588657305,
+          "ts": 37588657123
+        },
+        {
+          "sequence": 39948,
+          "kind": "frame_complete",
+          "logic_id": 94219,
+          "at_us": 37588677812,
+          "first_seen_us": 37588677108,
+          "ts": 37588676901
+        },
+        {
+          "sequence": 39949,
+          "kind": "frame_complete",
+          "logic_id": 94220,
+          "at_us": 37588697405,
+          "first_seen_us": 37588696664,
+          "ts": 37588696479
+        },
+        {
+          "sequence": 39950,
+          "kind": "frame_complete",
+          "logic_id": 94221,
+          "at_us": 37588718119,
+          "first_seen_us": 37588717386,
+          "ts": 37588717213
+        },
+        {
+          "sequence": 39951,
+          "kind": "frame_complete",
+          "logic_id": 94222,
+          "at_us": 37588737933,
+          "first_seen_us": 37588737197,
+          "ts": 37588737017
+        },
+        {
+          "sequence": 39952,
+          "kind": "frame_complete",
+          "logic_id": 94223,
+          "at_us": 37588758125,
+          "first_seen_us": 37588757157,
+          "ts": 37588756907
+        },
+        {
+          "sequence": 39953,
+          "kind": "frame_complete",
+          "logic_id": 94224,
+          "at_us": 37588777981,
+          "first_seen_us": 37588777006,
+          "ts": 37588776742
+        },
+        {
+          "sequence": 39954,
+          "kind": "frame_complete",
+          "logic_id": 94225,
+          "at_us": 37588798121,
+          "first_seen_us": 37588797393,
+          "ts": 37588797166
+        },
+        {
+          "sequence": 39955,
+          "kind": "frame_complete",
+          "logic_id": 94226,
+          "at_us": 37588818056,
+          "first_seen_us": 37588817347,
+          "ts": 37588817143
+        },
+        {
+          "sequence": 39956,
+          "kind": "frame_complete",
+          "logic_id": 94227,
+          "at_us": 37588837922,
+          "first_seen_us": 37588837090,
+          "ts": 37588836949
+        },
+        {
+          "sequence": 39957,
+          "kind": "frame_complete",
+          "logic_id": 94228,
+          "at_us": 37588857400,
+          "first_seen_us": 37588856718,
+          "ts": 37588856479
+        },
+        {
+          "sequence": 39958,
+          "kind": "frame_complete",
+          "logic_id": 94229,
+          "at_us": 37588877396,
+          "first_seen_us": 37588876657,
+          "ts": 37588876479
+        },
+        {
+          "sequence": 39959,
+          "kind": "frame_complete",
+          "logic_id": 94230,
+          "at_us": 37588897546,
+          "first_seen_us": 37588896577,
+          "ts": 37588896479
+        },
+        {
+          "sequence": 39960,
+          "kind": "frame_complete",
+          "logic_id": 94231,
+          "at_us": 37588917862,
+          "first_seen_us": 37588917218,
+          "ts": 37588916948
+        },
+        {
+          "sequence": 39961,
+          "kind": "frame_complete",
+          "logic_id": 94232,
+          "at_us": 37588937970,
+          "first_seen_us": 37588937353,
+          "ts": 37588937047
+        },
+        {
+          "sequence": 39962,
+          "kind": "frame_complete",
+          "logic_id": 94233,
+          "at_us": 37588958048,
+          "first_seen_us": 37588957221,
+          "ts": 37588957081
+        },
+        {
+          "sequence": 39963,
+          "kind": "frame_complete",
+          "logic_id": 94234,
+          "at_us": 37588977773,
+          "first_seen_us": 37588976993,
+          "ts": 37588976650
+        },
+        {
+          "sequence": 39964,
+          "kind": "frame_complete",
+          "logic_id": 94235,
+          "at_us": 37588997394,
+          "first_seen_us": 37588996556,
+          "ts": 37588996479
+        },
+        {
+          "sequence": 39965,
+          "kind": "frame_complete",
+          "logic_id": 94236,
+          "at_us": 37589017839,
+          "first_seen_us": 37589017236,
+          "ts": 37589016860
+        },
+        {
+          "sequence": 39966,
+          "kind": "frame_complete",
+          "logic_id": 94237,
+          "at_us": 37589037393,
+          "first_seen_us": 37589036681,
+          "ts": 37589036479
+        },
+        {
+          "sequence": 39967,
+          "kind": "frame_complete",
+          "logic_id": 94238,
+          "at_us": 37589057782,
+          "first_seen_us": 37589057107,
+          "ts": 37589056865
+        },
+        {
+          "sequence": 39968,
+          "kind": "frame_complete",
+          "logic_id": 94239,
+          "at_us": 37589078073,
+          "first_seen_us": 37589077353,
+          "ts": 37589077148
+        },
+        {
+          "sequence": 39969,
+          "kind": "frame_complete",
+          "logic_id": 94240,
+          "at_us": 37589097636,
+          "first_seen_us": 37589096767,
+          "ts": 37589096600
+        },
+        {
+          "sequence": 39970,
+          "kind": "frame_complete",
+          "logic_id": 94241,
+          "at_us": 37589117780,
+          "first_seen_us": 37589116798,
+          "ts": 37589116481
+        },
+        {
+          "sequence": 39971,
+          "kind": "frame_complete",
+          "logic_id": 94242,
+          "at_us": 37589138115,
+          "first_seen_us": 37589137508,
+          "ts": 37589137209
+        },
+        {
+          "sequence": 39972,
+          "kind": "frame_complete",
+          "logic_id": 94243,
+          "at_us": 37589158139,
+          "first_seen_us": 37589157430,
+          "ts": 37589157218
+        },
+        {
+          "sequence": 39973,
+          "kind": "frame_complete",
+          "logic_id": 94244,
+          "at_us": 37589177387,
+          "first_seen_us": 37589176602,
+          "ts": 37589176479
+        },
+        {
+          "sequence": 39974,
+          "kind": "frame_complete",
+          "logic_id": 94245,
+          "at_us": 37589198219,
+          "first_seen_us": 37589197507,
+          "ts": 37589197152
+        },
+        {
+          "sequence": 39975,
+          "kind": "frame_complete",
+          "logic_id": 94246,
+          "at_us": 37589217783,
+          "first_seen_us": 37589217082,
+          "ts": 37589216870
+        },
+        {
+          "sequence": 39976,
+          "kind": "frame_complete",
+          "logic_id": 94247,
+          "at_us": 37589237953,
+          "first_seen_us": 37589237323,
+          "ts": 37589237031
+        },
+        {
+          "sequence": 39977,
+          "kind": "frame_complete",
+          "logic_id": 94248,
+          "at_us": 37589257775,
+          "first_seen_us": 37589257016,
+          "ts": 37589256863
+        },
+        {
+          "sequence": 39978,
+          "kind": "frame_complete",
+          "logic_id": 94249,
+          "at_us": 37589277753,
+          "first_seen_us": 37589276780,
+          "ts": 37589276672
+        },
+        {
+          "sequence": 39979,
+          "kind": "frame_complete",
+          "logic_id": 94250,
+          "at_us": 37589298054,
+          "first_seen_us": 37589297278,
+          "ts": 37589297143
+        },
+        {
+          "sequence": 39980,
+          "kind": "frame_complete",
+          "logic_id": 94251,
+          "at_us": 37589317387,
+          "first_seen_us": 37589316629,
+          "ts": 37589316480
+        },
+        {
+          "sequence": 39981,
+          "kind": "frame_complete",
+          "logic_id": 94252,
+          "at_us": 37589337837,
+          "first_seen_us": 37589337240,
+          "ts": 37589336894
+        },
+        {
+          "sequence": 39982,
+          "kind": "frame_complete",
+          "logic_id": 94253,
+          "at_us": 37589358029,
+          "first_seen_us": 37589357351,
+          "ts": 37589357115
+        },
+        {
+          "sequence": 39983,
+          "kind": "frame_complete",
+          "logic_id": 94254,
+          "at_us": 37589377389,
+          "first_seen_us": 37589376668,
+          "ts": 37589376479
+        },
+        {
+          "sequence": 39984,
+          "kind": "frame_complete",
+          "logic_id": 94255,
+          "at_us": 37589397609,
+          "first_seen_us": 37589396780,
+          "ts": 37589396618
+        },
+        {
+          "sequence": 39985,
+          "kind": "frame_complete",
+          "logic_id": 94256,
+          "at_us": 37589417735,
+          "first_seen_us": 37589416996,
+          "ts": 37589416717
+        },
+        {
+          "sequence": 39986,
+          "kind": "frame_complete",
+          "logic_id": 94257,
+          "at_us": 37589437717,
+          "first_seen_us": 37589436731,
+          "ts": 37589436479
+        },
+        {
+          "sequence": 39987,
+          "kind": "frame_complete",
+          "logic_id": 94258,
+          "at_us": 37589457762,
+          "first_seen_us": 37589457036,
+          "ts": 37589456852
+        },
+        {
+          "sequence": 39988,
+          "kind": "frame_complete",
+          "logic_id": 94259,
+          "at_us": 37589477968,
+          "first_seen_us": 37589476824,
+          "ts": 37589476483
+        },
+        {
+          "sequence": 39989,
+          "kind": "frame_complete",
+          "logic_id": 94260,
+          "at_us": 37589498109,
+          "first_seen_us": 37589497249,
+          "ts": 37589497102
+        },
+        {
+          "sequence": 39990,
+          "kind": "frame_complete",
+          "logic_id": 94261,
+          "at_us": 37589517725,
+          "first_seen_us": 37589517062,
+          "ts": 37589516798
+        },
+        {
+          "sequence": 39991,
+          "kind": "frame_complete",
+          "logic_id": 94262,
+          "at_us": 37589537692,
+          "first_seen_us": 37589536814,
+          "ts": 37589536642
+        },
+        {
+          "sequence": 39992,
+          "kind": "frame_complete",
+          "logic_id": 94263,
+          "at_us": 37589557912,
+          "first_seen_us": 37589556953,
+          "ts": 37589556665
+        },
+        {
+          "sequence": 39993,
+          "kind": "frame_complete",
+          "logic_id": 94264,
+          "at_us": 37589577721,
+          "first_seen_us": 37589576985,
+          "ts": 37589576811
+        },
+        {
+          "sequence": 39994,
+          "kind": "frame_complete",
+          "logic_id": 94265,
+          "at_us": 37589597832,
+          "first_seen_us": 37589597149,
+          "ts": 37589596922
+        },
+        {
+          "sequence": 39995,
+          "kind": "frame_complete",
+          "logic_id": 94266,
+          "at_us": 37589617615,
+          "first_seen_us": 37589616824,
+          "ts": 37589616705
+        },
+        {
+          "sequence": 39996,
+          "kind": "frame_complete",
+          "logic_id": 94267,
+          "at_us": 37589637900,
+          "first_seen_us": 37589637213,
+          "ts": 37589636944
+        },
+        {
+          "sequence": 39997,
+          "kind": "frame_complete",
+          "logic_id": 94268,
+          "at_us": 37589657668,
+          "first_seen_us": 37589656887,
+          "ts": 37589656757
+        },
+        {
+          "sequence": 39998,
+          "kind": "frame_complete",
+          "logic_id": 94269,
+          "at_us": 37589678041,
+          "first_seen_us": 37589677372,
+          "ts": 37589677079
+        },
+        {
+          "sequence": 39999,
+          "kind": "frame_complete",
+          "logic_id": 94270,
+          "at_us": 37589697916,
+          "first_seen_us": 37589697307,
+          "ts": 37589696944
+        },
+        {
+          "sequence": 40000,
+          "kind": "frame_complete",
+          "logic_id": 94271,
+          "at_us": 37589717778,
+          "first_seen_us": 37589716920,
+          "ts": 37589716754
+        },
+        {
+          "sequence": 40001,
+          "kind": "frame_complete",
+          "logic_id": 94272,
+          "at_us": 37589738472,
+          "first_seen_us": 37589737491,
+          "ts": 37589737235
+        },
+        {
+          "sequence": 40002,
+          "kind": "frame_complete",
+          "logic_id": 94273,
+          "at_us": 37589757872,
+          "first_seen_us": 37589757002,
+          "ts": 37589756836
+        },
+        {
+          "sequence": 40003,
+          "kind": "frame_complete",
+          "logic_id": 94274,
+          "at_us": 37589777861,
+          "first_seen_us": 37589777219,
+          "ts": 37589776933
+        },
+        {
+          "sequence": 40004,
+          "kind": "frame_complete",
+          "logic_id": 94275,
+          "at_us": 37589798487,
+          "first_seen_us": 37589797489,
+          "ts": 37589797284
+        },
+        {
+          "sequence": 40005,
+          "kind": "frame_complete",
+          "logic_id": 94276,
+          "at_us": 37589818015,
+          "first_seen_us": 37589817213,
+          "ts": 37589817108
+        },
+        {
+          "sequence": 40006,
+          "kind": "frame_complete",
+          "logic_id": 94277,
+          "at_us": 37589837719,
+          "first_seen_us": 37589836894,
+          "ts": 37589836735
+        },
+        {
+          "sequence": 40007,
+          "kind": "frame_complete",
+          "logic_id": 94278,
+          "at_us": 37589858171,
+          "first_seen_us": 37589857518,
+          "ts": 37589857172
+        },
+        {
+          "sequence": 40008,
+          "kind": "frame_complete",
+          "logic_id": 94279,
+          "at_us": 37589877483,
+          "first_seen_us": 37589876714,
+          "ts": 37589876573
+        },
+        {
+          "sequence": 40009,
+          "kind": "frame_complete",
+          "logic_id": 94280,
+          "at_us": 37589897793,
+          "first_seen_us": 37589897065,
+          "ts": 37589896878
+        },
+        {
+          "sequence": 40010,
+          "kind": "frame_complete",
+          "logic_id": 94281,
+          "at_us": 37589917603,
+          "first_seen_us": 37589916969,
+          "ts": 37589916646
+        },
+        {
+          "sequence": 40011,
+          "kind": "frame_complete",
+          "logic_id": 94282,
+          "at_us": 37589937928,
+          "first_seen_us": 37589937243,
+          "ts": 37589937018
+        },
+        {
+          "sequence": 40012,
+          "kind": "frame_complete",
+          "logic_id": 94283,
+          "at_us": 37589957859,
+          "first_seen_us": 37589957029,
+          "ts": 37589956881
+        },
+        {
+          "sequence": 40013,
+          "kind": "frame_complete",
+          "logic_id": 94284,
+          "at_us": 37589977678,
+          "first_seen_us": 37589976704,
+          "ts": 37589976479
+        },
+        {
+          "sequence": 40014,
+          "kind": "frame_complete",
+          "logic_id": 94285,
+          "at_us": 37589997549,
+          "first_seen_us": 37589996752,
+          "ts": 37589996641
+        },
+        {
+          "sequence": 40015,
+          "kind": "frame_complete",
+          "logic_id": 94286,
+          "at_us": 37590017783,
+          "first_seen_us": 37590017106,
+          "ts": 37590016877
+        },
+        {
+          "sequence": 40016,
+          "kind": "frame_complete",
+          "logic_id": 94287,
+          "at_us": 37590037812,
+          "first_seen_us": 37590037026,
+          "ts": 37590036900
+        },
+        {
+          "sequence": 40017,
+          "kind": "frame_complete",
+          "logic_id": 94288,
+          "at_us": 37590057833,
+          "first_seen_us": 37590057128,
+          "ts": 37590056924
+        },
+        {
+          "sequence": 40018,
+          "kind": "frame_complete",
+          "logic_id": 94289,
+          "at_us": 37590077411,
+          "first_seen_us": 37590076757,
+          "ts": 37590076492
+        },
+        {
+          "sequence": 40019,
+          "kind": "frame_complete",
+          "logic_id": 94290,
+          "at_us": 37590098087,
+          "first_seen_us": 37590097120,
+          "ts": 37590096870
+        },
+        {
+          "sequence": 40020,
+          "kind": "frame_complete",
+          "logic_id": 94291,
+          "at_us": 37590117784,
+          "first_seen_us": 37590117142,
+          "ts": 37590116871
+        },
+        {
+          "sequence": 40021,
+          "kind": "frame_complete",
+          "logic_id": 94292,
+          "at_us": 37590137412,
+          "first_seen_us": 37590136648,
+          "ts": 37590136479
+        },
+        {
+          "sequence": 40022,
+          "kind": "frame_complete",
+          "logic_id": 94293,
+          "at_us": 37590157698,
+          "first_seen_us": 37590157046,
+          "ts": 37590156714
+        }
+      ]
+    },
+    "runtime": {
+      "mode": "diagnostic reassembly/NACK",
+      "duplicate_nack_injection": false,
+      "observation_points": "ingest/poll processing timestamps; request generation precedes socket sendto",
+      "poll_cadence": "after at most 64 datagrams or a checked 250us batch; select timeout 1ms; OS scheduling can exceed these budgets"
+    }
+  },
+  "request_budget_policy": "consumed at generation even if local sendto fails; no local retry",
+  "receive_time_source": "user-space monotonic processing; not NIC/kernel arrival",
+  "recv_10054": 0,
+  "send_10054": 0,
+  "recv_10040": 0,
+  "send_10040": 0,
+  "recv_would_block": 125935,
+  "send_would_block": 0,
+  "nack_send_attempts": 0,
+  "nack_send_accepted": 0,
+  "nack_send_failed": 0,
+  "oversized_datagrams": 0,
+  "socket_datagrams": 1841012,
+  "socket_bytes": 2689158224,
+  "drain_datagrams": 0,
+  "ingest_calls": 1841012,
+  "ingest_total_us": 22970582.603250474,
+  "ingest_max_us": 854.600002639927,
+  "poll_calls": 283934,
+  "poll_total_us": 1961056.4979884657,
+  "poll_max_us": 720.6000009318814,
+  "loop_gap_max_us": 30046.699997910764,
+  "batch_limit_hits": 95653,
+  "receive_total_us": 8901851.205454372,
+  "receive_max_us": 902.8999993461184,
+  "select_total_us": 869889811.3034544,
+  "select_max_us": 30012.399998668116,
+  "nack_send_total_us": 0,
+  "nack_send_max_us": 0,
+  "checkpoint_attempts": 0,
+  "checkpoint_successes": 0,
+  "checkpoint_failures": 0,
+  "report_schema_version": 2,
+  "run_id": "release-test-01",
+  "environment": {
+    "pid": 15956,
+    "python": "3.13.14 (tags/v3.13.14:fd17997, Jun 10 2026, 13:03:48) [MSC v.1944 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "source_sha256": "a50e8f16c22352964b1c8aa2492a2a8cac649d9f0e249c6c568dff8af82a56ad",
+    "source_hash_scope": "tools/*.py",
+    "build_type": "Python (not Debug/Release)",
+    "qt_version": null,
+    "git_revision": "fc0c7ff49f15af7eb7500f3ef2eb11b3c2fa3228",
+    "git_dirty": false
+  },
+  "active_frames": 0,
+  "diagnostic_only": true,
+  "receiver_rendering_implemented": false,
+  "configuration": {
+    "bind": "127.0.0.1",
+    "port": 5650,
+    "cmd_ip": "127.0.0.1",
+    "cmd_port": 5500,
+    "seconds": 0.0,
+    "report": ".\\artifacts\\release-manual\\receiver-release-test-01.json",
+    "output": "",
+    "duplicate_nack": false,
+    "quiet": true,
+    "summary_every": 1.0,
+    "trace_nacks": "",
+    "trace_limit": 2048,
+    "run_id": "release-test-01",
+    "ready_file": "",
+    "status_file": "",
+    "checkpoint_every": 1.0,
+    "drain": false
+  },
+  "endpoint": {
+    "bind": [
+      "127.0.0.1",
+      5650
+    ],
+    "nack": [
+      "127.0.0.1",
+      5500
+    ]
+  },
+  "network_path": "loopback",
+  "socket_buffers": {
+    "receive": 4194304,
+    "send": 65536
+  },
+  "sio_udp_connreset": {
+    "platform": "win32",
+    "implementation": "ctypes.Ws2_32.WSAIoctl",
+    "status": "configured",
+    "error_code": null,
+    "control_code": "0x9800000C"
+  },
+  "started_utc": "2026-11-17T02:55:16.001620+00:00",
+  "ended_utc": "2026-11-17T03:10:25.460710+00:00",
+  "elapsed_s": 909.458976199996,
+  "exit_reason": "keyboard_interrupt",
+  "exception": null,
+  "cleanup_errors": [],
+  "last_checkpoint_error": null,
+  "last_checkpoint_success_monotonic_s": null,
+  "checkpoint_policy": "optional OSError is counted and skipped until next regular cadence; final report failure remains fatal",
+  "trace_records": 0,
+  "trace_retained": 0,
+  "trace_dropped": 0,
+  "nack_budget_policy": "consumed at generation; failed sendto consumes request; no unbounded local retries",
+  "batch_limits": {
+    "packets": 64,
+    "processing_budget_us": 250,
+    "note": "budget checked after each datagram; individual decode/complete may exceed it"
+  },
+  "mode": "full protocol diagnostic receiver",
+  "timing_note": "User-space monotonic processing times, not kernel/NIC arrivals. Python is not hard real-time.",
+  "acceptance_table": {
+    "schema_version": 1,
+    "scope": "receiver-local",
+    "overall_status": "not_measured",
+    "overall_status_label": "\u672a\u68c0\u6d4b",
+    "status_counts": {
+      "pass": 0,
+      "fail": 0,
+      "not_measured": 12
+    },
+    "note": "\u5404\u884c\u4ec5\u8986\u76d6\u6240\u5217\u6d4b\u91cf\u53e3\u5f84\uff1b\u7f3a\u5c11\u786c\u4ef6\u3001\u7269\u7406\u94fe\u8def\u6216\u6e32\u67d3\u8bc1\u636e\u65f6\u4e0d\u5ba3\u79f0\u5b8c\u6574\u534f\u8bae\u8fbe\u6807\u3002",
+    "rows": [
+      {
+        "id": "nack_first_request",
+        "requirement": "\u7f3a\u7247\u53d1\u73b0\u540e\u7684\u9996\u4e2a\u53ef\u7528\u8f6e\u8be2\u7acb\u5373\u8bf7\u6c42",
+        "measurement": "\u63a5\u6536\u7aef\u7528\u6237\u6001\u5355\u8c03\u65f6\u949f\uff1bdiscovery_to_first_request",
+        "threshold": "\u540c\u4e00\u53ef\u7528poll\u8f6e\uff1b\u5b9e\u9645\u8017\u65f6\u53e6\u5217",
+        "actual": "\u65e0\u6709\u6548\u89c2\u6d4b\uff0c\u8fdd\u89c4=0",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u65e0\u6709\u6548\u6837\u672c\u6216\u89c2\u5bdf\u5206\u6bcd/\u8ba1\u6570\u4e0d\u5b8c\u6574\uff1b\u903b\u8f91\u8f6e\u6b21\u901a\u8fc7\u4e0d\u4ee3\u8868OS\u96f6\u5ef6\u8fdf\uff1b\u5916\u90e8\u6682\u505c\u4f53\u73b0\u5728\u5b9e\u6d4b\u8017\u65f6\u3002",
+        "evidence": [
+          "receiver-report.json:receiver_timing.histograms.discovery_to_first_request",
+          "receiver-report.json:receiver_timing.evidence.first_request_same_poll_violations"
+        ]
+      },
+      {
+        "id": "nack_retry_interval",
+        "requirement": "\u540c\u7247\u540e\u7eed\u8bf7\u6c42\u6ee110ms\u518d\u8bf7\u6c42",
+        "measurement": "\u63a5\u6536\u7aef\u7528\u6237\u6001\u5355\u8c03\u65f6\u949f\uff1brequest_interval",
+        "threshold": "\u95f4\u9694\u226510000us\uff1b\u6d6e\u70b9\u6bd4\u8f83\u5bb9\u5dee\u6cbf\u7528\u6a21\u578bEPSILON",
+        "actual": "\u65e0\u6709\u6548\u89c2\u6d4b\uff0c\u8fdd\u89c4=0",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u65e0\u6709\u6548\u6837\u672c\u6216\u89c2\u5bdf\u5206\u6bcd/\u8ba1\u6570\u4e0d\u5b8c\u6574\uff1b\u4ec5\u68c0\u9a8c\u4e0d\u63d0\u524d\uff1b\u8fdf\u5230\u5206\u5e03\u53e6\u5217\uff0c\u4e0d\u636e\u6b64\u5ba3\u79f0\u51c6\u65f6\u3002",
+        "evidence": [
+          "receiver-report.json:receiver_timing.histograms.request_interval",
+          "receiver-report.json:receiver_timing.evidence.early_retry_intervals"
+        ]
+      },
+      {
+        "id": "nack_scheduler_lateness",
+        "requirement": "\u8bf7\u6c42\u8c03\u5ea6\u8fdf\u5230\u89c2\u6d4b",
+        "measurement": "\u63a5\u6536\u7aef\u7528\u6237\u6001\u5355\u8c03\u65f6\u949f\uff1brequest_scheduler_lateness",
+        "threshold": "\u539f\u6587\u672a\u89c4\u5b9a\u8c03\u5ea6\u8fdf\u5230\u5bb9\u5dee",
+        "actual": "\u65e0\u6709\u6548\u89c2\u6d4b",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u65e0\u6709\u6548\u6837\u672c\u6216\u89c2\u5bdf\u5206\u6bcd/\u8ba1\u6570\u4e0d\u5b8c\u6574\uff1b\u6709\u5b9e\u6d4b\u6570\u636e\uff0c\u4f46\u65e0\u72ec\u7acb\u9a8c\u6536\u5bb9\u5dee\uff1b\u4e0d\u64c5\u81ea\u8bbe\u5b9a\u901a\u8fc7\u9608\u503c\u3002",
+        "evidence": [
+          "receiver-report.json:receiver_timing.histograms.request_scheduler_lateness"
+        ]
+      },
+      {
+        "id": "nack_request_budget",
+        "requirement": "\u540c\u4e00\u7f3a\u7247\u6700\u591a\u8bf7\u6c42\u4e09\u6b21",
+        "measurement": "\u6bcf\u7247\u903b\u8f91\u8bf7\u6c42\u9884\u7b97\uff1b\u591a\u533a\u95f4\u62c6\u5305\u548c\u6545\u969c\u6ce8\u5165\u91cd\u590d\u53d1\u9001\u53e6\u8ba1",
+        "threshold": "\u22643\u6b21",
+        "actual": "\u8bf7\u6c42\u7247\u6b21=0\uff0c\u540c\u7247\u6700\u5927=0",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u672c\u5730sendto\u5931\u8d25\u4ecd\u6d88\u8017\u4e00\u6b21\u9884\u7b97\uff1b\u6ca1\u6709\u8bf7\u6c42\u6837\u672c\u4e0d\u89c6\u4e3a\u901a\u8fc7\u3002",
+        "evidence": [
+          "receiver-report.json:max_requests_for_fragment",
+          "receiver-report.json:receiver_timing.evidence.request_budget_exceeded"
+        ]
+      },
+      {
+        "id": "nack_silence_tail",
+        "requirement": "2ms\u9759\u9ed8\u5c3e\u90e8\u7f3a\u7247\u68c0\u6d4b",
+        "measurement": "\u63a5\u6536\u7aef\u7528\u6237\u6001\u5355\u8c03\u65f6\u949f\uff1bsilence_tail_lateness",
+        "threshold": "\u8ba1\u5212\u65f6\u523b=\u6700\u540e\u552f\u4e00\u7247+2000us\uff1b\u8c03\u5ea6\u5bb9\u5dee\u672a\u7ea6\u5b9a",
+        "actual": "\u65e0\u6709\u6548\u89c2\u6d4b",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u65e0\u6709\u6548\u6837\u672c\u6216\u89c2\u5bdf\u5206\u6bcd/\u8ba1\u6570\u4e0d\u5b8c\u6574\uff1b\u663e\u793a\u8d85\u8fc7\u8ba1\u5212\u65f6\u523b\u7684\u8fdf\u5230\uff1b\u66f4\u65b0\u5e27\u89e6\u53d1\u53e6\u5217\uff0c\u4e0d\u80fd\u6df7\u4f5c2ms\u9759\u9ed8\u3002",
+        "evidence": [
+          "receiver-report.json:receiver_timing.histograms.silence_tail_lateness"
+        ]
+      },
+      {
+        "id": "nack_newer_frame_tail",
+        "requirement": "\u66f4\u65b0\u5e27\u89e6\u53d1\u65e7\u5e27\u5c3e\u90e8\u7f3a\u7247\u767b\u8bb0",
+        "measurement": "\u63a5\u6536\u7aef\u7528\u6237\u6001\u5355\u8c03\u65f6\u949f\uff1bnewer_frame_to_tail_discovery",
+        "threshold": "\u89c2\u5bdf\u66f4\u65b0\u5e27\u7684\u540c\u4e00ingest\u8f6e\uff1b\u975e\u7f51\u5361\u5230\u8fbe\u65f6\u95f4",
+        "actual": "\u65e0\u6709\u6548\u89c2\u6d4b",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u65e0\u6709\u6548\u6837\u672c\u6216\u89c2\u5bdf\u5206\u6bcd/\u8ba1\u6570\u4e0d\u5b8c\u6574\uff1b\u7528\u4e8e\u533a\u5206\u5c3e\u90e8\u53d1\u73b0\u6765\u6e90\uff1b\u5c1a\u4e0d\u628a\u540c\u4e00\u7528\u6237\u6001\u65f6\u95f4\u8bfb\u6570\u5f53\u4f5c\u96f6\u786c\u4ef6\u5ef6\u8fdf\u3002",
+        "evidence": [
+          "receiver-report.json:receiver_timing.histograms.newer_frame_to_tail_discovery"
+        ]
+      },
+      {
+        "id": "nack_expiry_wait",
+        "requirement": "\u7b2c\u4e09\u6b21\u8bf7\u6c42\u540e\u518d\u7b4910ms\u624d\u4f5c\u5e9f",
+        "measurement": "\u63a5\u6536\u7528\u6237\u6001\uff1a\u63d0\u524d\u4f5c\u5e9f\u6309\u5e27\u8ba1\u6570\uff1b\u7b2c\u4e09\u6b21\u8bf7\u6c42\u7b49\u5f85\u6309\u5b9e\u9645\u5230\u671f\u7f3a\u7247\u8ba1\u6570",
+        "threshold": "\u7b49\u5f85\u226510000us\uff1b\u63d0\u524d\u4f5c\u5e9f\u5e27=0",
+        "actual": "\u65e0\u6709\u6548\u89c2\u6d4b\uff1b\u4f5c\u5e9f\u5e27=0\uff1b\u63d0\u524d\u4f5c\u5e9f\u5e27=0",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u540c\u5e27\u8f83\u665a\u7f3a\u7247\u4e0d\u8fdb\u5165\u5230\u671f\u7247\u5206\u6bcd\uff1b\u6ca1\u6709\u5230\u671f\u7247\u6837\u672c\u4e5f\u4e0d\u80fd\u63a9\u76d6\u5df2\u8bb0\u5f55\u7684\u63d0\u524d\u4f5c\u5e9f\u3002",
+        "evidence": [
+          "receiver-report.json:receiver_timing.histograms.third_request_to_expiry",
+          "receiver-report.json:receiver_timing.evidence.expired_frames",
+          "receiver-report.json:receiver_timing.evidence.early_expiries"
+        ]
+      },
+      {
+        "id": "nack_total_wait",
+        "requirement": "\u53d1\u73b0\u7f3a\u7247\u81f3\u6574\u5e27\u4f5c\u5e9f\u7ea630ms",
+        "measurement": "\u63a5\u6536\u7aef\u7528\u6237\u6001\u5355\u8c03\u65f6\u949f\uff1bmissing_discovery_to_frame_expiry",
+        "threshold": "\u540d\u4e49\u7ea630000us\uff1b\u201c\u7ea6\u201d\u7684\u5bb9\u5dee\u5c1a\u672a\u5b9a\u4e49",
+        "actual": "\u65e0\u6709\u6548\u89c2\u6d4b",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u65e0\u6709\u6548\u6837\u672c\u6216\u89c2\u5bdf\u5206\u6bcd/\u8ba1\u6570\u4e0d\u5b8c\u6574\uff1b\u62a5\u544a\u5b9e\u9645\u8de8\u5ea6\uff0c\u4fdd\u7559\u672a\u68c0\u6d4b\u5224\u5b9a\uff0c\u907f\u514d\u66ff\u534f\u8bae\u64c5\u81ea\u5b9a\u4e49\u5141\u8bb8\u8d85\u65f6\u3002",
+        "evidence": [
+          "receiver-report.json:receiver_timing.histograms.missing_discovery_to_frame_expiry"
+        ]
+      },
+      {
+        "id": "nack_recovery",
+        "requirement": "\u8bf7\u6c42\u7f3a\u7247\u8865\u56de\u8017\u65f6",
+        "measurement": "\u63a5\u6536\u7aef\u7528\u6237\u6001\u5355\u8c03\u65f6\u949f\uff1bfirst_request_to_recovery",
+        "threshold": "\u534f\u8bae\u672a\u7ed9\u56fa\u5b9aRTT\u4e0a\u9650\uff1b\u4e0d\u4f9d\u8d56\u91cd\u4f20flags",
+        "actual": "\u65e0\u6709\u6548\u89c2\u6d4b",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u65e0\u6709\u6548\u6837\u672c\u6216\u89c2\u5bdf\u5206\u6bcd/\u8ba1\u6570\u4e0d\u5b8c\u6574\uff1b\u9996\u8bf7\u6c42\u5230\u8865\u56de\uff1b\u6700\u540e\u8bf7\u6c42\u5230\u8865\u56de\u53e6\u89c1\u539f\u59cb\u76f4\u65b9\u56fe\u3002",
+        "evidence": [
+          "receiver-report.json:receiver_timing.histograms.first_request_to_recovery"
+        ]
+      },
+      {
+        "id": "receiver_reassembly_timing",
+        "requirement": "\u63a5\u6536\u91cd\u7ec4\u8017\u65f6",
+        "measurement": "\u63a5\u6536\u7aef\u7528\u6237\u6001\u5355\u8c03\u65f6\u949f\uff1bframe_first_seen_to_complete",
+        "threshold": "\u9996\u7247\u7528\u6237\u6001\u5904\u7406\u5230\u5b8c\u6574\u91cd\u7ec4\uff1b\u65e0\u72ec\u7acb\u56fa\u5b9a\u4e0a\u9650",
+        "actual": "n=40022, min=376us, max=3538us, P99=1300us, P99.9=1700us",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u4e0d\u662f\u91c7\u6837\u5230\u5c4f\u5e55\u7684\u7aef\u5230\u7aef\u5ef6\u8fdf\u3002",
+        "evidence": [
+          "receiver-report.json:receiver_timing.histograms.frame_first_seen_to_complete"
+        ]
+      },
+      {
+        "id": "receiver_delivery",
+        "requirement": "\u6536\u53d1\u8054\u5408\u5b8c\u6574\u6027",
+        "measurement": "\u6210\u529f\u6784\u5efa\u5e27ID\u4e0e\u63a5\u6536\u7ec8\u6001\u6e05\u5355\u9010\u4e00\u6838\u5bf9",
+        "threshold": "\u6309\u672c\u6b21\u573a\u666f\u7684\u9884\u671f\u63a5\u6536\u7ed3\u5c40",
+        "actual": "\u672c\u5730\u5b8c\u6574=40022\uff0c\u4f5c\u5e9f=0",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "\u63a5\u6536\u7aef\u5355\u72ec\u62a5\u544a\u4e0d\u77e5\u9053\u4ece\u672a\u5230\u8fbe\u7684\u5e27\uff1b\u9700\u914d\u5bf9\u53d1\u9001\u7aef\u62a5\u544a\u3002",
+        "evidence": [
+          "receiver-report.json:frame_manifest"
+        ]
+      },
+      {
+        "id": "render_synchronization",
+        "requirement": "\u5168\u90e8\u6a21\u5757\u540c\u6b65\u6e32\u67d3",
+        "measurement": "\u751f\u4ea7\u63a5\u6536\u7aef\u540c\u5e27\u5168\u90e8\u6a21\u5757\u7ed8\u5236",
+        "threshold": "\u6309TS\u540c\u6b65\u6d88\u8d39\u3001\u6574\u4f53\u6e32\u67d3",
+        "actual": "\u63a5\u6536\u5668\u4e3a\u8bca\u65ad\u6d4b\u8bd5\u6869\uff0c\u672a\u5b9e\u73b0\u6e32\u67d3",
+        "status": "not_measured",
+        "status_label": "\u672a\u68c0\u6d4b",
+        "reason": "receiver_rendering_implemented=false\uff1b\u4e0d\u80fd\u7528completed\u4ee3\u66ff\u5df2\u663e\u793a\u3002",
+        "evidence": [
+          "receiver-report.json:receiver_rendering_implemented"
+        ]
+      }
+    ]
+  },
+  "exit_code": 0
+}

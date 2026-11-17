@@ -80,7 +80,9 @@ namespace rt {
         TimingHistogram initialDuration_,initialCallSpan_,samplingIntervals_,samplingDeviation_;
         TimingHistogram initialPacketGaps_,initialPacketGapDeviation_,retryPacketGaps_,socketCallGaps_;
         bool hasInitialCall_=false,hasRetryCall_=false,hasSocketCall_=false;
-        std::uint16_t previousInitialOrdinal_=0;
+        std::uint16_t previousInitialOrdinal_=0,previousInitialIndex_=0;
+        std::uint64_t previousInitialEndUs_=0,previousSamplePlannedUs_=0;
+        std::uint32_t previousSampleLogicId_=0;
         std::uint64_t previousInitialCallUs_=0,previousRetryCallUs_=0,previousSocketCallUs_=0;
         std::deque<CacheMissEvent> cacheMissEvents_;
         std::uint64_t cacheMissEventsDropped_=0,firstInitialCall_=0;
@@ -96,8 +98,9 @@ namespace rt {
         void sample(std::uint64_t now,std::uint64_t observedUs);
         std::uint64_t clockNow(std::uint64_t fallback)const;
         void abandonInitial(bool stopping,std::uint64_t observedUs)noexcept;
-        void observeSendCall(std::uint64_t sendStart,bool retry,bool firstCopy,std::size_t datagramBytes)noexcept;
-        void transmit(const Frame&f,std::uint16_t index,bool retry,std::uint64_t now,const SendFunction& send);
+        void observeSendCall(std::uint64_t sendStart,std::uint64_t sendEnd,std::uint32_t logicId,std::uint16_t index,
+                             bool retry,bool firstCopy,bool accepted,std::size_t datagramBytes)noexcept;
+        std::uint64_t transmit(const Frame&f,std::uint16_t index,bool retry,std::uint64_t now,const SendFunction& send);
         static std::uint64_t key(std::uint32_t id,std::uint16_t idx) {
             return(std::uint64_t(id)<<16)|idx;
         }

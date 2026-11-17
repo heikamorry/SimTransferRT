@@ -56,6 +56,43 @@ class AcceptanceReportTests(unittest.TestCase):
         self.assertEqual(rows['hardware_timestamp']['status'], 'not_measured')
         self.assertEqual(result['overall_status'], 'not_measured')
 
+    def test_a64_full_receiver_can_establish_joint_delivery(self):
+        sender, receiver, summary = self.pair()
+        summary['case'] = 'A64'
+        rows = by_id(combined_acceptance(sender, receiver, summary))
+        self.assertEqual(rows['receiver_delivery']['status'], 'pass')
+        self.assertEqual(rows['report_pairing']['status'], 'pass')
+
+    def test_legacy_ingest_span_is_not_relabelled_as_validation_completion(self):
+        report = receiver_fixture()
+        rows = by_id(receiver_acceptance(report))
+        self.assertIn('1100', rows['receiver_ingest_span']['actual'])
+        self.assertIn('不含末片CRC', rows['receiver_ingest_span']['reason'])
+        self.assertEqual(rows['receiver_reassembly_timing']['status'], 'not_measured')
+        self.assertIn('无有效观测', rows['receiver_reassembly_timing']['actual'])
+        # A v1 report cannot gain the new semantics by inserting a new key.
+        timing = report['receiver_timing']
+        timing['histograms']['frame_first_seen_to_validation_complete'] = copy.deepcopy(
+            timing['histograms']['frame_first_seen_to_complete'])
+        timing['evidence']['validation_completed_frames'] = 2
+        self.assertIn('无有效观测', by_id(receiver_acceptance(report))['receiver_reassembly_timing']['actual'])
+
+    def test_v2_completion_samples_are_distinct_and_do_not_invent_a_timing_limit(self):
+        report = receiver_fixture()
+        timing = report['receiver_timing']
+        timing['version'] = 2
+        timing['evidence']['validation_completed_frames'] = 2
+        timing['histograms']['frame_first_seen_to_validation_complete'] = dict(
+            count=2, min_us=1200, max_us=1500, p99_us=1500, p999_us=1500, observed=True)
+        timing['histograms']['last_ingest_to_validation_complete'] = dict(
+            count=2, min_us=200, max_us=400, p99_us=400, p999_us=400, observed=True)
+        rows = by_id(receiver_acceptance(report))
+        self.assertIn('1500', rows['receiver_reassembly_timing']['actual'])
+        self.assertIn('400', rows['receiver_validation_tail']['actual'])
+        self.assertIn('1100', rows['receiver_ingest_span']['actual'])
+        self.assertEqual(rows['receiver_reassembly_timing']['status'], 'not_measured')
+        self.assertEqual(rows['nack_retry_interval']['status'], 'pass')
+
     def test_wrong_run_or_failed_process_never_claims_delivery(self):
         for change in ('run', 'exit', 'failure'):
             sender, receiver, summary = self.pair()

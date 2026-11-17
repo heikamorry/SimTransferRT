@@ -8,8 +8,10 @@ def reports(count=3):
                         'sendErrors': 0, 'actualInitialDeadlineMisses': 0, 'unsentAtStop': 0,
                         'initialFinishedFrames': count, 'initialFullySubmittedFrames': count,
                         'initialIncompleteFrames': 0, 'initialPendingFragments': 0,
-                        'retransmissions': 0},
-              'timing': {'abs_interval_minus_20000us': {'count': max(0, count - 1), 'max_us': 999}},
+                        'retransmissions': 0, 'initialFirstCopySendCalls': count * 4,
+                        'initialGapSegments': count, 'initialPacketGapViolations': 0},
+              'timing': {'abs_interval_minus_20000us': {'count': max(0, count - 1), 'max_us': 999},
+                         'initial_packet_gap_abs_deviation': {'count': count * 3, 'max_us': 999, 'over_limit': 0}},
               'next_logic_id': count + 1, 'df_enabled': True, 'run_id': 'test',
               'built_manifest': {'first_id': 1, 'next_id': count + 1, 'count': count}}
     receiver = {'completed': count, 'expired': 0, 'manifest_truncated': False,
@@ -104,6 +106,31 @@ class AcceptanceTests(unittest.TestCase):
         self.assertTrue(result['functional_target_pass'])
         self.assertTrue(result['timing_target_pass'])
         self.assertTrue(case_passed(result))
+
+    def test_packet_gap_failure_blocks_success_even_when_sampling_and_delivery_pass(self):
+        for maximum, violations, passed in ((999, 0, True), (1000, 1, False), (2710, 6, False)):
+            sender, receiver = reports()
+            sender['timing']['initial_packet_gap_abs_deviation'].update(max_us=maximum, over_limit=violations)
+            sender['stats']['initialPacketGapViolations'] = violations
+            result = self.evaluate('A64', sender, receiver)
+            self.assertTrue(result['functional_target_pass'])
+            self.assertTrue(result['sampling_jitter_target_pass'])
+            self.assertEqual(result['packet_gap_target_pass'], passed)
+            self.assertEqual(case_passed(result), passed)
+
+    def test_packet_gap_missing_or_inconsistent_population_is_not_a_pass(self):
+        for mutate in (
+            lambda s: s['timing'].pop('initial_packet_gap_abs_deviation'),
+            lambda s: s['timing']['initial_packet_gap_abs_deviation'].update(count=0),
+            lambda s: s['stats'].update(initialGapSegments=100),
+            lambda s: s['timing']['initial_packet_gap_abs_deviation'].update(max_us=True),
+            lambda s: s['stats'].update(initialPacketGapViolations=1),
+        ):
+            sender, receiver = reports()
+            mutate(sender)
+            result = self.evaluate(sender=sender, receiver=receiver)
+            self.assertEqual(result['packet_gap_status'], 'unverified')
+            self.assertFalse(case_passed(result))
 
     def test_zero_send_errors_cannot_hide_wholly_missing_frame(self):
         sender, receiver = reports()

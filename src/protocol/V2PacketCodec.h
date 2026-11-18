@@ -30,6 +30,14 @@ struct Status {
     Bytes payload;
 };
 Datagram encodeData(const Frame&,std::uint16_t index,bool retry=false);
+// All template datagrams belong to one frame with the same original ID and timestamp.
+struct DataStamp {
+    std::uint32_t frameId;
+    std::uint64_t timestampUs;
+    std::uint32_t fullCrcXor,tailCrcXor;
+    void apply(Datagram&) const;
+};
+DataStamp makeDataStamp(const std::vector<Datagram>&,std::uint32_t frameId,std::uint64_t timestampUs);
 Datagram encodeNack(const Nack&);
 Datagram encodeStatus(const Status&);
 DataPacket decodeData(const std::uint8_t*,std::size_t);

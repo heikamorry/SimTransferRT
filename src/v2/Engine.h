@@ -7,16 +7,32 @@
 #include <set>
 
 namespace rt::v2 {
+struct EncodedPayload {
+    explicit EncodedPayload(const Frame&);
+    std::size_t byteSize;
+    std::uint32_t crc;
+    std::vector<Datagram> packets;
+};
 struct PreparedFrame {
-    Frame frame;
+    std::uint8_t moduleId=0;
+    std::uint32_t frameId=0;
+    std::uint64_t timestampUs=0;
     std::uint64_t plannedSampleUs=0, sampleUs=0, readyUs=0, sourceCounter=0;
     bool hardwareTimestampVerified=false;
-    std::vector<Datagram> packets;
-    std::uint32_t payloadCrc=0;
+    std::shared_ptr<const EncodedPayload> payload;
+    std::optional<DataStamp> stamp;
+    Datagram packet(std::uint16_t index,bool retry)const;
 };
 using PreparedPtr=std::shared_ptr<const PreparedFrame>;
 PreparedPtr prepareFrame(Frame frame,std::uint64_t planned,std::uint64_t sampled,
                          std::uint64_t ready=0,std::uint64_t sourceCounter=0);
+class StaticEpPayload {
+public:
+    explicit StaticEpPayload(Bytes);
+    PreparedPtr sample(std::uint32_t id,std::uint64_t planned,std::uint64_t sampled)const;
+private:
+    std::shared_ptr<const EncodedPayload> payload_;
+};
 struct Ledger {
     std::uint64_t count=0,idSum=0,crcSum=0,stampSum=0;
     void add(const PreparedFrame&);

@@ -10,6 +10,11 @@ std::uint64_t get64(const std::uint8_t*p){std::uint64_t v=0;for(unsigned i=0;i<8
 void module(std::uint8_t m){if(m!=NdiModule&&m!=EpModule)throw ProtocolError("V2 invalid data module");}
 void header(Datagram&d,std::uint8_t type,std::uint8_t flags,std::uint8_t m){auto*p=d.bytes.data();writeLe32(p,Magic);writeLe16(p+4,std::uint16_t(d.size));p[6]=type;p[7]=flags;p[8]=m;}
 void finish(Datagram&d){writeLe32(d.bytes.data()+d.size-4,crc32(d.bytes.data(),d.size-4));}
+void stampIdentity(Datagram& d,std::uint32_t frameId,std::uint64_t timestampUs){
+    if(d.size<=Overhead||d.size>MaxDatagram)throw ProtocolError("invalid V2 DATA template size");
+    writeLe32(d.bytes.data()+12,frameId);
+    put64(d.bytes.data()+24,timestampUs);
+}
 void check(const std::uint8_t*p,std::size_t n,std::uint8_t type,std::size_t minimum){
     if(!p||n<minimum||n>MaxDatagram)throw ProtocolError("V2 invalid datagram length");
     if(readLe32(p)!=Magic||readLe16(p+4)!=n||p[6]!=type)throw ProtocolError("V2 magic/length/type mismatch");
@@ -21,8 +26,26 @@ Datagram encodeData(const Frame&f,std::uint16_t index,bool retry){
     module(f.moduleId);auto count=f.fragmentCount();if(index>=count)throw ProtocolError("V2 fragment index outside frame");
     auto off=std::size_t(index)*PayloadStep;auto len=std::min(PayloadStep,f.bytes.size()-off);
     Datagram d;d.size=Overhead+len;header(d,DataType,retry?1:0,f.moduleId);auto*p=d.bytes.data();
-    writeLe32(p+12,f.frameId);writeLe32(p+16,std::uint32_t(f.bytes.size()));writeLe16(p+20,index);writeLe16(p+22,count);put64(p+24,f.timestampUs);
+    stampIdentity(d,f.frameId,f.timestampUs);writeLe32(p+16,std::uint32_t(f.bytes.size()));writeLe16(p+20,index);writeLe16(p+22,count);
     std::memcpy(p+HeaderSize,f.bytes.data()+off,len);finish(d);return d;
+}
+DataStamp makeDataStamp(const std::vector<Datagram>& packets,std::uint32_t frameId,std::uint64_t timestampUs){
+    // For equal-length inputs, CRC32(A) XOR CRC32(A XOR D) depends only on D.
+    // Every fragment has the same changes at offsets 12 and 24. Only the tail can
+    // have a different length, so one or two ordinary CRC evaluations suffice.
+    if(packets.empty())throw ProtocolError("empty V2 DATA template");
+    const auto delta=[&](Datagram d){
+        stampIdentity(d,frameId,timestampUs);
+        return readLe32(d.bytes.data()+d.size-4)^crc32(d.bytes.data(),d.size-4);
+    };
+    const auto full=delta(packets.front());
+    const auto tail=packets.back().size==packets.front().size?full:delta(packets.back());
+    return {frameId,timestampUs,full,tail};
+}
+void DataStamp::apply(Datagram& d)const{
+    stampIdentity(d,frameId,timestampUs);
+    auto* checksum=d.bytes.data()+d.size-4;
+    writeLe32(checksum,readLe32(checksum)^(d.size==MaxDatagram?fullCrcXor:tailCrcXor));
 }
 DataPacket decodeData(const std::uint8_t*p,std::size_t n){
     check(p,n,DataType,Overhead);module(p[8]);if(p[7]&0xfe)throw ProtocolError("V2 invalid DATA flags");

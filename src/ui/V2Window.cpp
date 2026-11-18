@@ -489,10 +489,10 @@ void V2Window::toggleReceiver() {
             QString peerAddress;
             auto publish=[&](bool final) {
                 const auto now=monotonicUs();
-                ReceiverUpdate update{receiver.snapshot(now),bindAddress,peerAddress,port,peerPort,
-                                      generation,now,rejectedSources,feedbackErrors,final};
+                std::optional<ReceiverUpdate> update{ReceiverUpdate{receiver.snapshot(now),bindAddress,peerAddress,port,peerPort,
+                                      generation,now,rejectedSources,feedbackErrors,final}};
                 std::lock_guard<std::mutex> lock(p_->receiverMutex);
-                p_->receiverLatest=std::move(update);
+                p_->receiverLatest.swap(update); // Release the overwritten frame after unlocking.
             };
             auto sendFeedback=[&](const std::vector<Datagram>& packets) {
                 for(const auto& packet:packets) {

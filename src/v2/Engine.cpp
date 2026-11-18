@@ -7,16 +7,40 @@
 
 namespace rt::v2 {
 namespace {std::uint64_t absDiff(std::uint64_t a,std::uint64_t b){return a>b?a-b:b-a;}}
+EncodedPayload::EncodedPayload(const Frame& f):byteSize(f.bytes.size()),crc(rt::crc32(f.bytes)){
+    const auto count=f.fragmentCount();
+    packets.reserve(count);
+    for(std::uint16_t i=0;i<count;++i)packets.push_back(encodeData(f,i));
+}
+Datagram PreparedFrame::packet(std::uint16_t index,bool retry)const{
+    auto d=payload->packets.at(index);
+    if(stamp)stamp->apply(d);
+    if(retry){
+        d.bytes[7]|=1;
+        rt::writeLe32(d.bytes.data()+d.size-4,rt::crc32(d.bytes.data(),d.size-4));
+    }
+    return d;
+}
 PreparedPtr prepareFrame(Frame frame,std::uint64_t planned,std::uint64_t sampled,std::uint64_t ready,std::uint64_t sourceCounter) {
-    auto p=std::make_shared<PreparedFrame>();p->frame=std::move(frame);
+    auto p=std::make_shared<PreparedFrame>();p->moduleId=frame.moduleId;p->frameId=frame.frameId;p->timestampUs=frame.timestampUs;
     p->plannedSampleUs=planned;p->sampleUs=sampled;p->readyUs=ready;p->sourceCounter=sourceCounter;
-    p->payloadCrc=rt::crc32(p->frame.bytes.data(),p->frame.bytes.size());
-    p->packets.reserve(p->frame.fragmentCount());
-    for(std::uint16_t i=0;i<p->frame.fragmentCount();++i)p->packets.push_back(encodeData(p->frame,i));
+    p->payload=std::make_shared<const EncodedPayload>(frame);
     if(!p->readyUs)p->readyUs=rt::monotonicUs();
     return p;
 }
-void Ledger::add(const PreparedFrame& p){++count;idSum+=p.frame.frameId;crcSum+=p.payloadCrc;stampSum+=p.frame.timestampUs;}
+StaticEpPayload::StaticEpPayload(Bytes data){
+    Frame base{EpModule,0,0,std::move(data)};
+    payload_=std::make_shared<const EncodedPayload>(base);
+}
+PreparedPtr StaticEpPayload::sample(std::uint32_t id,std::uint64_t planned,std::uint64_t sampled)const{
+    auto p=std::make_shared<PreparedFrame>();
+    p->moduleId=EpModule;p->frameId=id;p->timestampUs=sampled;
+    p->plannedSampleUs=planned;p->sampleUs=sampled;p->payload=payload_;
+    p->stamp=makeDataStamp(payload_->packets,id,sampled);
+    p->readyUs=rt::monotonicUs();
+    return p;
+}
+void Ledger::add(const PreparedFrame& p){++count;idSum+=p.frameId;crcSum+=p.payload->crc;stampSum+=p.timestampUs;}
 Engine::Engine(Config c,unsigned liveLinkMbps):config_(std::move(c)),rate_(effectiveMbps(config_,liveLinkMbps)),nextStatus_(config_.initialStatusSequence){
     validateConfig(config_);
     worst_.reserve(32);
@@ -24,13 +48,13 @@ Engine::Engine(Config c,unsigned liveLinkMbps):config_(std::move(c)),rate_(effec
 }
 void Engine::cancel(Slot& s,bool stopping) {
     s.duplicatePending=false;
-    auto& m=stats_[s.p->frame.moduleId-1];
-    if(!s.finalized){++m.initialIncomplete;const auto left=s.p->packets.size()-s.next;if(stopping)m.unsentAtStop+=left;else m.unsentEvicted+=left;s.finalized=true;}
+    auto& m=stats_[s.p->moduleId-1];
+    if(!s.finalized){++m.initialIncomplete;const auto left=s.p->payload->packets.size()-s.next;if(stopping)m.unsentAtStop+=left;else m.unsentEvicted+=left;s.finalized=true;}
     m.retryCancelled+=s.pendingRetries.size();s.pendingRetries.clear();
 }
 void Engine::submit(PreparedPtr p) {
-    if(!p||(p->frame.moduleId!=1&&p->frame.moduleId!=2)||p->packets.size()!=p->frame.fragmentCount())throw std::invalid_argument("invalid prepared V2 frame");
-    const auto id=p->frame.moduleId-1;auto& cache=caches_[id];
+    if(!p||!p->payload||(p->moduleId!=1&&p->moduleId!=2)||p->payload->packets.size()!=rt::fragmentCount(p->payload->byteSize))throw std::invalid_argument("invalid prepared V2 frame");
+    const auto id=p->moduleId-1;auto& cache=caches_[id];
     if(cache.size()==4){auto old=cache.front();cancel(*old,false);retries_.erase(std::remove_if(retries_.begin(),retries_.end(),[&](const Retry&r){return r.slot==old;}),retries_.end());cache.pop_front();}
     auto slot=std::make_shared<Slot>();slot->p=std::move(p);cache.push_back(slot);
     ++stats_[id].accepted;stats_[id].cacheHighWater=std::max<std::uint64_t>(stats_[id].cacheHighWater,cache.size());
@@ -43,9 +67,9 @@ bool Engine::submitStatus(Bytes payload,std::uint64_t when) {
 void Engine::feedback(const std::uint8_t* p,std::size_t n,std::uint64_t now) {
     try {
         const auto nack=decodeNack(p,n);auto& m=stats_[nack.moduleId-1];++m.nacks;
-        auto& cache=caches_[nack.moduleId-1];auto it=std::find_if(cache.begin(),cache.end(),[&](const auto&s){return s->p->frame.frameId==nack.frameId;});
+        auto& cache=caches_[nack.moduleId-1];auto it=std::find_if(cache.begin(),cache.end(),[&](const auto&s){return s->p->frameId==nack.frameId;});
         if(it==cache.end()){++m.cacheMisses;return;}
-        try{validateIndices(nack,(*it)->p->frame.fragmentCount());}catch(const ProtocolError&){++m.invalidNacks;return;}
+        try{validateIndices(nack,rt::fragmentCount((*it)->p->payload->byteSize));}catch(const ProtocolError&){++m.invalidNacks;return;}
         m.requestedFragments+=nack.indices.size();
         for(auto index:nack.indices){
             auto& slot=**it;
@@ -53,7 +77,7 @@ void Engine::feedback(const std::uint8_t* p,std::size_t n,std::uint64_t now) {
             if(retries_.size()>=4096){++m.retryQueueDrops;continue;}
             slot.pendingRetries.insert(index);retries_.push_back({*it,index,now});
         }
-        const auto modulePending=std::count_if(retries_.begin(),retries_.end(),[&](const Retry&r){return r.slot->p->frame.moduleId==nack.moduleId;});
+        const auto modulePending=std::count_if(retries_.begin(),retries_.end(),[&](const Retry&r){return r.slot->p->moduleId==nack.moduleId;});
         m.retryHighWater=std::max<std::uint64_t>(m.retryHighWater,modulePending);
     }catch(const ProtocolError&){++invalidFeedback_;}
 }
@@ -70,16 +94,16 @@ std::uint64_t Engine::nextDueUs()const {
     return (allowedTick_+rate_-1)/rate_;
 }
 void Engine::finalize(Slot& s,std::uint64_t end) {
-    if(s.finalized)return;s.finalized=true;auto& m=stats_[s.p->frame.moduleId-1];
+    if(s.finalized)return;s.finalized=true;auto& m=stats_[s.p->moduleId-1];
     const auto elapsed=end>=s.p->sampleUs?end-s.p->sampleUs:0;
-    const auto limit=s.p->frame.moduleId==1?15000ULL:18000ULL;
-    if(s.successful==s.p->packets.size()){++m.initialComplete;m.submitted.add(*s.p);duration_[s.p->frame.moduleId-1].add(elapsed,limit);}
+    const auto limit=s.p->moduleId==1?15000ULL:18000ULL;
+    if(s.successful==s.p->payload->packets.size()){++m.initialComplete;m.submitted.add(*s.p);duration_[s.p->moduleId-1].add(elapsed,limit);}
     else ++m.initialIncomplete;
     if(elapsed>limit){
         ++m.deadlineMisses;
         const auto& p=*s.p;
-        InitialDeadlineEvent event{p.frame.moduleId,p.frame.frameId,p.plannedSampleUs,p.sampleUs,
-            p.readyUs,s.firstAttemptUs,end,p.sampleUs+limit,s.successful==p.packets.size()};
+        InitialDeadlineEvent event{p.moduleId,p.frameId,p.plannedSampleUs,p.sampleUs,
+            p.readyUs,s.firstAttemptUs,end,p.sampleUs+limit,s.successful==p.payload->packets.size()};
         if(initialDeadlineEvents_.size()<32){
             initialDeadlineEvents_.push_back(event);
         }else{
@@ -102,19 +126,19 @@ bool Engine::step(std::uint64_t now,const SendFunction& send,const std::function
     else {
         std::uint64_t earliest=UINT64_MAX;
         for(auto& cache:caches_)for(auto& s:cache)if(!s->finalized||s->duplicatePending){
-            const auto deadline=s->p->sampleUs+(s->p->frame.moduleId==1?15000:18000);
+            const auto deadline=s->p->sampleUs+(s->p->moduleId==1?15000:18000);
             if(deadline<earliest){earliest=deadline;selected=s;}
             break;
         }
         if(selected){
             duplicate=selected->duplicatePending;
             if(duplicate)index=selected->duplicateIndex;
-            else index=static_cast<std::uint16_t>(config_.faults.reverseInitial&&selected->p->frame.moduleId==config_.faultModule?selected->p->packets.size()-1-selected->next:selected->next);
+            else index=static_cast<std::uint16_t>(config_.faults.reverseInitial&&selected->p->moduleId==config_.faultModule?selected->p->payload->packets.size()-1-selected->next:selected->next);
             anchor=selected->p->plannedSampleUs;
         }
         else if(!retries_.empty()){
             const auto& r=retries_.front();selected=r.slot;index=r.index;retry=true;requested=r.requestedUs;anchor=requested;
-            const auto cost=(selected->p->packets[index].size+66)*8ULL;
+            const auto cost=(selected->p->payload->packets[index].size+66)*8ULL;
             // Retries may not occupy the next known source's initial opportunity.
             for(const auto due:nextSample_){
                 // Reserve the upcoming sample boundary. Once due, the source may
@@ -123,13 +147,12 @@ bool Engine::step(std::uint64_t now,const SendFunction& send,const std::function
             }
         }else return false;
     }
-    Datagram packet=status?statuses_.front().packet:selected->p->packets[index];
-    if(retry){packet.bytes[7]|=1;rt::writeLe32(packet.bytes.data()+packet.size-4,rt::crc32(packet.bytes.data(),packet.size-4));}
+    Datagram packet=status?statuses_.front().packet:selected->p->packet(index,retry);
     // Status and retries may delay DATA, but never move the retained initial plan forward.
     const auto original=(status||retry)?anchor*rate_:std::max(originalTick_,anchor*rate_);
     const auto plan=(original+rate_-1)/rate_,adjusted=(allowedTick_+rate_-1)/rate_;
     const auto start=clock();bool dropped=false,success=false;
-    const auto module=status?3:selected->p->frame.moduleId;
+    const auto module=status?3:selected->p->moduleId;
     const bool inject=!status&&module==config_.faultModule;
     if(inject&&(config_.faults.dropAlways.count(index)||(!retry&&config_.faults.dropFirst.count(index))))dropped=true;
     if(inject&&!retry&&config_.faults.corruptFirst.count(index))packet.bytes[packet.size-1]^=0x80;
@@ -157,9 +180,9 @@ bool Engine::step(std::uint64_t now,const SendFunction& send,const std::function
             planLateness_[module-1].add(late,999);if(late>=1000)++m.originalPlanViolations;
             ++selected->next;if(success)++selected->successful;
             if(inject&&config_.faults.duplicateFirst.count(index)){selected->duplicatePending=true;selected->duplicateIndex=index;}
-            if(selected->next==selected->p->packets.size())finalize(*selected,end);
+            if(selected->next==selected->p->payload->packets.size())finalize(*selected,end);
         }
-        event.frameId=selected->p->frame.frameId;event.index=index;event.plannedSampleUs=selected->p->plannedSampleUs;event.sampleUs=selected->p->sampleUs;event.readyUs=selected->p->readyUs;
+        event.frameId=selected->p->frameId;event.index=index;event.plannedSampleUs=selected->p->plannedSampleUs;event.sampleUs=selected->p->sampleUs;event.readyUs=selected->p->readyUs;
         event.deadlineUs=selected->p->sampleUs+(module==1?15000:18000);event.scoreUs=std::max(late,end>event.deadlineUs?end-event.deadlineUs:0);
     }
     recordEvent(event);return true;

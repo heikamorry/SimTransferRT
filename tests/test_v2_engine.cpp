@@ -1,11 +1,36 @@
 #include "v2/Engine.h"
 #include "protocol/V2PacketCodec.h"
+#include "protocol/Checksum.h"
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 using namespace rt::v2;
 namespace {
 void require(bool b,const char* text){if(!b)throw std::runtime_error(text);}
 PreparedPtr make(unsigned module,unsigned id,std::size_t n=1437,std::uint64_t sampled=1000){Frame f;f.moduleId=static_cast<std::uint8_t>(module);f.frameId=id;f.timestampUs=sampled;f.bytes.resize(n,37);return prepareFrame(std::move(f),sampled,sampled,sampled);}
+void testStaticEpPayload(){
+    for(const std::size_t n:{std::size_t(1),2*rt::PayloadStep,rt::PayloadStep+1,std::size_t(1)<<20}){
+        Frame frame;frame.moduleId=EpModule;frame.bytes.resize(n);
+        for(std::size_t i=0;i<n;++i)frame.bytes[i]=static_cast<std::uint8_t>((i*17+i/rt::PayloadStep+3)&255);
+        StaticEpPayload source(frame.bytes);
+        const auto beforeWrap=source.sample(UINT32_MAX,10,0x1122334455667788ULL);
+        const auto afterWrap=source.sample(0,20,0x8877665544332211ULL);
+        require(beforeWrap->payload==afterWrap->payload,"EP frames must share immutable packet storage");
+        require(beforeWrap->payload->crc==rt::crc32(frame.bytes),"EP template payload ledger CRC");
+        // Revisit the old frame after a later sample, just as cached retransmissions do.
+        for(const auto& prepared:{afterWrap,beforeWrap}){
+            frame.frameId=prepared->frameId;frame.timestampUs=prepared->timestampUs;
+            for(std::uint16_t i=0;i<frame.fragmentCount();++i){
+                for(const bool retry:{false,true}){
+                    const auto actual=prepared->packet(i,retry);
+                    const auto expected=encodeData(frame,i,retry);
+                    require(actual.size==expected.size&&std::equal(actual.bytes.begin(),actual.bytes.begin()+actual.size,expected.bytes.begin()),
+                            "EP template stamp must equal canonical DATA encoding through wrap, tail and NACK");
+                }
+            }
+        }
+    }
+}
 void testPriority(){Config c;Engine e(c);e.submit(make(1,1));e.submit(make(2,1));e.submitStatus({1,2},1000);std::vector<rt::Bytes> out;std::uint64_t clock=1000;auto send=[&](const auto*p,std::size_t n){out.emplace_back(p,p+n);return true;};auto time=[&]{return clock;};
     for(unsigned i=0;i<5;++i){require(e.step(clock,send,time),"packet expected");clock=std::max(clock+1,e.nextDueUs());}
     require(out[0][6]==3,"status must go first");require(decodeData(out[1].data(),out[1].size()).moduleId==1,"earlier NDI deadline");require(e.snapshot().modules[0].initialComplete==1&&e.snapshot().modules[1].initialComplete==1,"independent completion");
@@ -57,4 +82,4 @@ void testInitialDeadlineEvidence(){
         event.overrunUs()==1001,"deadline event measures preparation and both sends");
 }
 }
-int main(){try{testPriority();testBudget();testCacheStopAndLate();testPreflight();testLateStatusAndFaults();testRetryDuringDelayedAcquisition();testInitialDeadlineEvidence();std::cout<<"V2 engine tests passed\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{testStaticEpPayload();testPriority();testBudget();testCacheStopAndLate();testPreflight();testLateStatusAndFaults();testRetryDuringDelayedAcquisition();testInitialDeadlineEvidence();std::cout<<"V2 engine tests passed\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

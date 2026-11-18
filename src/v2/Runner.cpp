@@ -176,11 +176,16 @@ struct Session::Impl {
     SenderWake wake;
     std::thread worker;
     std::atomic<bool> stopRequested{false},active{false};
-    mutable std::mutex mutex;State state;
+    mutable std::mutex mutex;
+    std::shared_ptr<const State> state=std::make_shared<const State>();
     std::mutex statusMutex;std::deque<std::pair<Bytes,std::uint64_t>> statuses;
     std::uint64_t acceptedStatuses=0,rejectedStatuses=0,cancelledStatuses=0;
     Impl(TransportFactory f,rt::aurora::NdiSourceFactory n,LinkObserver linkObserver)
         :factory(std::move(f)),ndiFactory(std::move(n)),observe(std::move(linkObserver)){}
+    void publishState(std::shared_ptr<const State> next) {
+        std::lock_guard<std::mutex> lock(mutex);
+        state.swap(next); // The previous state is released after the guard.
+    }
     void execute(Config c);
     void source(Config c,unsigned id,std::uint64_t origin,SourceMailbox& mail,std::size_t ndiBytes,
                 std::size_t epBytes,const std::atomic<unsigned>& observedRate);
@@ -203,6 +208,8 @@ void Session::Impl::source(Config c,unsigned id,std::uint64_t origin,SourceMailb
         const std::size_t payload=file.empty()?(id==1?11+42*c.ndiTools:ep.size()):replay.size();stats.payloadBytes=payload;
         const auto check=preflight(c,id==1?payload:ndiBytes,id==2?payload:epBytes,observedRate.load());
         if(!check.feasible&&!c.allowOversubscribed)throw std::runtime_error(check.reason);
+        std::optional<StaticEpPayload> epTemplate;
+        if(id==EpModule)epTemplate.emplace(replay.empty()?std::move(ep):std::move(replay));
         const auto hz=id==1?c.ndiHz:c.epHz;const auto phase=id==1?c.ndiPhaseUs:c.epPhaseUs;
         std::uint64_t slot=0,previous=0;
         auto advance=[&](std::uint64_t now,PreparedPtr p={}){
@@ -248,9 +255,9 @@ void Session::Impl::source(Config c,unsigned id,std::uint64_t origin,SourceMailb
                 const auto currentBudget=preflight(c,frame.bytes.size(),epBytes,observedRate.load());
                 if(!currentBudget.feasible&&!c.allowOversubscribed)throw std::runtime_error("NDI observed length fails capacity screening: "+currentBudget.reason);
             }
-            else frame.bytes=!replay.empty()?replay:ep;
             frame.frameId=stats.nextId++;
-            auto p=prepareFrame(std::move(frame),planned,sampled,0,observedCounter);
+            auto p=epTemplate?epTemplate->sample(frame.frameId,planned,sampled):
+                prepareFrame(std::move(frame),planned,sampled,0,observedCounter);
             now=rt::monotonicUs();stats.prepareMaxUs=std::max(stats.prepareMaxUs,now-sampled);++stats.built;stats.ledger.add(*p);
             advance(now,std::move(p));
         }
@@ -264,12 +271,24 @@ void Session::Impl::execute(Config c){
     std::unique_ptr<Engine> engineOwner;
     std::thread observer;std::atomic<bool> observerStop{false};std::atomic<unsigned> observedRate{0};std::mutex observationMutex;LinkObservation latestObservation;
     auto publish=[&](const Engine* engine){
-        if(engine)local.engine=engine->snapshot();
-        for(unsigned i=0;i<2;++i){std::lock_guard<std::mutex> lock(sources[i].mutex);local.sources[i]=sources[i].stats;}
         {std::lock_guard<std::mutex> lock(observationMutex);if(latestObservation.observedAtUs)local.link=latestObservation;}
-        {std::lock_guard<std::mutex> lock(statusMutex);local.statusIngressAccepted=acceptedStatuses;local.statusIngressRejected=rejectedStatuses;local.statusIngressCancelled=cancelledStatuses;local.statusIngressPending=statuses.size();}
-        local.elapsedUs=local.startedUs&&rt::monotonicUs()>local.startedUs?rt::monotonicUs()-local.startedUs:0;
-        std::lock_guard<std::mutex> lock(mutex);state=local;
+        // local keeps session metadata; event vectors belong to each published snapshot.
+        auto next=std::make_shared<State>(local);
+        if(engine)next->engine=engine->snapshot();
+        for(unsigned i=0;i<2;++i){
+            std::lock_guard<std::mutex> lock(sources[i].mutex);
+            next->sources[i]=sources[i].stats;
+        }
+        {
+            std::lock_guard<std::mutex> lock(statusMutex);
+            next->statusIngressAccepted=acceptedStatuses;
+            next->statusIngressRejected=rejectedStatuses;
+            next->statusIngressCancelled=cancelledStatuses;
+            next->statusIngressPending=statuses.size();
+        }
+        const auto now=rt::monotonicUs();
+        next->elapsedUs=local.startedUs&&now>local.startedUs?now-local.startedUs:0;
+        publishState(std::move(next));
     };
     try{
         local.link=observe(c);latestObservation=local.link;observedRate=local.link.mbps;
@@ -298,7 +317,7 @@ void Session::Impl::execute(Config c){
                 PreparedPtr p;std::uint64_t nextSample=0;{std::lock_guard<std::mutex> lock(sources[i].mutex);if(!sources[i].queue.empty()){p=std::move(sources[i].queue.front());sources[i].queue.pop_front();}nextSample=sources[i].nextSample;}
                 if(p){
                     auto& known=i==0?knownNdiBytes:knownEpBytes;
-                    if(known!=p->frame.bytes.size()){known=p->frame.bytes.size();sizeChanged=true;}
+                    if(known!=p->payload->byteSize){known=p->payload->byteSize;sizeChanged=true;}
                     engine.submit(std::move(p));
                 }engine.setNextSample(static_cast<std::uint8_t>(i+1),nextSample);
             }
@@ -369,7 +388,14 @@ void Session::start(const Config& config){
     if(busy())throw std::runtime_error("V2 session is already active or stopping");
     if(p_->worker.joinable())p_->worker.join();validateConfig(config);
     auto c=config;if(c.runId.empty())c.runId="v2-"+std::to_string(rt::monotonicUs());
-    {std::lock_guard<std::mutex> lock(p_->mutex);p_->state={};p_->state.config=c;p_->state.capacity=preflight(c);p_->state.sources[0].nextId=c.initialNdiId;p_->state.sources[1].nextId=c.initialEpId;p_->state.engine.nextStatusSequence=c.initialStatusSequence;p_->state.engine.effectiveMbps=effectiveMbps(c);}
+    auto initial=std::make_shared<State>();
+    initial->config=c;
+    initial->capacity=preflight(c);
+    initial->sources[0].nextId=c.initialNdiId;
+    initial->sources[1].nextId=c.initialEpId;
+    initial->engine.nextStatusSequence=c.initialStatusSequence;
+    initial->engine.effectiveMbps=effectiveMbps(c);
+    p_->publishState(std::move(initial));
     {std::lock_guard<std::mutex> lock(p_->statusMutex);p_->statuses.clear();p_->acceptedStatuses=0;p_->rejectedStatuses=0;p_->cancelledStatuses=0;}
     p_->stopRequested=false;p_->active=true;
     try{p_->worker=std::thread([this,c]{p_->execute(c);});}catch(...){p_->active=false;throw;}
@@ -377,7 +403,9 @@ void Session::start(const Config& config){
 void Session::stop()noexcept{p_->stopRequested.store(true,std::memory_order_release);p_->wake.notify();}
 bool Session::busy()const noexcept{return p_->active.load(std::memory_order_acquire);}
 RunResult Session::snapshot()const{
-    State s;{std::lock_guard<std::mutex> lock(p_->mutex);s=p_->state;}
+    std::shared_ptr<const State> latest;
+    {std::lock_guard<std::mutex> lock(p_->mutex);latest=p_->state;}
+    const State& s=*latest;
     RunResult r;r.reportJson=report(s);r.error=s.error;r.nextNdiId=s.sources[0].nextId;r.nextEpId=s.sources[1].nextId;r.nextStatusSequence=s.engine.nextStatusSequence;
     r.success=s.finished&&s.error.empty()&&s.engine.statusSendErrors==0;
     for(unsigned i=0;i<2;++i)r.success=r.success&&!s.sources[i].errors&&!s.engine.modules[i].sendErrors;

@@ -56,8 +56,24 @@ public:
 };
 void statusOnly(){auto capture=std::make_shared<Capture>();rt::v2::Config c;c.ndiEnabled=false;c.epEnabled=false;c.statusIntervalUs=10000;c.durationUs=120000;
     auto r=rt::v2::run(c,factory(capture));require(r.success,"status-only succeeds");require(capture->statuses>=8,"periodic status must stay active through its duration");}
-void preserveIdsOnOpenFailure(){auto capture=std::make_shared<Capture>();capture->failOpen=true;rt::v2::Config c;c.initialNdiId=234;c.initialEpId=345;c.initialStatusSequence=456;
-    auto r=rt::v2::run(c,factory(capture));require(!r.success,"open failure reported");require(r.nextNdiId==234&&r.nextEpId==345&&r.nextStatusSequence==456,"failed open cannot reset continuation IDs");}
+void preserveIdsOnOpenFailure(){
+    auto capture=std::make_shared<Capture>();capture->failOpen=true;
+    rt::v2::Session session(factory(capture));
+    const auto idle=session.snapshot();
+    require(!idle.success&&idle.nextNdiId==1&&idle.nextEpId==1,"idle session has an initial snapshot");
+    rt::v2::Config c;c.initialNdiId=234;c.initialEpId=345;c.initialStatusSequence=456;
+    session.start(c);
+    auto r=session.wait();
+    require(!r.success,"open failure reported");
+    require(r.nextNdiId==234&&r.nextEpId==345&&r.nextStatusSequence==456,"failed open cannot reset continuation IDs");
+    c.runId="snapshot-restart";c.initialEpId=789;
+    session.start(c);
+    const auto restarted=session.snapshot();
+    const auto finished=session.wait();
+    require(restarted.nextEpId==789&&finished.nextEpId==789,"restart replaces the previous final snapshot");
+    require(restarted.reportJson.find(c.runId)!=std::string::npos,"restart exposes its own report");
+    require(session.snapshot().reportJson==finished.reportJson,"final snapshot remains readable after wait");
+}
 void failedReports(){auto capture=std::make_shared<Capture>();rt::v2::Config c;c.linkMbps=100;c.epBytes=2097152;
     auto rejected=rt::v2::run(c,factory(capture));require(!rejected.success,"impossible capacity rejected");require(rejected.reportJson.find("\"effective_link_mbps\":100,")!=std::string::npos,"rejected preflight must retain actual budget");
     class BadSource:public DeviceModel{public:BadSource():DeviceModel(false){}void start(const std::atomic<bool>&)override{throw std::runtime_error("intentional source setup error");}};

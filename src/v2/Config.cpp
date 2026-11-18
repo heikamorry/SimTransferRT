@@ -20,24 +20,27 @@ std::string networkProfileName(unsigned mbps) {
     switch(mbps){case 100:return "100Mbps";case 1000:return "1GbE";case 2500:return "2.5GbE";default:return "invalid";}
 }
 std::uint64_t wireBytes(std::size_t n) {return n+102ULL*rt::fragmentCount(n);}
-unsigned effectiveMbps(const Config& c) {
+unsigned effectiveMbps(const Config& c,unsigned liveLinkMbps) {
     auto r=c.linkMbps;
     if(c.observedLinkMbps)r=std::min(r,c.observedLinkMbps);
     if(c.pathLimitMbps)r=std::min(r,c.pathLimitMbps);
+    if(liveLinkMbps)r=std::min(r,liveLinkMbps);
     return r;
 }
 void validateConfig(const Config& c) {
     if(c.linkMbps!=100&&c.linkMbps!=1000&&c.linkMbps!=2500)throw std::invalid_argument("V2 requires one of three network profiles");
     if(!c.targetPort)throw std::invalid_argument("target port must be nonzero");
     if(!c.ndiEnabled&&!c.epEnabled&& !c.statusIntervalUs)throw std::invalid_argument("at least one data source or periodic status must be enabled");
+    if(!c.ndiEnabled&&!c.epEnabled&&c.frameLimit&&!c.durationUs)
+        throw std::invalid_argument("--frames counts data samples; use --duration to bound a status-only run");
     if(!c.ndiHz||c.ndiHz>1000||!c.epHz||c.epHz>1000)throw std::invalid_argument("source rate must be 1..1000 Hz");
     if(c.ndiTools>255)throw std::invalid_argument("BX tool record count must be 0..255; actual hardware capacity is separate");
     if(!c.epBytes||c.epBytes>rt::MaxFrameBytes)throw std::invalid_argument("EP payload must be 1..2097152 bytes");
     if(c.faultModule!=1&&c.faultModule!=2)throw std::invalid_argument("fault module must be 1 or 2");
 }
-Preflight preflight(const Config& c,std::size_t ndi,std::size_t ep) {
+Preflight preflight(const Config& c,std::size_t ndi,std::size_t ep,unsigned liveLinkMbps) {
     validateConfig(c);Preflight p;
-    p.selectedMbps=c.linkMbps;p.effectiveMbps=effectiveMbps(c);
+    p.selectedMbps=c.linkMbps;p.effectiveMbps=effectiveMbps(c,liveLinkMbps);
     p.ndiBytes=c.ndiEnabled?(ndi?ndi:11+42*c.ndiTools):0;
     p.epBytes=c.epEnabled?(ep?ep:c.epBytes):0;
     const auto nw=p.ndiBytes?wireBytes(p.ndiBytes):0, ew=p.epBytes?wireBytes(p.epBytes):0;

@@ -16,7 +16,8 @@ struct RunResult {
 class Session {
 public:
     using TransportFactory=std::function<std::unique_ptr<IUdpTransport>()>;
-    explicit Session(TransportFactory,rt::aurora::NdiSourceFactory ndiSource={});
+    using LinkObserver=std::function<LinkObservation(const Config&)>;
+    explicit Session(TransportFactory,rt::aurora::NdiSourceFactory ndiSource={},LinkObserver linkObserver=observeLink);
     ~Session();
     Session(const Session&)=delete;
     Session& operator=(const Session&)=delete;

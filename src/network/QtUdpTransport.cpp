@@ -13,6 +13,7 @@
 #include <cstring>
 #endif
 #include "network/QtUdpTransport.h"
+#include "network/FeedbackRead.h"
 #include <QVariant>
 #include <array>
 namespace rt {
@@ -70,5 +71,8 @@ namespace rt {
         out.sourceIp=from.toString().toStdString();
         out.sourcePort=port;
         return true;
+    }
+    ReceiveOutcome QtUdpTransport::receiveFeedback(IncomingDatagram& out) {
+        return readUdpFeedback(static_cast<FeedbackSocket>(socket_.socketDescriptor()),out,error_);
     }
 }

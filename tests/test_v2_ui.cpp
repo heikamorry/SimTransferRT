@@ -86,20 +86,107 @@ void liveLifecycle() {
     for(const auto& row:w.reportForExport()["acceptance"].toArray()) {const auto r=row.toObject();if(r["id"].toString()=="gui_local_joint_delivery") {require(r["status"].toString()=="pass","paired bounded ledgers/consumer counts disagree");++jointlyChecked;}}
     require(jointlyChecked==2,"joint export omitted one module");
     auto* stats=child<QTableWidget>(w,"v2SenderStats");require(stats->item(0,1)->text().toULongLong()>0 && stats->item(1,1)->text().toULongLong()>0,"independent modules did not run");
+    // A second automatic-port run must reach the already-pinned receiver.
+    const auto first=w.reportForExport()["sender"].toObject();
+    // This run fails capacity screening before it opens a socket. Its previous port is still usable.
+    child<QComboBox>(w,"v2NetworkProfile")->setCurrentIndex(0);
+    child<QSpinBox>(w,"v2EpBytes")->setValue(2097152);
+    start->click();
+    require(until([&]{return start->isEnabled();}),"capacity rejection did not finish");
+    const auto rejected=w.reportForExport()["sender"].toObject();
+    require(!rejected["error"].toString().isEmpty() && rejected["local_port"].toInt()==0 &&
+            !rejected["preflight"].toObject().value("feasible").toBool(true),"expected rejection before socket bind");
+    child<QComboBox>(w,"v2NetworkProfile")->setCurrentIndex(1);
+    child<QSpinBox>(w,"v2EpBytes")->setValue(512);
+    start->click();
+    require(until([&] {return start->isEnabled() && w.reportForExport()["joint_scope"].toObject()["eligible"].toBool();}),
+            "automatic source port lost the running receiver on restart");
+    const auto second=w.reportForExport();
+    const auto secondSender=second["sender"].toObject(),secondReceiver=second["receiver"].toObject();
+    require(secondSender["run_id"]!=first["run_id"] && first["local_port"]==secondSender["local_port"],"sender changed automatic endpoint");
+    require(secondReceiver["source_rejected"].toInteger()==0,"second run was rejected by peer pinning");
+    for(const auto& value:second["acceptance"].toArray()) {
+        const auto row=value.toObject();
+        if(row["id"]=="gui_local_joint_delivery")require(row["status"]=="pass","second-run frames missing");
+    }
+    // Regressing cumulative counts cannot be subtracted from the previous run baseline.
+    auto reset=secondReceiver;
+    auto modules=reset["modules"].toObject();
+    auto ep=modules["2"].toObject();
+    auto ledger=ep["ledger"].toObject();
+    ledger["count"]="0";ep["ledger"]=ledger;ep["consumed"]=0;modules["2"]=ep;reset["modules"]=modules;
+    w.presentReceiverReport(reset);
+    for(const auto& value:w.reportForExport()["acceptance"].toArray()) {
+        const auto row=value.toObject();
+        if(row["module_id"].toInt()==2 && row["id"]=="gui_local_joint_delivery") {
+            require(row["status"]=="not_tested","regressed counters falsely eligible");
+            require(row["measured"].toString().contains(QStringLiteral("consumed_delta=未检测")),"regressed counters displayed as valid counts");
+        }
+    }
+    w.presentReceiverReport(secondReceiver);
     child<QComboBox>(w,"v2NetworkProfile")->setCurrentIndex(0);start->click();child<QPushButton>(w,"v2Stop")->click();
     require(!child<QComboBox>(w,"v2NetworkProfile")->isEnabled(),"profile unlocked before Stop join");
     require(until([&]{return start->isEnabled();}),"quick Stop did not complete");
     receive->click();require(until([&]{return child<QSpinBox>(w,"v2ReceiverPort")->isEnabled();}),"receiver Stop did not complete");
-    receive->click();require(until([&]{return !child<QSpinBox>(w,"v2ReceiverPort")->isEnabled();}),"receiver restart failed");
+    const auto stopped=w.reportForExport()["receiver"].toObject();
+    auto stoppedView=stopped["display"].toObject();
+    require(stopped["final"].toBool() && stoppedView["stopped"].toBool() &&
+            stoppedView["ndi"].toObject().value("stale").toBool() && stoppedView["ep"].toObject().value("stale").toBool(),
+            "final receiver view still presented live data");
+    require(stopped["modules"].toObject().value("2").toObject().value("completed").toInteger()>0,
+            "stopping the display discarded the receive ledger");
+    auto* toolsTable=child<QTableWidget>(w,"v2NdiToolsTable");
+    require(toolsTable->rowCount()>0 && toolsTable->item(0,1)->text()==QStringLiteral("接收已停止") &&
+            child<QLabel>(w,"v2EpState")->text().contains(QStringLiteral("接收已停止")),"widgets showed a live view after stop");
+    QUdpSocket busy;
+    require(busy.bind(QHostAddress::LocalHost,port,QUdpSocket::DontShareAddress),"cannot reserve port for failed receiver restart");
+    receive->click();
+    require(until([&]{return child<QSpinBox>(w,"v2ReceiverPort")->isEnabled();}),"receiver bind failure did not finish");
+    require(toolsTable->rowCount()==0 && child<QLabel>(w,"v2EpState")->text()==QStringLiteral("电生理尚未收到") &&
+            w.reportForExport()["receiver"].toObject().isEmpty(),"failed restart displayed the old session");
+    busy.close();
+    receive->click();
+    require(w.reportForExport()["receiver"].toObject().isEmpty(),"previous receiver report survived restart");
+    require(until([&]{return !child<QSpinBox>(w,"v2ReceiverPort")->isEnabled();}),"receiver restart failed");
     require(!w.reportForExport()["joint_scope"].toObject()["eligible"].toBool(),"receiver restart reused prior session baseline");
     receive->click();require(until([&]{return child<QSpinBox>(w,"v2ReceiverPort")->isEnabled();}),"receiver second Stop failed");
-    require(until([&]{return archive.entryList({"*.json"},QDir::Files).size()>=archivedBefore+2;}),"two runs were not independently archived");
+    require(until([&]{return archive.entryList({"*.json"},QDir::Files).size()>=archivedBefore+4;}),"four runs were not independently archived");
+}
+void automaticPortRecovery() {
+    QSettings().clear();
+    rt::V2Window w;
+    QUdpSocket sink,guard;
+    require(sink.bind(QHostAddress::LocalHost,0),"cannot reserve destination");
+    auto* port=child<QSpinBox>(w,"v2CommandPort");
+    child<QSpinBox>(w,"v2TargetPort")->setValue(sink.localPort());
+    child<QSpinBox>(w,"v2EpBytes")->setValue(1);
+    child<QSpinBox>(w,"v2Duration")->setValue(1);
+    auto run=[&]() {
+        auto* start=child<QPushButton>(w,"v2Start");
+        start->click();require(!start->isEnabled(),"run did not start");
+        require(until([&]{return start->isEnabled();}),"run did not finish");
+        return w.reportForExport()["sender"].toObject();
+    };
+    require(guard.bind(QHostAddress::LocalHost,0),"cannot reserve explicit source port");
+    const auto explicitPort=guard.localPort();
+    guard.close();port->setValue(explicitPort);
+    require(run()["local_port"].toInt()==explicitPort,"explicit port ignored");
+    require(guard.bind(QHostAddress::LocalHost,explicitPort,QUdpSocket::DontShareAddress),"cannot guard old explicit port");
+    port->setValue(0);
+    const auto automaticPort=static_cast<quint16>(run()["local_port"].toInt());
+    require(automaticPort && automaticPort!=explicitPort,"automatic run reused old explicit port");
+    guard.close();
+    require(guard.bind(QHostAddress::LocalHost,automaticPort,QUdpSocket::DontShareAddress),"cannot guard old automatic port");
+    require(!run()["error"].toString().isEmpty(),"occupied pinned port did not surface a binding error");
+    const auto next=run();
+    require(next["error"].toString().isEmpty() && next["local_port"].toInt()>0 && next["local_port"].toInt()!=automaticPort,
+            "new attempt after failed port reuse did not return to automatic allocation");
 }
 }
 int main(int argc,char** argv) {
     QApplication app(argc,argv);app.setOrganizationName("SimTransferTests");app.setApplicationName("V2UiTests");
     QStandardPaths::setTestModeEnabled(true);
     QTemporaryDir settings;QSettings::setDefaultFormat(QSettings::IniFormat);QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,settings.path());
-    try {cli();settingsAndLocking();presentation();liveLifecycle();std::cout<<"V2 CLI, profile persistence, stop locking, consumer presentation and live lifecycle passed\n";return 0;}
+    try {cli();settingsAndLocking();presentation();liveLifecycle();automaticPortRecovery();std::cout<<"V2 CLI, profile persistence, stop locking, consumer presentation and live lifecycle passed\n";return 0;}
     catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

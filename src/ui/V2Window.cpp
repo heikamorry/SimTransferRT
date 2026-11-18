@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <chrono>
 
@@ -63,7 +64,83 @@ QTableWidget* table(const QStringList& labels,const char* name) {
     t->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     t->horizontalHeader()->setStretchLastSection(true);return t;
 }
-void cell(QTableWidget* t,int r,int c,const QString& s) {t->setItem(r,c,new QTableWidgetItem(s));}
+void cell(QTableWidget* t,int r,int c,const QString& s) {
+    if(auto* item=t->item(r,c)) {
+        if(item->text()!=s)item->setText(s);
+    } else t->setItem(r,c,new QTableWidgetItem(s));
+}
+struct ReceiverUpdate {
+    v2::ReceiverSnapshot snapshot;
+    QString bindAddress,peerAddress;
+    quint16 port=0,peerPort=0;
+    std::uint64_t generation=0,observedUs=0,rejectedSources=0,feedbackErrors=0;
+    bool final=false;
+};
+
+QString routeKey(const v2::Config& c) {
+    return QString::fromStdString(c.bindIp)+"/"+QString::fromStdString(c.targetIp)+":"+QString::number(c.targetPort);
+}
+
+QJsonObject ndiDisplay(const v2::ReceiverSnapshot& snapshot) {
+    QJsonArray rows;
+    for(const auto& tool:snapshot.ndi.tools) {
+        QString state=QStringLiteral("disabled");
+        if(tool.status==aurora::HandleStatus::Missing)state="missing";
+        if(tool.status==aurora::HandleStatus::Valid)state=tool.transformUsable()?"valid":"invalid status";
+        QJsonArray position,quaternion;
+        for(auto value:tool.positionMm)position.append(value);
+        for(auto value:tool.quaternion)quaternion.append(value);
+        rows.append(QJsonObject{{"handle",tool.handle},{"state",state},{"position",position},{"quaternion",quaternion},
+            {"quality",tool.quality},{"port_status",static_cast<qint64>(tool.portStatus)},{"source_frame",static_cast<qint64>(tool.frameNumber)}});
+    }
+    return {{"tools",rows}};
+}
+
+QJsonObject epDisplay(const v2::ReceiveView& view) {
+    QJsonObject ep{{"format",QStringLiteral("字节值预览；不是已解码的真实电生理波形")}};
+    if(view.frame) {
+        const auto& bytes=view.frame->bytes;
+        QJsonArray samples;
+        const auto stride=std::max<std::size_t>(1,bytes.size()/256);
+        for(std::size_t i=0;i<bytes.size() && samples.size()<256;i+=stride)samples.append(bytes[i]);
+        ep["bytes"]=static_cast<qint64>(bytes.size());
+        ep["samples"]=samples;
+    }
+    return ep;
+}
+
+QJsonObject displayReport(const ReceiverUpdate& update,const ReceiverUpdate* previous,QJsonObject view) {
+    const auto& snapshot=update.snapshot;
+    for(unsigned i=0;i<2;++i) {
+        const auto key=i==0?"ndi":"ep";
+        const auto& latest=snapshot.latest[i];
+        auto item=view[key].toObject();
+        if(!previous || previous->snapshot.latest[i].frame!=latest.frame || item.isEmpty()) {
+            item=i==0?ndiDisplay(snapshot):epDisplay(latest);
+            if(latest.frame) {
+                item["frame_id"]=static_cast<qint64>(latest.frame->frameId);
+                item["host_completed_us"]=static_cast<qint64>(latest.hostCompletedUs);
+            }
+        }
+        item["stale"]=latest.stale || update.final;
+        view[key]=item;
+    }
+    QJsonObject status;
+    if(snapshot.hasStatus) {
+        status["sequence"]=static_cast<qint64>(snapshot.status.sequence);
+        status["text"]=QString::fromUtf8(reinterpret_cast<const char*>(snapshot.status.payload.data()),static_cast<qsizetype>(snapshot.status.payload.size()));
+    }
+    view["status"]=status;
+    view["stopped"]=update.final;
+    const bool associated=snapshot.associationAvailable && !update.final;
+    view["association_available"]=associated;
+    if(associated)view["association_delta_us"]=static_cast<qint64>(snapshot.nearestTimestampDeltaUs);
+    else view.remove("association_delta_us");
+    const auto endpoint=update.peerPort?update.peerAddress+":"+QString::number(update.peerPort):QStringLiteral("尚未收到合法报文");
+    return {{"display",view},{"receiver_generation",static_cast<qint64>(update.generation)},{"source_endpoint",endpoint},
+        {"receiver_port",update.port},{"receiver_bind",update.bindAddress},{"observed_host_us",QString::number(update.observedUs)},
+        {"source_rejected",static_cast<qint64>(update.rejectedSources)},{"feedback_send_errors",static_cast<qint64>(update.feedbackErrors)},{"final",update.final}};
+}
 class WaveView final : public QWidget {
 public:
     explicit WaveView(QWidget* parent=nullptr):QWidget(parent) {setMinimumHeight(140);setObjectName("v2Waveform");}
@@ -100,6 +177,9 @@ struct V2Window::Impl {
     QTimer timer;
     QJsonObject senderReport,receiverReport;
     QJsonObject receiverBaseline;
+    QString autoPortKey;
+    quint16 previousSourcePort=0;
+    bool reusingAutoPort=false;
     QString baselineRun;
     v2::Config baselineConfig;
     std::uint64_t receiverGeneration=0,baselineGeneration=0;
@@ -116,9 +196,8 @@ struct V2Window::Impl {
     std::atomic<bool> receiverStop{true},receiverRunning{false};
     std::thread receiverWorker;
     std::mutex receiverMutex;
-    QJsonObject receiverLatest;
+    std::optional<ReceiverUpdate> receiverLatest,presentedUpdate;
     QString receiverError;
-    bool receiverDirty=false;
 };
 V2Window::V2Window(QWidget* parent):QMainWindow(parent),p_(std::make_unique<Impl>()) {
     setWindowTitle(QStringLiteral("SimTransfer RT · V2 多模块传输"));resize(1350,900);setMinimumSize(1020,720);
@@ -154,9 +233,16 @@ V2Window::V2Window(QWidget* parent):QMainWindow(parent),p_(std::make_unique<Impl
     auto* receivePage=new QWidget;auto* rl=new QVBoxLayout(receivePage);tabs->addTab(receivePage,QStringLiteral("接收与显示"));auto* rxControls=new QHBoxLayout;p_->receiverBind=line("127.0.0.1","v2ReceiverBind");p_->receiverPort=spin(1,65535,5650,"v2ReceiverPort");p_->receive=new QPushButton(QStringLiteral("启动接收"));p_->receive->setObjectName("v2Receive");rxControls->addWidget(new QLabel(QStringLiteral("绑定地址")));rxControls->addWidget(p_->receiverBind);rxControls->addWidget(p_->receiverPort);rxControls->addWidget(p_->receive);rl->addLayout(rxControls);
     p_->receiveState=new QLabel(QStringLiteral("接收未启动。重启会清空本地会话；请与发送端协调并换用新端口隔离旧报文。"));p_->receiveState->setWordWrap(true);rl->addWidget(p_->receiveState);
     p_->toolsTable=table({QStringLiteral("工具"),QStringLiteral("有效性"),QStringLiteral("位置 x/y/z（mm）"),QStringLiteral("四元数 w/x/y/z"),QStringLiteral("质量指标"),QStringLiteral("端口状态"),QStringLiteral("设备帧号")},"v2NdiToolsTable");rl->addWidget(p_->toolsTable,1);
+    // Live coordinates change every frame. Content-based sizing repeatedly measures every tool.
+    p_->toolsTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+    const std::array<int,7> toolColumnWidths{80,110,300,340,110,110,120};
+    for(int i=0;i<static_cast<int>(toolColumnWidths.size());++i)p_->toolsTable->setColumnWidth(i,toolColumnWidths[i]);
     p_->epState=new QLabel(QStringLiteral("电生理尚未收到"));p_->epState->setObjectName("v2EpState");rl->addWidget(p_->epState);p_->wave=new WaveView;rl->addWidget(p_->wave);
     p_->statusState=new QLabel(QStringLiteral("状态尚未收到"));p_->statusState->setObjectName("v2StatusState");p_->statusState->setWordWrap(true);rl->addWidget(p_->statusState);p_->association=new QLabel(QStringLiteral("共同硬件时间域未验证；匹配仅作模拟/回放观察"));p_->association->setWordWrap(true);rl->addWidget(p_->association);
     auto* reportPage=new QWidget;auto* reportLayout=new QVBoxLayout(reportPage);tabs->addTab(reportPage,QStringLiteral("逐项验收"));auto* reportActions=new QHBoxLayout;auto* exp=new QPushButton(QStringLiteral("导出当前收发报告"));auto* archives=new QPushButton(QStringLiteral("打开每轮运行档案"));reportActions->addWidget(exp);reportActions->addWidget(archives);reportActions->addStretch();reportLayout->addLayout(reportActions);p_->acceptance=table({QStringLiteral("要求"),QStringLiteral("测量口径"),QStringLiteral("阈值"),QStringLiteral("实测值"),QStringLiteral("结果"),QStringLiteral("原因")},"v2Acceptance");reportLayout->addWidget(p_->acceptance,1);
+    connect(tabs,&QTabWidget::currentChanged,this,[this,tabs,reportPage] {
+        if(tabs->currentWidget()==reportPage)p_->acceptance->resizeRowsToContents();
+    });
     connect(archives,&QPushButton::clicked,this,[] {const auto directory=QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)+"/v2-runs";QDir().mkpath(directory);QDesktopServices::openUrl(QUrl::fromLocalFile(directory));});
     p_->log=new QPlainTextEdit;p_->log->setReadOnly(true);p_->log->setMaximumBlockCount(300);p_->log->setMaximumHeight(130);layout->addWidget(p_->log);
     int index=p_->profile->findData(settings.value("v2/networkMbps",1000).toUInt());if(index<0) {index=1;p_->log->appendPlainText(QStringLiteral("保存的网络档位无效，已恢复为 1GbE。"));}p_->profile->setCurrentIndex(index);
@@ -170,7 +256,7 @@ V2Window::V2Window(QWidget* parent):QMainWindow(parent),p_(std::make_unique<Impl
     connect(p_->post,&QPushButton::clicked,this,[this] {const auto b=p_->statusBody->text().toUtf8();if(b.size()>1444 || !p_->session.postStatus(Bytes(b.begin(),b.end())))p_->log->appendPlainText(QStringLiteral("状态未入队：超过 1444 字节、队列已满或运行已停止。"));});
     p_->timer.setTimerType(Qt::PreciseTimer);p_->timer.setInterval(5);connect(&p_->timer,&QTimer::timeout,this,&V2Window::refresh);p_->timer.start();updateBudget();
 }
-V2Window::~V2Window() {p_->receiverStop=true;if(p_->receiverWorker.joinable())p_->receiverWorker.join();p_->session.stop();const auto result=p_->session.wait();if(p_->sending && !result.reportJson.empty()){p_->senderReport=QJsonDocument::fromJson(QByteArray::fromStdString(result.reportJson)).object();p_->sending=false;p_->archivePending=true;}if(p_->archivePending)archiveRun();}
+V2Window::~V2Window() {p_->receiverStop=true;p_->session.stop();if(p_->receiverWorker.joinable())p_->receiverWorker.join();refreshReceiver();const auto result=p_->session.wait();if(p_->sending && !result.reportJson.empty()){p_->senderReport=QJsonDocument::fromJson(QByteArray::fromStdString(result.reportJson)).object();p_->sending=false;p_->archivePending=true;}if(p_->archivePending)archiveRun();}
 v2::Config V2Window::selectedConfig() const {
     v2::Config c;c.linkMbps=p_->profile->currentData().toUInt();c.targetIp=p_->target->text().trimmed().toStdString();c.bindIp=p_->bind->text().trimmed().toStdString();c.allowedNackIp=c.targetIp;c.targetPort=static_cast<std::uint16_t>(p_->port->value());c.commandPort=static_cast<std::uint16_t>(p_->commandPort->value());c.epBytes=static_cast<std::uint32_t>(p_->epBytes->value());c.ndiTools=static_cast<std::uint32_t>(p_->tools->value());c.ndiEnabled=p_->ndiOn->isChecked();c.epEnabled=p_->epOn->isChecked();c.pathLimitMbps=static_cast<unsigned>(p_->pathLimit->value());c.durationUs=static_cast<std::uint64_t>(p_->duration->value())*1000000;c.allowOversubscribed=p_->overload->isChecked();c.ndiReplayFile=p_->ndiFile->text().trimmed().toStdString();c.epReplayFile=p_->epFile->text().trimmed().toStdString();c.initialNdiId=p_->nextNdi;c.initialEpId=p_->nextEp;c.initialStatusSequence=p_->nextStatus;return c;
 }
@@ -182,38 +268,93 @@ void V2Window::updateBudget() {
 void V2Window::startSending() {
     if(p_->archivePending) {archiveRun();if(p_->archivePending)return;}
     try {auto c=selectedConfig();c.runId=QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmss-zzz").toStdString();v2::validateConfig(c);QSettings s;s.setValue("v2/target",p_->target->text());s.setValue("v2/bind",p_->bind->text());s.setValue("v2/port",p_->port->value());s.setValue("v2/commandPort",p_->commandPort->value());s.setValue("v2/networkMbps",c.linkMbps);
-        p_->receiverBaseline=p_->receiverReport;p_->baselineRun=QString::fromStdString(c.runId);p_->baselineConfig=c;p_->baselineGeneration=p_->receiverGeneration;
+        refreshReceiver();
+        p_->receiverBaseline=receiverReportForExport();p_->baselineRun=QString::fromStdString(c.runId);p_->baselineConfig=c;p_->baselineGeneration=p_->receiverGeneration;
+        // A running receiver pins its peer. Keep the OS-selected source port on consecutive runs.
+        if(c.commandPort)p_->autoPortKey.clear();
+        p_->reusingAutoPort=!c.commandPort && p_->autoPortKey==routeKey(c);
+        if(p_->reusingAutoPort)c.commandPort=p_->previousSourcePort;
         // New-run display evidence has the same baseline as receive/consume counts.
         // Keep last displayed IDs so the preceding run's stale view is not counted again.
         p_->displayedFrames={};p_->displayMaxDelayUs={};p_->displayLate={};
         const auto modules=p_->receiverBaseline["modules"].toObject();const auto observed=p_->receiverBaseline["observed_host_us"].toString().toULongLong();const auto now=monotonicUs();
-        p_->baselineReady=p_->receiverRunning && p_->receiverBaseline["receiver_port"].toInt()==c.targetPort && observed && now>=observed && now-observed<100000 && modules.contains("1") && modules.contains("2") && modules["1"].toObject()["activeFrames"].toInteger()==0 && modules["2"].toObject()["activeFrames"].toInteger()==0 && p_->receiverBaseline["source_rejected"].toInteger()==0;
-        p_->displayedFrames={};p_->displayMaxDelayUs={};p_->displayLate={};
+        p_->baselineReady=p_->receiverRunning && p_->receiverBaseline["receiver_generation"].toInteger(-1)==static_cast<qint64>(p_->receiverGeneration) && p_->receiverBaseline["receiver_port"].toInt()==c.targetPort && observed && now>=observed && now-observed<100000 && modules.contains("1") && modules.contains("2") && modules["1"].toObject()["activeFrames"].toInteger()==0 && modules["2"].toObject()["activeFrames"].toInteger()==0 && p_->receiverBaseline["source_rejected"].toInteger()==0;
         p_->session.start(c);p_->sending=true;setSenderControlsLocked(true);p_->runState->setText(QStringLiteral("准备 / 发送中"));p_->log->appendPlainText(QStringLiteral("开始 V2 运行 %1，所有模块序号续用。采样来源：模拟或回放。").arg(QString::fromStdString(c.runId)));}
     catch(const std::exception& e) {p_->log->appendPlainText(QString::fromUtf8(e.what()));p_->runState->setText(QStringLiteral("启动失败"));}
 }
 void V2Window::stopSending() {p_->session.stop();p_->stop->setEnabled(false);p_->post->setEnabled(false);p_->runState->setText(QStringLiteral("正在停止并归档，完成后可换档"));}
 void V2Window::presentSenderReport(const QJsonObject& report) {
+    if(p_->sending && !p_->baselineConfig.commandPort && p_->baselineGeneration==p_->receiverGeneration &&
+            report["run_id"].toString()==p_->baselineRun) {
+        const auto port=report["local_port"].toInt();
+        if(port>0) {
+            p_->previousSourcePort=static_cast<quint16>(port);
+            p_->autoPortKey=routeKey(p_->baselineConfig);
+        } else if(p_->reusingAutoPort && report["finished"].toBool() && !report["error"].toString().isEmpty()) {
+            p_->reusingAutoPort=false;
+            const auto feasible=report["preflight"].toObject().value("feasible");
+            const bool rejectedBeforeOpen=!p_->baselineConfig.allowOversubscribed && feasible.isBool() && !feasible.toBool();
+            if(!rejectedBeforeOpen) {
+                QUdpSocket probe;
+                const QHostAddress address(QString::fromStdString(p_->baselineConfig.bindIp));
+                if(!probe.bind(address,p_->previousSourcePort,QUdpSocket::DontShareAddress)) {
+                    p_->autoPortKey.clear();
+                    p_->log->appendPlainText(QStringLiteral("复查时无法绑定上轮自动端口。下次启动将重新分配；请重新启动锁定旧端口的接收端。"));
+                }
+            }
+        }
+    }
     p_->senderReport=report;const auto modules=report["modules"].toObject();p_->senderStats->setRowCount(2);
     const auto config=report["config"].toObject();const auto link=report["link_observation"].toObject();
     if(!config.isEmpty())p_->budget->setText(QStringLiteral("所选档位 %1；本机检测速率 %2 Mbps；有效调度预算 %3 Mbps；已知路径上限 %4 Mbps（0 为未知）。\n%5\nNDI ≤15ms、电生理 ≤18ms；附加抖动目标 <1ms。链路能力与实际出线时序分别验收。").arg(text(config["network_profile"]),text(link["local_link_mbps"]),text(config["effective_link_mbps"]),text(config["path_limit_mbps"]),link["loopback"].toBool()?QStringLiteral("当前是本机环回，真实网口与物理出线未检测。"):text(link["reason"])));
     for(int i=0;i<2;++i) {const auto m=modules[QString::number(i+1)].toObject();cell(p_->senderStats,i,0,i?QStringLiteral("电生理"):QStringLiteral("NDI"));int col=1;for(const auto* key:{"built","initial_complete","skipped_slots","deadline_misses","retransmissions"})cell(p_->senderStats,i,col++,text(m[key]));cell(p_->senderStats,i,6,text(m["initial_duration"].toObject()["max_us"]));}
     const auto rows=report["acceptance"].toArray();p_->acceptance->setRowCount(rows.size());int row=0;
-    for(const auto& value:rows) {const auto r=value.toObject();int col=0;for(const auto* key:{"requirement","measurement","threshold","measured"})cell(p_->acceptance,row,col++,text(r[key]));cell(p_->acceptance,row,4,verdict(r["status"].toString()));cell(p_->acceptance,row,5,text(r["reason"]));++row;}p_->acceptance->resizeRowsToContents();
+    for(const auto& value:rows) {const auto r=value.toObject();int col=0;for(const auto* key:{"requirement","measurement","threshold","measured"})cell(p_->acceptance,row,col++,text(r[key]));cell(p_->acceptance,row,4,verdict(r["status"].toString()));cell(p_->acceptance,row,5,text(r["reason"]));++row;}
+    if(p_->acceptance->isVisible())p_->acceptance->resizeRowsToContents();
 }
 void V2Window::presentReceiverReport(const QJsonObject& report) {
+    p_->presentedUpdate.reset();
     p_->receiverReport=report;
-    // Normalized consumer view is supplied by the dedicated receiver worker.
     const auto view=report["display"].toObject();
     auto retainDisplayEvidence=[&] {
         QJsonArray rows;for(unsigned i=0;i<2;++i)rows.append(QJsonObject{{"module_id",int(i+1)},{"widget_updated_frames",static_cast<qint64>(p_->displayedFrames[i])},{"max_complete_to_widget_update_us",static_cast<qint64>(p_->displayMaxDelayUs[i])},{"updates_after_one_module_period",static_cast<qint64>(p_->displayLate[i])}});
         p_->receiverReport["ui_observations"]=QJsonObject{{"modules",rows},{"measurement","Host receive-complete to Qt widget data update; not physical screen presentation"},{"physical_render_status","not_tested"}};
     };
-    if(view==p_->lastDisplay) {retainDisplayEvidence();return;}p_->lastDisplay=view;
-    const auto ndi=view["ndi"].toObject();const auto tools=ndi["tools"].toArray();p_->toolsTable->setRowCount(tools.size());int row=0;
-    for(const auto& value:tools) {const auto t=value.toObject();cell(p_->toolsTable,row,0,text(t["handle"]));const auto state=t["state"].toString();cell(p_->toolsTable,row,1,ndi["stale"].toBool()?QStringLiteral("已过期"):state);const bool valid=state=="valid" && !ndi["stale"].toBool();cell(p_->toolsTable,row,2,valid?text(t["position"]):QStringLiteral("无有效位置"));cell(p_->toolsTable,row,3,valid?text(t["quaternion"]):QStringLiteral("无有效姿态"));cell(p_->toolsTable,row,4,valid?text(t["quality"]):QStringLiteral("不适用"));cell(p_->toolsTable,row,5,text(t["port_status"]));cell(p_->toolsTable,row,6,text(t["source_frame"]));++row;}
-    const auto ep=view["ep"].toObject();p_->epState->setText(QStringLiteral("电生理帧 %1，%2 字节；%3；%4").arg(text(ep["frame_id"]),text(ep["bytes"]),ep["stale"].toBool()?QStringLiteral("已过期"):QStringLiteral("最近已消费"),ep["format"].toString(QStringLiteral("业务布局未知，不能判定真实波形"))));p_->wave->showSamples(ep["stale"].toBool()?QJsonArray{}:ep["samples"].toArray());
+    if(view==p_->lastDisplay) {retainDisplayEvidence();return;}
+    const bool stopped=view["stopped"].toBool();
+    const bool stopChanged=stopped!=p_->lastDisplay["stopped"].toBool();
+    if(stopChanged || view["ndi"]!=p_->lastDisplay["ndi"]) {
+        const auto ndi=view["ndi"].toObject();
+        const auto tools=ndi["tools"].toArray();
+        if(p_->toolsTable->rowCount()!=tools.size())p_->toolsTable->setRowCount(tools.size());
+        int row=0;
+        for(const auto& value:tools) {
+            const auto t=value.toObject();
+            const auto state=t["state"].toString();
+            const bool valid=state=="valid" && !ndi["stale"].toBool();
+            cell(p_->toolsTable,row,0,text(t["handle"]));
+            cell(p_->toolsTable,row,1,stopped?QStringLiteral("接收已停止"):ndi["stale"].toBool()?QStringLiteral("已过期"):state);
+            cell(p_->toolsTable,row,2,valid?text(t["position"]):QStringLiteral("无有效位置"));
+            cell(p_->toolsTable,row,3,valid?text(t["quaternion"]):QStringLiteral("无有效姿态"));
+            cell(p_->toolsTable,row,4,valid?text(t["quality"]):QStringLiteral("不适用"));
+            cell(p_->toolsTable,row,5,text(t["port_status"]));
+            cell(p_->toolsTable,row,6,text(t["source_frame"]));
+            ++row;
+        }
+    }
+    if(stopChanged || view["ep"]!=p_->lastDisplay["ep"]) {
+        const auto ep=view["ep"].toObject();
+        const auto freshness=stopped?QStringLiteral("接收已停止"):ep["stale"].toBool()?QStringLiteral("已过期"):QStringLiteral("最近已消费");
+        p_->epState->setText(QStringLiteral("电生理帧 %1，%2 字节；%3；%4").arg(text(ep["frame_id"]),text(ep["bytes"]),freshness,ep["format"].toString(QStringLiteral("业务布局未知，不能判定真实波形"))));
+        p_->wave->showSamples(ep["stale"].toBool()?QJsonArray{}:ep["samples"].toArray());
+    }
+    p_->lastDisplay=view;
     const auto status=view["status"].toObject();p_->statusState->setText(QStringLiteral("状态序号 %1：%2").arg(text(status["sequence"]),text(status["text"])));p_->association->setText(QStringLiteral("跨模块最近邻时间差：%1 μs；共同硬件时间域未验证，真实同步验收未检测。").arg(text(view["association_delta_us"])));
+    if(stopped) {
+        p_->statusState->setText(QStringLiteral("接收已停止，最后状态序号 %1：%2").arg(text(status["sequence"]),text(status["text"])));
+        p_->association->setText(QStringLiteral("接收已停止，无当前关联"));
+        retainDisplayEvidence();return;
+    }
     const auto updated=monotonicUs();
     for(unsigned i=0;i<2;++i) {const auto item=view[i==0?"ndi":"ep"].toObject();if(!item.contains("frame_id"))continue;const auto id=static_cast<std::uint32_t>(item["frame_id"].toInteger());if(!p_->haveDisplayed[i] || id!=p_->displayedIds[i]) {p_->haveDisplayed[i]=true;p_->displayedIds[i]=id;++p_->displayedFrames[i];const auto completed=static_cast<std::uint64_t>(item["host_completed_us"].toInteger());if(completed && updated>=completed){const auto delay=updated-completed;p_->displayMaxDelayUs[i]=std::max(p_->displayMaxDelayUs[i],delay);if(delay>(i==0?16667ull:20000ull))++p_->displayLate[i];}}}
     retainDisplayEvidence();
@@ -221,12 +362,33 @@ void V2Window::presentReceiverReport(const QJsonObject& report) {
 void V2Window::refresh() {
     const auto now=monotonicUs();
     if(p_->sending && (now-p_->lastSenderPollUs>=100000 || !p_->session.busy())) {p_->lastSenderPollUs=now;auto result=p_->session.snapshot();if(!result.reportJson.empty())presentSenderReport(QJsonDocument::fromJson(QByteArray::fromStdString(result.reportJson)).object());if(!p_->session.busy()) {result=p_->session.wait();if(!result.reportJson.empty())presentSenderReport(QJsonDocument::fromJson(QByteArray::fromStdString(result.reportJson)).object());p_->nextNdi=result.nextNdiId;p_->nextEp=result.nextEpId;p_->nextStatus=result.nextStatusSequence;p_->sending=false;p_->archivePending=true;p_->archiveDueUs=now+200000;setSenderControlsLocked(false);p_->runState->setText(result.success?QStringLiteral("已停止，正在整理本轮报告"):QStringLiteral("已停止，请查看错误及验收"));if(!result.error.empty())p_->log->appendPlainText(QString::fromStdString(result.error));}}
-    QJsonObject latest;QString receiverMessage;bool updated=false;
-    {std::lock_guard<std::mutex> lock(p_->receiverMutex);if(p_->receiverDirty) {latest=p_->receiverLatest;p_->receiverDirty=false;updated=true;}receiverMessage=p_->receiverError;p_->receiverError.clear();}
-    if(updated)presentReceiverReport(latest);
-    if(!receiverMessage.isEmpty())p_->receiveState->setText(receiverMessage);
-    if(!p_->receiverRunning && p_->receiverWorker.joinable()) {p_->receiverWorker.join();p_->receive->setText(QStringLiteral("启动接收"));p_->receive->setEnabled(true);p_->receiverBind->setEnabled(true);p_->receiverPort->setEnabled(true);}
+    refreshReceiver();
+    if(!p_->receiverRunning && p_->receiverWorker.joinable()) {p_->receiverWorker.join();refreshReceiver();p_->receive->setText(QStringLiteral("启动接收"));p_->receive->setEnabled(true);p_->receiverBind->setEnabled(true);p_->receiverPort->setEnabled(true);}
     if(p_->archivePending && monotonicUs()>=p_->archiveDueUs)archiveRun();
+}
+void V2Window::refreshReceiver() {
+    std::optional<ReceiverUpdate> latest;
+    QString message;
+    {
+        std::lock_guard<std::mutex> lock(p_->receiverMutex);
+        latest.swap(p_->receiverLatest);
+        message.swap(p_->receiverError);
+    }
+    if(latest && latest->generation==p_->receiverGeneration) {
+        const auto* previous=p_->presentedUpdate?&*p_->presentedUpdate:nullptr;
+        presentReceiverReport(displayReport(*latest,previous,p_->lastDisplay));
+        p_->presentedUpdate=std::move(latest);
+    }
+    if(!message.isEmpty())p_->receiveState->setText(message);
+}
+
+QJsonObject V2Window::receiverReportForExport() const {
+    if(!p_->presentedUpdate)return p_->receiverReport;
+    const auto bytes=QByteArray::fromStdString(v2::receiverJson(p_->presentedUpdate->snapshot));
+    auto report=QJsonDocument::fromJson(bytes).object();
+    for(auto it=p_->receiverReport.constBegin();it!=p_->receiverReport.constEnd();++it)
+        report.insert(it.key(),it.value());
+    return report;
 }
 void V2Window::archiveRun() {
     if(!p_->archivePending)return;
@@ -246,27 +408,48 @@ void V2Window::exportReport() {
     const auto bytes=QJsonDocument(out).toJson();QSaveFile f(file);if(!f.open(QIODevice::WriteOnly) || f.write(bytes)!=bytes.size() || !f.commit())p_->log->appendPlainText(QStringLiteral("报告保存失败：")+f.errorString());else {if(!p_->sending)p_->archivePending=false;p_->log->appendPlainText(QStringLiteral("已导出：")+file);}
 }
 QJsonObject V2Window::reportForExport() const {
-    QJsonObject out{{"report_schema_version",1},{"protocol_version",2},{"sender",p_->senderReport},{"receiver",p_->receiverReport},{"exported_utc",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},{"note",QStringLiteral("本文件保留本地收发证据；累计收包不抵消跳采或首发超期。真实硬件时钟、物理出线及真实电生理业务仍需独立验证。")}};
-    auto rows=p_->senderReport["acceptance"].toArray();for(const auto& row:p_->receiverReport["acceptance"].toArray())rows.append(row);
-    const auto& sender=p_->senderReport;const auto& rx=p_->receiverReport;const auto& base=p_->receiverBaseline;
+    const auto rx=receiverReportForExport();
+    QJsonObject out{{"report_schema_version",1},{"protocol_version",2},{"sender",p_->senderReport},{"receiver",rx},{"exported_utc",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},{"note",QStringLiteral("本文件保留本地收发证据；累计收包不抵消跳采或首发超期。真实硬件时钟、物理出线及真实电生理业务仍需独立验证。")}};
+    auto rows=p_->senderReport["acceptance"].toArray();for(const auto& row:rx["acceptance"].toArray())rows.append(row);
+    const auto& sender=p_->senderReport;const auto& base=p_->receiverBaseline;
     const auto localPort=sender["local_port"].toInt();const auto& c=p_->baselineConfig;
     const auto expectedEndpoint=QString::fromStdString(c.bindIp)+":"+QString::number(localPort);
     const auto receiverEnd=rx["observed_host_us"].toString().toULongLong();const auto senderEnd=sender["ended_host_us"].toString().toULongLong();
     const bool loopbackTarget=c.targetIp.rfind("127.",0)==0 && c.bindIp.rfind("127.",0)==0;
     const auto receiverBind=rx["receiver_bind"].toString();
     const bool boundTarget=receiverBind=="0.0.0.0" || receiverBind==QString::fromStdString(c.targetIp);
-    const bool eligible=p_->baselineReady && !p_->sending && sender["finished"].toBool() && p_->baselineRun==sender["run_id"].toString() && p_->baselineGeneration==p_->receiverGeneration && loopbackTarget && boundTarget && rx["receiver_port"].toInt()==c.targetPort && localPort>0 && rx["source_endpoint"].toString()==expectedEndpoint && rx["source_rejected"].toInteger()==0 && receiverEnd>=senderEnd && receiverEnd-senderEnd>=100000;
+    const bool eligible=p_->baselineReady && !p_->sending && sender["finished"].toBool() && p_->baselineRun==sender["run_id"].toString() && p_->baselineGeneration==p_->receiverGeneration && rx["receiver_generation"].toInteger(-1)==static_cast<qint64>(p_->baselineGeneration) && loopbackTarget && boundTarget && rx["receiver_port"].toInt()==c.targetPort && localPort>0 && rx["source_endpoint"].toString()==expectedEndpoint && rx["source_rejected"].toInteger()==0 && receiverEnd>=senderEnd && receiverEnd-senderEnd>=100000;
     const auto sm=sender["modules"].toObject(),rm=rx["modules"].toObject(),bm=base["modules"].toObject();
-    auto count=[](const QJsonValue& v) -> std::uint64_t {return v.isString()?v.toString().toULongLong():static_cast<std::uint64_t>(v.toInteger());};
+    auto count=[](const QJsonValue& v)->std::optional<std::uint64_t> {
+        if(v.isDouble() && v.toInteger(-1)>=0)return static_cast<std::uint64_t>(v.toInteger());
+        if(v.isString()) {
+            bool valid=false;
+            const auto value=v.toString().toULongLong(&valid);
+            if(valid)return value;
+        }
+        return std::nullopt;
+    };
     for(unsigned i=0;i<2;++i) {
         const auto key=QString::number(i+1);const auto s=sm[key].toObject(),r=rm[key].toObject(),b=bm[key].toObject();const auto sl=s["ledger"].toObject(),rl=r["ledger"].toObject(),bl=b["ledger"].toObject();
-        bool complete=eligible && !sl.isEmpty() && !rl.isEmpty() && !bl.isEmpty();bool agrees=true;
-        for(const auto* field:{"count","id_sum","crc_sum","stamp_sum"}) {complete=complete && sl.contains(field) && rl.contains(field) && bl.contains(field);if(count(rl[field])-count(bl[field])!=count(sl[field]))agrees=false;}
-        const auto built=count(s["built"]),received=count(rl["count"])-count(bl["count"]),consumed=count(r["consumed"])-count(b["consumed"]);
-        const auto status=!complete || !built?QStringLiteral("not_tested"):(agrees && count(sl["count"])==built && received==built && consumed==built?QStringLiteral("pass"):QStringLiteral("fail"));
-        rows.append(QJsonObject{{"id","gui_local_joint_delivery"},{"module_id",int(i+1)},{"requirement",i==0?"NDI local paired receive and consume":"EP local paired receive and consume"},{"measurement","Same GUI-run receiver baseline delta; loopback endpoint and receiver generation checked; uint64 count/ID/CRC32/timestamp aggregates"},{"threshold","Built, completed and consumed counts equal; all bounded ledger aggregates agree"},{"measured",QStringLiteral("built=%1; completed_delta=%2; consumed_delta=%3").arg(built).arg(received).arg(consumed)},{"status",status},{"reason",!complete?QStringLiteral("未建立完整同轮证据：需接收先启动且无在途帧、本机端点匹配、接收未重启、发送结束后至少观察100ms；仅run_id相同不构成线上会话证据。"):QStringLiteral("采用有界汇总对账，不是逐帧字节相同的数学证明；不抵消跳采、首发超期，真实硬件与物理链路另验。")}});
+        const auto built=count(s["built"]);
+        auto delta=[&](const QJsonValue& after,const QJsonValue& before)->std::optional<std::uint64_t> {
+            const auto end=count(after),start=count(before);
+            if(!eligible || !end || !start || *end<*start)return std::nullopt;
+            return *end-*start;
+        };
+        const auto received=delta(rl["count"],bl["count"]),consumed=delta(r["consumed"],b["consumed"]);
+        bool complete=built && count(sl["count"]) && received && consumed;
+        bool agrees=true;
+        for(const auto* field:{"id_sum","crc_sum","stamp_sum"}) {
+            const auto end=count(rl[field]),start=count(bl[field]),sent=count(sl[field]);
+            if(!end || !start || !sent)complete=false;
+            else if(*end-*start!=*sent)agrees=false; // additive checksums wrap modulo 2^64
+        }
+        const auto status=!complete || !*built?QStringLiteral("not_tested"):(agrees && count(sl["count"])==built && received==built && consumed==built?QStringLiteral("pass"):QStringLiteral("fail"));
+        auto number=[](std::optional<std::uint64_t> v) {return v?QString::number(*v):QStringLiteral("未检测");};
+        rows.append(QJsonObject{{"id","gui_local_joint_delivery"},{"module_id",int(i+1)},{"requirement",i==0?"NDI local paired receive and consume":"EP local paired receive and consume"},{"measurement","Same GUI-run receiver baseline delta; loopback endpoint and receiver generation checked; uint64 count/ID/CRC32/timestamp aggregates"},{"threshold","Built, completed and consumed counts equal; all bounded ledger aggregates agree"},{"measured",QStringLiteral("built=%1; completed_delta=%2; consumed_delta=%3").arg(number(built)).arg(number(received)).arg(number(consumed))},{"status",status},{"reason",!complete?QStringLiteral("未建立完整同轮证据：需接收先启动且无在途帧、本机端点匹配、接收未重启、发送结束后至少观察100ms；仅run_id相同不构成线上会话证据。"):QStringLiteral("采用有界汇总对账，不是逐帧字节相同的数学证明；不抵消跳采、首发超期，真实硬件与物理链路另验。")}});
         const auto updates=p_->displayedFrames[i];
-        rows.append(QJsonObject{{"id","gui_widget_updates"},{"module_id",int(i+1)},{"requirement",i==0?"NDI Qt widget update":"EP Qt widget update"},{"measurement","Host complete-to-widget-data-update time; distinct observed frames; physical presentation not measured"},{"threshold",i==0?"<=16667us and consumed frames observed":"<=20000us and consumed frames observed"},{"measured",QStringLiteral("updates=%1; consumed_delta=%2; max=%3us; late=%4").arg(updates).arg(consumed).arg(p_->displayMaxDelayUs[i]).arg(p_->displayLate[i])},{"status",!complete || !consumed?"not_tested":(updates==consumed && !p_->displayLate[i]?"pass":"fail")},{"reason","Qt data updates are software evidence only; unknown real EP waveform layout and hardware screen presentation remain not_tested"}});
+        rows.append(QJsonObject{{"id","gui_widget_updates"},{"module_id",int(i+1)},{"requirement",i==0?"NDI Qt widget update":"EP Qt widget update"},{"measurement","Host complete-to-widget-data-update time; distinct observed frames; physical presentation not measured"},{"threshold",i==0?"<=16667us and consumed frames observed":"<=20000us and consumed frames observed"},{"measured",QStringLiteral("updates=%1; consumed_delta=%2; max=%3us; late=%4").arg(updates).arg(number(consumed)).arg(p_->displayMaxDelayUs[i]).arg(p_->displayLate[i])},{"status",!complete || !*consumed?"not_tested":(updates==consumed && !p_->displayLate[i]?"pass":"fail")},{"reason","Qt data updates are software evidence only; unknown real EP waveform layout and hardware screen presentation remain not_tested"}});
     }
     out["acceptance"]=rows;out["joint_scope"]=QJsonObject{{"eligible",eligible},{"receiver_generation",static_cast<qint64>(p_->receiverGeneration)},{"baseline_generation",static_cast<qint64>(p_->baselineGeneration)},{"baseline_run_id",p_->baselineRun},{"expected_source_endpoint",expectedEndpoint}};return out;
 }
@@ -279,8 +462,22 @@ void V2Window::toggleReceiver() {
     const auto port=static_cast<quint16>(p_->receiverPort->value());
     p_->receiverStop=false;p_->receiverRunning=true;p_->receiverBind->setEnabled(false);p_->receiverPort->setEnabled(false);p_->receive->setText(QStringLiteral("停止接收"));p_->receiveState->setText(QStringLiteral("接收准备中；只接受本次首个有效数据源的同一端点。"));
     p_->lastDisplay={};p_->displayedFrames={};p_->displayMaxDelayUs={};p_->displayLate={};p_->haveDisplayed={};
-    ++p_->receiverGeneration;
-    p_->receiverWorker=std::thread([this,address,port] {
+    p_->toolsTable->setRowCount(0);
+    p_->epState->setText(QStringLiteral("电生理尚未收到"));
+    p_->wave->showSamples({});
+    p_->statusState->setText(QStringLiteral("状态尚未收到"));
+    p_->association->setText(QStringLiteral("等待两个模块的新数据"));
+    const auto generation=++p_->receiverGeneration;
+    p_->autoPortKey.clear();
+    p_->receiverReport={};
+    p_->presentedUpdate.reset();
+    p_->baselineReady=false;
+    {
+        std::lock_guard<std::mutex> lock(p_->receiverMutex);
+        p_->receiverLatest.reset();
+        p_->receiverError.clear();
+    }
+    p_->receiverWorker=std::thread([this,address,port,generation] {
         try {
             QUdpSocket socket;
             if(!socket.bind(address,port,QUdpSocket::DontShareAddress))throw std::runtime_error(socket.errorString().toStdString());
@@ -288,58 +485,50 @@ void V2Window::toggleReceiver() {
             v2::Receiver receiver(true,[] {return monotonicUs();});
             QHostAddress peer;quint16 peerPort=0;bool pinned=false;
             std::uint64_t rejectedSources=0,feedbackErrors=0,nextPublish=0;
+            const auto bindAddress=address.toString();
+            QString peerAddress;
             auto publish=[&](bool final) {
-                const auto snapshot=receiver.snapshot(monotonicUs());
-                auto report=QJsonDocument::fromJson(QByteArray::fromStdString(v2::receiverJson(snapshot))).object();
-                report["source_endpoint"]=pinned?peer.toString()+":"+QString::number(peerPort):QStringLiteral("尚未收到合法报文");
-                report["receiver_port"]=port;report["receiver_bind"]=address.toString();report["observed_host_us"]=QString::number(monotonicUs());report["source_rejected"]=static_cast<qint64>(rejectedSources);report["feedback_send_errors"]=static_cast<qint64>(feedbackErrors);report["final"]=final;
-                QJsonObject ndi{{"stale",snapshot.latest[0].stale}};QJsonArray toolRows;
-                if(const auto& frame=snapshot.latest[0].frame) {ndi["frame_id"]=static_cast<qint64>(frame->frameId);ndi["host_completed_us"]=static_cast<qint64>(snapshot.latest[0].hostCompletedUs);}
-                for(const auto& tool:snapshot.ndi.tools) {
-                    QString state=QStringLiteral("disabled");
-                    if(tool.status==aurora::HandleStatus::Missing)state="missing";
-                    if(tool.status==aurora::HandleStatus::Valid)state=tool.transformUsable()?"valid":"invalid status";
-                    QJsonArray position,quaternion;for(auto n:tool.positionMm)position.append(n);for(auto n:tool.quaternion)quaternion.append(n);
-                    toolRows.append(QJsonObject{{"handle",tool.handle},{"state",state},{"position",position},{"quaternion",quaternion},{"quality",tool.quality},{"port_status",static_cast<qint64>(tool.portStatus)},{"source_frame",static_cast<qint64>(tool.frameNumber)}});
+                const auto now=monotonicUs();
+                ReceiverUpdate update{receiver.snapshot(now),bindAddress,peerAddress,port,peerPort,
+                                      generation,now,rejectedSources,feedbackErrors,final};
+                std::lock_guard<std::mutex> lock(p_->receiverMutex);
+                p_->receiverLatest=std::move(update);
+            };
+            auto sendFeedback=[&](const std::vector<Datagram>& packets) {
+                for(const auto& packet:packets) {
+                    if(p_->receiverStop)break;
+                    const auto size=static_cast<qint64>(packet.size);
+                    if(socket.writeDatagram(reinterpret_cast<const char*>(packet.bytes.data()),size,peer,peerPort)!=size)
+                        ++feedbackErrors;
                 }
-                ndi["tools"]=toolRows;
-                QJsonObject ep{{"stale",snapshot.latest[1].stale},{"format",QStringLiteral("字节值预览；不是已解码的真实电生理波形")}};
-                if(const auto& frame=snapshot.latest[1].frame) {
-                    ep["frame_id"]=static_cast<qint64>(frame->frameId);ep["host_completed_us"]=static_cast<qint64>(snapshot.latest[1].hostCompletedUs);ep["bytes"]=static_cast<qint64>(frame->bytes.size());QJsonArray samples;
-                    const auto stride=std::max<std::size_t>(1,frame->bytes.size()/256);
-                    for(std::size_t i=0;i<frame->bytes.size()&&samples.size()<256;i+=stride)samples.append(frame->bytes[i]);ep["samples"]=samples;
-                }
-                QJsonObject status;
-                if(snapshot.hasStatus) {status["sequence"]=static_cast<qint64>(snapshot.status.sequence);status["text"]=QString::fromUtf8(reinterpret_cast<const char*>(snapshot.status.payload.data()),static_cast<qsizetype>(snapshot.status.payload.size()));}
-                QJsonObject view{{"ndi",ndi},{"ep",ep},{"status",status},{"association_available",snapshot.associationAvailable}};
-                if(snapshot.associationAvailable)view["association_delta_us"]=static_cast<qint64>(snapshot.nearestTimestampDeltaUs);
-                report["display"]=view;
-                std::lock_guard<std::mutex> lock(p_->receiverMutex);p_->receiverLatest=report;p_->receiverDirty=true;
             };
             {std::lock_guard<std::mutex> lock(p_->receiverMutex);p_->receiverError=QStringLiteral("接收已启动：%1:%2；NDI / 电生理独立消费，状态即时应用。").arg(address.toString()).arg(port);}
+            std::array<std::uint8_t,1473> buffer;
             while(!p_->receiverStop) {
+                if(!socket.hasPendingDatagrams())socket.waitForReadyRead(1);
                 const auto batchStart=monotonicUs();
-                for(unsigned n=0;n<64 && socket.hasPendingDatagrams() && !p_->receiverStop && monotonicUs()-batchStart<500;++n) {
-                    QByteArray data(1473,Qt::Uninitialized);QHostAddress source;quint16 sourcePort=0;
-                    const auto length=socket.readDatagram(data.data(),data.size(),&source,&sourcePort);
+                for(unsigned n=0;n<64 && !p_->receiverStop && socket.hasPendingDatagrams();++n) {
+                    // A preemption before the first read must not let timers bypass a queued packet.
+                    if(n>0 && monotonicUs()-batchStart>=500)break;
+                    QHostAddress source;quint16 sourcePort=0;
+                    const auto length=socket.readDatagram(reinterpret_cast<char*>(buffer.data()),buffer.size(),&source,&sourcePort);
                     if(length<0)break;
                     if(pinned && (source!=peer || sourcePort!=peerPort)) {++rejectedSources;continue;}
-                    const auto* bytes=reinterpret_cast<const std::uint8_t*>(data.constData());
+                    const auto* bytes=buffer.data();
                     if(!pinned) {
                         try {
                             if(length<8)throw ProtocolError("short packet");
                             if(bytes[6]==1)(void)v2::decodeData(bytes,static_cast<std::size_t>(length));
                             else if(bytes[6]==3)(void)v2::decodeStatus(bytes,static_cast<std::size_t>(length));
                             else throw ProtocolError("not data/status");
-                            peer=source;peerPort=sourcePort;pinned=true;
+                            peer=source;peerAddress=peer.toString();peerPort=sourcePort;pinned=true;
                         }catch(const ProtocolError&) {receiver.receive(bytes,static_cast<std::size_t>(length),monotonicUs());continue;}
                     }
-                    receiver.receive(bytes,static_cast<std::size_t>(length),monotonicUs());
-                    for(const auto& feedback:receiver.poll(monotonicUs()))if(socket.writeDatagram(reinterpret_cast<const char*>(feedback.bytes.data()),static_cast<qint64>(feedback.size),peer,peerPort)!=static_cast<qint64>(feedback.size))++feedbackErrors;
+                    sendFeedback(receiver.receiveAndPollObserved(bytes,static_cast<std::size_t>(length),monotonicUs()));
                 }
-                for(const auto& feedback:receiver.poll(monotonicUs()))if(pinned && socket.writeDatagram(reinterpret_cast<const char*>(feedback.bytes.data()),static_cast<qint64>(feedback.size),peer,peerPort)!=static_cast<qint64>(feedback.size))++feedbackErrors;
+                if(pinned && !p_->receiverStop)sendFeedback(receiver.poll(monotonicUs()));
                 const auto now=monotonicUs();if(now>=nextPublish) {publish(false);nextPublish=now+5000;}
-                if(!socket.hasPendingDatagrams())std::this_thread::sleep_for(std::chrono::microseconds(100));
+
             }
             publish(true);
         }catch(const std::exception& e) {std::lock_guard<std::mutex> lock(p_->receiverMutex);p_->receiverError=QStringLiteral("接收停止：")+QString::fromUtf8(e.what());}

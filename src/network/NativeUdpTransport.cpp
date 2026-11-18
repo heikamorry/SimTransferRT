@@ -1,4 +1,5 @@
 #include "network/NativeUdpTransport.h"
+#include "network/FeedbackRead.h"
 #include <array>
 #include <cstring>
 #include <stdexcept>
@@ -146,6 +147,9 @@ namespace rt {
     }
     std::uint16_t NativeUdpTransport::localPort()const {
         return p_->port;
+    }
+    ReceiveOutcome NativeUdpTransport::receiveFeedback(IncomingDatagram& out) {
+        return readUdpFeedback(p_->fd,out,p_->error);
     }
     bool NativeUdpTransport::dfEnabled()const {
         return p_->df;

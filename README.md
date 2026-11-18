@@ -319,3 +319,4 @@ Version 0.3.0 adds separate preparation workers, one shared sender, Aurora BX, r
 
 - [V2 实现约定与使用说明 / Implementation contract and usage](docs/V2_IMPLEMENTATION_CONTRACT_2026-11-17.md)
 - [方案 B 逐项验证 / Plan B validation](docs/V2_PLAN_B_VALIDATION_2026-11-17.md)
+- [Python 接收桩读包顺序修复 / Receiver read-before-timeout fix](docs/V2_RECEIVER_ORDER_FIX_2026-11-17.md)

@@ -46,6 +46,9 @@ public:
     using StatusConsumer=std::function<void(const Status&,std::uint64_t)>;
     explicit Receiver(bool decodeAurora=true,Clock clock={});
     void receive(const std::uint8_t*,std::size_t,std::uint64_t nowUs);
+    // While draining queued datagrams, only a newly observed gap/new frame
+    // should trigger feedback. Service elapsed timers with poll at batch end.
+    std::vector<rt::Datagram> receiveAndPollObserved(const std::uint8_t*,std::size_t,std::uint64_t nowUs);
     std::vector<rt::Datagram> poll(std::uint64_t nowUs);
     ReceiverSnapshot snapshot(std::uint64_t nowUs) const;
     void setFrameConsumer(FrameConsumer f){frameConsumer_=std::move(f);}
@@ -69,6 +72,8 @@ private:
     std::array<Module,2> state_;
     ReceiverSnapshot report_;
     FrameConsumer frameConsumer_;StatusConsumer statusConsumer_;
+    std::optional<std::uint8_t> ingest(const std::uint8_t*,std::size_t,std::uint64_t);
+    std::vector<rt::Datagram> pollRequests(std::uint64_t,std::optional<std::uint8_t> observedModule);
     void retire(std::size_t,std::uint32_t);
     void complete(std::size_t,Assembly&,std::uint64_t);
 };

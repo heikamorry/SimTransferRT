@@ -36,8 +36,8 @@ struct Preflight {
 unsigned parseNetworkProfile(const std::string& text);
 std::string networkProfileName(unsigned mbps);
 std::uint64_t wireBytes(std::size_t payloadBytes);
-unsigned effectiveMbps(const Config&);
-Preflight preflight(const Config&, std::size_t actualNdiBytes=0, std::size_t actualEpBytes=0);
+unsigned effectiveMbps(const Config&, unsigned liveLinkMbps=0);
+Preflight preflight(const Config&, std::size_t actualNdiBytes=0, std::size_t actualEpBytes=0,unsigned liveLinkMbps=0);
 void validateConfig(const Config&);
 LinkObservation observeLink(const Config&);
 }

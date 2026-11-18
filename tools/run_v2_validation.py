@@ -94,21 +94,24 @@ def functional_check(name,s,r):
         if ndi.get('built',0)>1 and not ndi.get('duplicate_source_frames',0):reasons.append('repeated source frames not exposed')
     return not reasons,reasons
 
-def run_case(sender_path,out,name,profile,seconds=2,extra=(),receiver_extra=(),early_stop=None,expected_sender_exit=0):
+def run_case(sender_path,out,name,profile,seconds=2,extra=(),receiver_extra=(),early_stop=None,expected_sender_exit=0,receiver_path=None):
     out=Path(out)/name;out.mkdir(parents=True,exist_ok=False)
     data_port,command_port=free_ports();run_id=f'{name}-{uuid.uuid4().hex[:12]}'
     sender_report=out/'sender.json';receiver_report=out/'receiver.json';ready=out/'receiver-ready.txt'
-    receiver_command=[sys.executable,str(ROOT/'tools/v2_receiver.py'),'--port',str(data_port),'--source-port',str(command_port),
+    receiver_path=Path(receiver_path or ROOT/'tools/v2_receiver.py').resolve()
+    receiver_hash_before=binary_sha256(receiver_path)
+    receiver_command=[sys.executable,str(receiver_path),'--port',str(data_port),'--source-port',str(command_port),
                       '--duration','0','--report',str(receiver_report),'--run-id',run_id,'--ready-file',str(ready),*receiver_extra]
     sender_command=[str(sender_path),'--protocol','v2','--network-profile',profile,'--port',str(data_port),'--command-port',str(command_port),
                     '--allowed-nack-port',str(data_port),'--ndi-tools','40','--ep-bytes','204800','--duration',str(seconds),
                     '--run-id',run_id,'--report',str(sender_report),*extra]
     flags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name=='nt' else 0
     env=os.environ.copy();env['PYTHONIOENCODING']='utf-8'
+    env['PYTHONPATH']=str(ROOT/'tools')+os.pathsep+env.get('PYTHONPATH','')
     start=time.monotonic();memory=BoundedMemorySampler(start);sender=receiver=None
     failure=None;forced=[];cpu={};cleanup=[]
     binary_before=binary_sha256(sender_path)
-    write_json(out/'commands.json',{'sender':sender_command,'receiver':receiver_command,'physical_network_test':False,'sender_sha256':binary_before})
+    write_json(out/'commands.json',{'sender':sender_command,'receiver':receiver_command,'physical_network_test':False,'sender_sha256':binary_before,'receiver_sha256':receiver_hash_before})
     with (out/'sender.log').open('w',encoding='utf-8') as sl,(out/'receiver.log').open('w',encoding='utf-8') as rl:
         try:
             receiver=subprocess.Popen(receiver_command,stdout=rl,stderr=subprocess.STDOUT,creationflags=flags,env=env)
@@ -140,6 +143,8 @@ def run_case(sender_path,out,name,profile,seconds=2,extra=(),receiver_extra=(),e
                 except Exception as exc:cleanup.append(label+': '+repr(exc))
     s=read_json(sender_report);r=read_json(receiver_report)
     passed,reasons=functional_check(name,s,r)
+    if receiver is not None and receiver.returncode != 0:
+        passed=False;reasons.append(f'receiver exit {receiver.returncode}; expected 0')
     if name.startswith(('soak-','long-')) and (not s or s.get('elapsed_us',0)<seconds*1e6 or s.get('ended_reason')=='user_stop'):
         passed=False;reasons.append('requested sustained duration was not completed')
     if failure:reasons.append(failure)
@@ -147,6 +152,9 @@ def run_case(sender_path,out,name,profile,seconds=2,extra=(),receiver_extra=(),e
     binary_after=binary_sha256(sender_path)
     if not binary_before or binary_before!=binary_after:
         reasons.append('sender binary changed or became unavailable during test');passed=False
+    receiver_hash_after=binary_sha256(receiver_path)
+    if not receiver_hash_before or receiver_hash_before!=receiver_hash_after:
+        reasons.append('receiver script changed or became unavailable during test');passed=False
     reasons.extend(cleanup);passed=passed and not failure and not forced and not cleanup
     joint=build_acceptance(s or {},r);write_json(out/'acceptance.json',joint)
     telemetry={'wall_seconds':time.monotonic()-start,'cpu':cpu,'memory':memory.report(),
@@ -156,6 +164,7 @@ def run_case(sender_path,out,name,profile,seconds=2,extra=(),receiver_extra=(),e
             'strict_acceptance':joint['summary'],'directory':str(out),'run_id':run_id,'loopback':True,
             'sender_exit':sender.returncode if sender else None,'receiver_exit':receiver.returncode if receiver else None,
             'sender_binary':str(sender_path),'sender_sha256':binary_before,'sender_sha256_after':binary_after,
+            'receiver_script':str(receiver_path),'receiver_sha256':receiver_hash_before,'receiver_sha256_after':receiver_hash_after,
             'timing':{m:{key:s.get('modules',{}).get(m,{}).get(key) for key in ('built','skipped_slots','initial_incomplete','deadline_misses','initial_duration','sampling_deviation','packet_gap_deviation')} for m in ('1','2')} if s else {}}
     write_json(out/'result.json',result)
     print(json.dumps({'case':name,'functional_pass':passed,'strict_acceptance':joint['summary'],'reasons':reasons}),flush=True)

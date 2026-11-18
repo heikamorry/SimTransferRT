@@ -37,6 +37,13 @@ struct PacketEvent {
     std::uint64_t sendStartUs=0,sendEndUs=0,deadlineUs=0,scoreUs=0;
     bool retry=false,success=false;
 };
+struct InitialDeadlineEvent {
+    std::uint8_t moduleId;
+    std::uint32_t frameId;
+    std::uint64_t plannedSampleUs, sampleUs, readyUs, firstAttemptUs, endUs, deadlineUs;
+    bool complete;
+    std::uint64_t overrunUs() const { return endUs-deadlineUs; }
+};
 struct EngineSnapshot {
     std::array<ModuleStats,2> modules;
     std::uint64_t statusAccepted=0,statusSent=0,statusDropped=0,statusSendErrors=0;
@@ -46,11 +53,12 @@ struct EngineSnapshot {
     unsigned effectiveMbps=1000;
     Distribution globalPacketGaps,globalPacketGapDeviation;
     std::vector<PacketEvent> worstEvents;
+    std::vector<InitialDeadlineEvent> initialDeadlineEvents;
 };
 // One owner on the send thread. Producers only hand over immutable PreparedFrames.
 class Engine {
 public:
-    explicit Engine(Config);
+    explicit Engine(Config,unsigned liveLinkMbps=0);
     void submit(PreparedPtr);
     bool submitStatus(Bytes,std::uint64_t confirmedAtUs);
     void feedback(const std::uint8_t*,std::size_t,std::uint64_t nowUs);
@@ -69,6 +77,7 @@ private:
         std::uint16_t duplicateIndex=0;
         std::set<std::uint16_t> pendingRetries;
         bool finalized=false;
+        std::uint64_t firstAttemptUs=0;
     };
     struct Retry {std::shared_ptr<Slot> slot;std::uint16_t index=0;std::uint64_t requestedUs=0;};
     struct QueuedStatus {Datagram packet;std::uint64_t confirmedUs=0;};
@@ -85,6 +94,7 @@ private:
     std::uint64_t invalidFeedback_=0,sourceRejected_=0,globalViolations_=0,rateChanges_=0;
     std::uint32_t nextStatus_;
     std::vector<PacketEvent> worst_;
+    std::vector<InitialDeadlineEvent> initialDeadlineEvents_;
     void finalize(Slot&,std::uint64_t ended);
     void cancel(Slot&,bool stopping);
     void recordEvent(PacketEvent);

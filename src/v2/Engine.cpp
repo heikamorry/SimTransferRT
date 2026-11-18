@@ -17,7 +17,11 @@ PreparedPtr prepareFrame(Frame frame,std::uint64_t planned,std::uint64_t sampled
     return p;
 }
 void Ledger::add(const PreparedFrame& p){++count;idSum+=p.frame.frameId;crcSum+=p.payloadCrc;stampSum+=p.frame.timestampUs;}
-Engine::Engine(Config c):config_(std::move(c)),rate_(effectiveMbps(config_)),nextStatus_(config_.initialStatusSequence){validateConfig(config_);worst_.reserve(32);}
+Engine::Engine(Config c,unsigned liveLinkMbps):config_(std::move(c)),rate_(effectiveMbps(config_,liveLinkMbps)),nextStatus_(config_.initialStatusSequence){
+    validateConfig(config_);
+    worst_.reserve(32);
+    initialDeadlineEvents_.reserve(32);
+}
 void Engine::cancel(Slot& s,bool stopping) {
     s.duplicatePending=false;
     auto& m=stats_[s.p->frame.moduleId-1];
@@ -71,7 +75,19 @@ void Engine::finalize(Slot& s,std::uint64_t end) {
     const auto limit=s.p->frame.moduleId==1?15000ULL:18000ULL;
     if(s.successful==s.p->packets.size()){++m.initialComplete;m.submitted.add(*s.p);duration_[s.p->frame.moduleId-1].add(elapsed,limit);}
     else ++m.initialIncomplete;
-    if(elapsed>limit)++m.deadlineMisses;
+    if(elapsed>limit){
+        ++m.deadlineMisses;
+        const auto& p=*s.p;
+        InitialDeadlineEvent event{p.frame.moduleId,p.frame.frameId,p.plannedSampleUs,p.sampleUs,
+            p.readyUs,s.firstAttemptUs,end,p.sampleUs+limit,s.successful==p.packets.size()};
+        if(initialDeadlineEvents_.size()<32){
+            initialDeadlineEvents_.push_back(event);
+        }else{
+            auto smallest=std::min_element(initialDeadlineEvents_.begin(),initialDeadlineEvents_.end(),
+                [](const auto& left,const auto& right){return left.overrunUs()<right.overrunUs();});
+            if(event.overrunUs()>smallest->overrunUs())*smallest=event;
+        }
+    }
 }
 void Engine::recordEvent(PacketEvent event){
     if(worst_.size()<32){worst_.push_back(event);return;}
@@ -100,8 +116,10 @@ bool Engine::step(std::uint64_t now,const SendFunction& send,const std::function
             const auto& r=retries_.front();selected=r.slot;index=r.index;retry=true;requested=r.requestedUs;anchor=requested;
             const auto cost=(selected->p->packets[index].size+66)*8ULL;
             // Retries may not occupy the next known source's initial opportunity.
-            for(std::size_t i=0;i<nextSample_.size();++i){const auto due=nextSample_[i];const auto window=i==0?15000ULL:18000ULL;
-                if(due&&((due<=now&&now-due<window)||(due>now&&now+(cost+rate_-1)/rate_>=due)))return false;
+            for(const auto due:nextSample_){
+                // Reserve the upcoming sample boundary. Once due, the source may
+                // be blocked in a device read. Ready frames win on the next step.
+                if(due>now && now+(cost+rate_-1)/rate_>=due)return false;
             }
         }else return false;
     }
@@ -133,6 +151,7 @@ bool Engine::step(std::uint64_t now,const SendFunction& send,const std::function
         if(retry){retryWait_[module-1].add(start>=requested?start-requested:0);selected->pendingRetries.erase(index);retries_.pop_front();}
         else if(duplicate){selected->duplicatePending=false;}
         else{
+            if(!selected->next)selected->firstAttemptUs=start;
             if(lastStart_[module-1]&&!dropped){auto gap=start-lastStart_[module-1];auto expected=plan>=lastPlan_[module-1]?plan-lastPlan_[module-1]:0;auto dev=absDiff(gap,expected);gaps_[module-1].add(gap);gapDeviation_[module-1].add(dev,999);if(dev>=1000)++m.gapViolations;}
             if(!dropped){lastStart_[module-1]=start;lastPlan_[module-1]=plan;}
             planLateness_[module-1].add(late,999);if(late>=1000)++m.originalPlanViolations;
@@ -151,6 +170,7 @@ EngineSnapshot Engine::snapshot()const{
     for(std::size_t i=0;i<2;++i){s.modules[i].initialDuration=duration_[i].summary();s.modules[i].packetGaps=gaps_[i].summary();s.modules[i].packetGapDeviation=gapDeviation_[i].summary();s.modules[i].originalPlanLateness=planLateness_[i].summary();s.modules[i].retryWait=retryWait_[i].summary();}
     s.statusAccepted=statusAccepted_;s.statusSent=statusSent_;s.statusDropped=statusDropped_;s.statusSendErrors=statusSendErrors_;s.statusCancelled=statusCancelled_;s.statusQueueHighWater=statusHigh_;s.statusMaximumLatencyUs=statusLatency_;
     s.invalidFeedback=invalidFeedback_;s.sourceRejected=sourceRejected_;s.globalGapViolations=globalViolations_;s.rateChanges=rateChanges_;
-    s.globalPacketGaps=globalGaps_.summary();s.globalPacketGapDeviation=globalDeviation_.summary();s.worstEvents=worst_;return s;
+    s.globalPacketGaps=globalGaps_.summary();s.globalPacketGapDeviation=globalDeviation_.summary();s.worstEvents=worst_;
+    s.initialDeadlineEvents=initialDeadlineEvents_;return s;
 }
 }

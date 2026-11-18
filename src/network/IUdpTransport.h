@@ -7,6 +7,7 @@ namespace rt {
         std::string sourceIp;
         std::uint16_t sourcePort=0;
     };
+    enum class ReceiveOutcome { Received, Empty, Error };
     class IUdpTransport {
         public:
         virtual ~IUdpTransport()=default;
@@ -20,5 +21,8 @@ namespace rt {
         virtual int receiveBufferBytes()const {return 0;}
         virtual int connResetError()const {return 0;}
         virtual std::string name()const {return "test-adapter";}
+        virtual ReceiveOutcome receiveFeedback(IncomingDatagram& datagram) {
+            return receive(datagram) ? ReceiveOutcome::Received : ReceiveOutcome::Empty;
+        }
     };
 }

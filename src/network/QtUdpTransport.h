@@ -10,6 +10,7 @@ namespace rt {
         void open(const StreamConfig&)override;
         bool send(const std::uint8_t*,std::size_t)override;
         bool receive(IncomingDatagram&)override;
+        ReceiveOutcome receiveFeedback(IncomingDatagram&)override;
         std::uint16_t localPort()const override {
             return socket_.localPort();
         }

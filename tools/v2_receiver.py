@@ -21,12 +21,22 @@ from receiver_model import FrameRanges
 
 MASK64 = (1 << 64)-1
 
+def _crc16_table():
+    table = []
+    for value in range(256):
+        for _ in range(8):
+            value = (value >> 1) ^ (0xA001 if value & 1 else 0)
+        table.append(value)
+    return tuple(table)
+
+
+_BX_CRC16_TABLE = _crc16_table()
+
+
 def crc16(data):
     value = 0
     for byte in data:
-        value ^= byte
-        for _ in range(8):
-            value = (value >> 1) ^ (0xA001 if value & 1 else 0)
+        value = (value >> 8) ^ _BX_CRC16_TABLE[(value ^ byte) & 0xff]
     return value
 
 def decode_bx(data):
@@ -142,16 +152,25 @@ class Receiver:
 
     def _receive_data(self,p,packet_size,now):
         """Already CRC/geometry-validated DATA; shared with the endpoint filter."""
+        immediate = False
         m, fid = p.module_id, p.frame_id
         s, active = self.stats[m], self.active[m]
         s['datagrams'] += 1; s['bytes'] += packet_size; s['retransmissions'] += int(p.retry)
         if fid in self.retired[m]:
-            s['late'] += 1; return
+            s['late'] += 1; return immediate
         if fid not in active:
             hi = self.highest[m]
             if hi is not None and not newer(fid,hi) and ((hi-fid)&0xffffffff)>=4:
-                s['late'] += 1; return
-            if hi is None or newer(fid,hi):
+                s['late'] += 1; return immediate
+            advances_window = hi is None or newer(fid,hi)
+            if len(active) == 4:
+                # An older partial frame can have arrived after a newer one.
+                newest = fid if advances_window else hi
+                oldest = max(active, key=lambda frame_id: (newest - frame_id) & 0xffffffff)
+                del active[oldest]
+                self.retired[m].append(oldest)
+                s['expired'] += 1
+            if advances_window:
                 if hi is not None: s['whole_missing'] += ((fid-hi)&0xffffffff)-1
                 self.highest[m] = fid
                 for old in active.values():
@@ -159,15 +178,14 @@ class Receiver:
                         old.tail = True
                         if not old.discovered:
                             old.discovered = True; old.due = now; s['tail_triggers'] += 1
-            if len(active)==4:
-                old_id,_ = active.popitem(last=False); self.retired[m].append(old_id); s['expired'] += 1
+                            immediate = True
             active[fid] = Assembly(p,now,now,bytearray(p.frame_len))
             s['active_high_water'] = max(s['active_high_water'],len(active))
         a = active[fid]
         if (p.frame_len,p.frag_cnt,p.ts) != (a.packet.frame_len,a.packet.frag_cnt,a.packet.ts):
-            s['conflicts'] += 1; self.retired[m].append(fid); del active[fid]; return
+            s['conflicts'] += 1; self.retired[m].append(fid); del active[fid]; return immediate
         if p.frag_idx in a.seen:
-            s['duplicates'] += 1; return
+            s['duplicates'] += 1; return immediate
         a.data[p.frag_idx*STEP:p.frag_idx*STEP+len(p.payload)] = p.payload
         a.seen.add(p.frag_idx); a.last=now; a.highest=max(a.highest,p.frag_idx)
         # Each fragment advances this cursor at most once per frame. Scanning
@@ -176,6 +194,7 @@ class Receiver:
             a.contiguous+=1
         if not a.discovered and a.contiguous<a.highest:
             a.discovered=True; a.due=now; s['gap_triggers'] += 1
+            immediate = True
         if len(a.seen)==p.frag_cnt:
             s['completed'] += 1
             ledger=self.ledgers[m]
@@ -197,13 +216,24 @@ class Receiver:
                 if self.on_frame: self.on_frame(m,fid,p.ts,bytes(a.data),completed)
             elif valid: s['late'] += 1
             self.retired[m].append(fid); del active[fid]
+        return immediate
 
-    def poll(self, now):
+    def poll(self, now, *, immediate_module=None):
+        """Service timers, or only a module's newly observed gap/new-frame events.
+
+        The immediate path must not infer time-based tail loss in another frame
+        while unread datagrams may still be queued in the socket.
+        """
         packets=[]
         for m,active in self.active.items():
+            if immediate_module is not None and m != immediate_module:
+                continue
             s=self.stats[m]
             for fid,a in list(active.items()):
-                if now-a.last>=2000 and not a.tail:
+                if immediate_module is not None:
+                    if not a.discovered or a.rounds:
+                        continue
+                elif now-a.last>=2000 and not a.tail:
                     a.tail=True; s['tail_triggers'] += 1
                     if not a.discovered: a.discovered=True; a.due=a.last+2000
                 if not a.discovered or now<a.due: continue
@@ -246,6 +276,126 @@ class Receiver:
                 'ledger_evidence':'bounded additive summaries; agreement does not prove bytewise equality of every frame',
                 'whole_missing_definition':'forward ID gaps observed before late arrivals, not final loss count'}
 
+class ReceiverRuntime:
+    """Read queued datagrams before time-based loss decisions, with bounded work.
+
+    A batch is limited to 64 datagrams or 500us, including rejected traffic.
+    This avoids an unbounded drain starving retry/expiry timers. It cannot
+    establish kernel arrival times or eliminate ambiguity beyond a batch limit.
+    """
+    def __init__(self, sock, receiver, *, clock, wait_readable,
+                 stop_requested=lambda: False, source_ip='127.0.0.1',
+                 source_port=0, drop_first=(), drop_always=()):
+        self.sock, self.receiver = sock, receiver
+        self.clock, self.wait_readable, self.stop_requested = clock, wait_readable, stop_requested
+        self.source_ip, self.source_port = source_ip, source_port
+        self.drop_first, self.drop_always = set(drop_first), set(drop_always)
+        self.peer = None
+        self.source_rejected = self.drop_count = self.receive_errors = self.send_errors = 0
+        self.last_service_us = None
+        self.metrics = {key: 0 for key in (
+            'service_calls', 'batches', 'received_datagrams', 'packet_limit_hits',
+            'time_limit_hits', 'max_batch_datagrams', 'max_batch_us',
+            'max_service_interval_us', 'timer_polls', 'immediate_polls',
+            'feedback_generated_packets', 'feedback_send_attempts',
+            'feedback_sent_packets', 'feedback_cancelled_packets',
+            'feedback_polls_with_readable_socket')}
+
+    def _poll(self, immediate_module=None):
+        if self.peer is None or self.stop_requested():
+            return
+        self.metrics['timer_polls' if immediate_module is None else 'immediate_polls'] += 1
+        packets = self.receiver.poll(self.clock(), immediate_module=immediate_module)
+        self.metrics['feedback_generated_packets'] += len(packets)
+        if packets and self.wait_readable(0):
+            # Readability may belong to another module or even rejected traffic;
+            # this is backlog evidence, not a count of unnecessary NACK packets.
+            self.metrics['feedback_polls_with_readable_socket'] += 1
+        for index, nack in enumerate(packets):
+            if self.stop_requested():
+                self.metrics['feedback_cancelled_packets'] += len(packets)-index
+                break
+            self.metrics['feedback_send_attempts'] += 1
+            try:
+                if self.sock.sendto(nack, self.peer) == len(nack):
+                    self.metrics['feedback_sent_packets'] += 1
+                else:
+                    self.send_errors += 1
+            except OSError:
+                self.send_errors += 1
+
+    def service_once(self, wait_seconds=.0005):
+        if self.stop_requested():
+            return
+        now = self.clock()
+        self.metrics['service_calls'] += 1
+        if self.last_service_us is not None:
+            self.metrics['max_service_interval_us'] = max(
+                self.metrics['max_service_interval_us'], now-self.last_service_us)
+        self.last_service_us = now
+        ready = self.wait_readable(wait_seconds)
+        if self.stop_requested():
+            return
+        if ready:
+            start, count = self.clock(), 0
+            self.metrics['batches'] += 1
+            while count < 64 and not self.stop_requested():
+                if count and self.clock()-start >= 500:
+                    self.metrics['time_limit_hits'] += 1
+                    break
+                try:
+                    data, address = self.sock.recvfrom(65535)
+                except BlockingIOError:
+                    break
+                except (ConnectionResetError, ConnectionRefusedError):
+                    self.receive_errors += 1
+                    break
+                count += 1
+                self.metrics['received_datagrams'] += 1
+                if (address[0] != self.source_ip or
+                        self.source_port and address[1] != self.source_port or
+                        self.peer is not None and address != self.peer):
+                    self.source_rejected += 1
+                    continue
+                try:
+                    if len(data) < 8:
+                        raise ProtocolError('short')
+                    packet = decode_data(data) if data[6] == 1 else decode_status(data) if data[6] == 3 else None
+                    if packet is None:
+                        raise ProtocolError('unexpected type')
+                except ProtocolError:
+                    self.receiver.receive(data, self.clock())
+                    continue
+                # Lock only to a validated source, as in the original runtime.
+                self.peer = address
+                if isinstance(packet, Data):
+                    fragment = (packet.module_id, packet.frag_idx)
+                    if fragment in self.drop_always or not packet.retry and fragment in self.drop_first:
+                        self.drop_count += 1
+                        continue
+                    immediate = self.receiver._receive_data(packet, len(data), self.clock())
+                    # Real observed gaps/new frames retain immediate first NACKs.
+                    # Time-based tails, subsequent rounds and expiry wait until
+                    # this bounded batch has first consumed available datagrams.
+                    if immediate:
+                        self._poll(immediate_module=packet.module_id)
+                else:
+                    self.receiver.receive(data, self.clock())
+            if count == 64:
+                self.metrics['packet_limit_hits'] += 1
+            self.metrics['max_batch_datagrams'] = max(self.metrics['max_batch_datagrams'], count)
+            self.metrics['max_batch_us'] = max(self.metrics['max_batch_us'], self.clock()-start)
+        # Also poll on an empty socket: a genuinely missing tail must still time
+        # out. No source timestamp or existing retry deadline is shifted here.
+        self._poll()
+
+    def report(self):
+        return {**self.metrics, 'feedback_send_errors': self.send_errors,
+                'batch_packet_limit': 64, 'batch_time_budget_us': 500,
+                'order': 'bounded_receive_then_timer_poll; observed_gap_first_request_immediate',
+                'note': 'Host processing times only. A batch limit can leave queued data; readability does not identify which frame is queued or prove network loss.'}
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bind',default='127.0.0.1');parser.add_argument('--port',type=int,default=5650)
@@ -266,49 +416,28 @@ def main(argv=None):
     from runtime_support import configure_udp_connreset
     connreset=configure_udp_connreset(sock)
     sock.bind((args.bind,args.port));sock.setblocking(False)
-    peer=None;started=clock(); stop=False;drop_count=source_rejected=send_errors=receive_errors=0
+    started=clock(); stop=False
     def stopped(*_):
         nonlocal stop
         stop=True
     signal.signal(signal.SIGINT,stopped);signal.signal(signal.SIGTERM,stopped)
     if hasattr(signal,'SIGBREAK'): signal.signal(signal.SIGBREAK,stopped)
+    runtime=ReceiverRuntime(sock,receiver,clock=clock,
+                            wait_readable=lambda timeout:bool(select.select([sock],[],[],timeout)[0]),
+                            stop_requested=lambda:stop or bool(args.duration and clock()-started>=args.duration*1e6),
+                            source_ip=args.source_ip,source_port=args.source_port,
+                            drop_first=first,drop_always=always)
     print(json.dumps({'ready':True,'port':sock.getsockname()[1],'protocol_version':2}),flush=True)
     if args.ready_file: Path(args.ready_file).write_text('ready',encoding='utf-8')
     try:
         while not stop and (not args.duration or clock()-started<args.duration*1e6):
-            # Poll before/after bounded batches so a busy socket cannot starve timers.
-            if peer:
-                for nack in receiver.poll(clock()):
-                    try: sock.sendto(nack,peer)
-                    except OSError: send_errors+=1
-            ready,_,_=select.select([sock],[],[],.0005)
-            if not ready: continue
-            batch_start=clock()
-            for _ in range(64):
-                try: data,address=sock.recvfrom(65535)
-                except BlockingIOError: break
-                except (ConnectionResetError,ConnectionRefusedError): receive_errors+=1;break
-                if address[0]!=args.source_ip or args.source_port and address[1]!=args.source_port or peer is not None and address!=peer:
-                    source_rejected+=1;continue
-                # Lock endpoint only after a fully valid packet, not a spoofed header.
-                try:
-                    if len(data)<8: raise ProtocolError('short')
-                    packet=decode_data(data) if data[6]==1 else decode_status(data) if data[6]==3 else None
-                    if packet is None: raise ProtocolError('unexpected type')
-                except ProtocolError:
-                    receiver.receive(data,clock());continue
-                peer=address
-                if isinstance(packet,Data) and ((packet.module_id,packet.frag_idx) in always or not packet.retry and (packet.module_id,packet.frag_idx) in first):
-                    drop_count+=1;continue
-                if isinstance(packet,Data):receiver._receive_data(packet,len(data),clock())
-                else:receiver.receive(data,clock())
-                if clock()-batch_start>=500: break
+            runtime.service_once()
     finally:
         ended=clock();report=receiver.report(args.run_id,ended)
-        report.update(duration_us=ended-started,endpoint=list(peer) if peer else None,source_rejected=source_rejected,
-                      injected_drops=drop_count,send_errors=send_errors,receive_errors=receive_errors,transport='IPv4 UDP',
+        report.update(duration_us=ended-started,endpoint=list(runtime.peer) if runtime.peer else None,source_rejected=runtime.source_rejected,
+                      injected_drops=runtime.drop_count,send_errors=runtime.send_errors,receive_errors=runtime.receive_errors,transport='IPv4 UDP',
                       loopback=args.bind.startswith('127.'),exit_reason='signal' if stop else 'duration',
-                      sio_udp_connreset=connreset)
+                      sio_udp_connreset=connreset,receive_loop=runtime.report())
         dest=Path(args.report);dest.parent.mkdir(parents=True,exist_ok=True)
         temp=dest.with_suffix(dest.suffix+'.tmp');temp.write_text(json.dumps(report,indent=2),encoding='utf-8');temp.replace(dest)
         sock.close()

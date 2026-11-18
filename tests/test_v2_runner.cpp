@@ -12,7 +12,7 @@
 
 namespace {
 void require(bool x,const char* text){if(!x)throw std::runtime_error(text);}
-struct Capture{std::mutex mutex;std::vector<rt::v2::DataPacket> packets;std::atomic<unsigned> statuses{0},receives{0};bool failOpen=false,failSend=false;};
+struct Capture{std::mutex mutex;std::vector<rt::v2::DataPacket> packets;std::atomic<unsigned> statuses{0},receives{0};bool failOpen=false,failSend=false,failFirstRead=false;};
 class Transport:public rt::IUdpTransport{
     std::shared_ptr<Capture> capture_;
 public:
@@ -25,9 +25,16 @@ public:
         capture_->packets.push_back(std::move(packet));return true;
     }
     bool receive(rt::IncomingDatagram&)override{++capture_->receives;return false;}
+    rt::ReceiveOutcome receiveFeedback(rt::IncomingDatagram& packet)override{
+        if(capture_->failFirstRead && !capture_->receives){
+            ++capture_->receives;
+            return rt::ReceiveOutcome::Error;
+        }
+        return rt::IUdpTransport::receiveFeedback(packet);
+    }
     std::uint16_t localPort()const override{return 54321;}
     bool dfEnabled()const override{return true;}
-    std::string lastError()const override{return {};}
+    std::string lastError()const override{return capture_->failFirstRead?"feedback error example":"";}
 };
 rt::v2::Session::TransportFactory factory(std::shared_ptr<Capture> c){return [c]{return std::make_unique<Transport>(c);};}
 class DeviceModel:public rt::aurora::INdiSource{
@@ -78,5 +85,84 @@ void fastStopAndException(){auto capture=std::make_shared<Capture>();rt::v2::Con
     require(error.reportJson.find("\"datagrams\":4")!=std::string::npos,"send exception retains current counts");
     require(error.reportJson.find("\"initial_incomplete\":1")!=std::string::npos,"send exception accounts unfinished frame");
 }
+void feedbackReadFailure(){
+    auto capture=std::make_shared<Capture>();
+    capture->failFirstRead=true;
+    rt::v2::Config c;
+    c.frameLimit=1;
+    c.ndiEnabled=false;
+    c.epBytes=1;
+    auto result=rt::v2::run(c,factory(capture));
+    require(!result.success && result.error.find("feedback error example")!=std::string::npos,
+        "feedback channel error fails a finished run");
+    require(result.reportJson.find("\"feedback_read_errors\":1,")!=std::string::npos,"ordinary empty reads excluded");
+    require(capture->packets.size()==1,"temporary feedback error does not discard independent initial data");
 }
-int main(){try{statusOnly();preserveIdsOnOpenFailure();failedReports();isolatedDeviceAndUnmapped();fastStopAndException();std::cout<<"V2 runner lifecycle tests passed\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+
+void statusOnlyFrameBound(){
+    rt::v2::Config c;
+    c.ndiEnabled=false;c.epEnabled=false;c.statusIntervalUs=10000;c.frameLimit=3;
+    bool rejected=false;
+    try{rt::v2::validateConfig(c);}catch(const std::invalid_argument&){rejected=true;}
+    require(rejected,"frames alone cannot terminate a status-only run");
+    c.durationUs=50000;
+    rt::v2::validateConfig(c);
+    c.durationUs=0;c.frameLimit=0;
+    rt::v2::validateConfig(c);
+}
+
+void linkRecovery(){
+    auto capture=std::make_shared<Capture>();
+    rt::v2::Config c;
+    c.ndiEnabled=false;c.epEnabled=false;c.statusIntervalUs=20000;c.durationUs=1400000;
+    std::atomic<unsigned> observations{0};
+    rt::v2::Session session(factory(capture),{},[&](const rt::v2::Config&){
+        rt::v2::LinkObservation link;
+        link.observedAtUs=observations.fetch_add(1)+1;
+        link.mbps=link.observedAtUs==1?100:1000;
+        return link;
+    });
+    session.start(c);
+    auto r=session.wait();
+    require(r.success && observations>=2,"live link observed twice");
+    require(r.reportJson.find("\"effective_link_mbps\":1000,")!=std::string::npos &&
+        r.reportJson.find("\"rate_changes\":1,")!=std::string::npos,"initial observation must not pin a session at 100 Mbps");
+    c.pathLimitMbps=500;c.observedLinkMbps=250;
+    require(rt::v2::effectiveMbps(c,1000)==250 && rt::v2::effectiveMbps(c,100)==100,"keep manual caps across renegotiation");
+}
+
+void oversizedDeviceReplyOnObservedLink(){
+    class GrowingDevice final : public DeviceModel {
+        unsigned reads_=0;
+    public:
+        GrowingDevice():DeviceModel(false){}
+        rt::aurora::SourceSample read(const rt::aurora::HostClock& clock,const std::atomic<bool>&)override{
+            ++reads_;
+            rt::aurora::SourceSample sample;
+            sample.bytes=rt::aurora::generateSample(reads_==1?40:255,reads_*8);
+            sample.hostReadyUs=clock();
+            sample.newSourceFrame=true;
+            sample.sourceTime=rt::aurora::MappedTime{1000000ULL+reads_*25000ULL,4};
+            return sample;
+        }
+    };
+    rt::v2::Config c;
+    c.linkMbps=1000;c.ndiTools=40;c.epBytes=204800;c.frameLimit=4;c.statusIntervalUs=20000;
+    auto capture=std::make_shared<Capture>();
+    auto link=[](const rt::v2::Config&){rt::v2::LinkObservation value;value.observedAtUs=1;value.mbps=100;return value;};
+    rt::v2::Session session(factory(capture),[]{return std::make_unique<GrowingDevice>();},link);
+    session.start(c);
+    const auto result=session.wait();
+    require(!result.success && result.error.empty() &&
+        result.reportJson.find("NDI observed length fails capacity screening")!=std::string::npos,
+        "oversized live BX must fail its source, keep the shared transport running");
+    unsigned ndiPackets=0,finalEpPackets=0;
+    for(const auto& p:capture->packets){
+        if(p.moduleId==1){++ndiPackets;require(p.frameId==1,"only the admissible NDI frame is transmitted");}
+        if(p.moduleId==2 && p.frameId==4)++finalEpPackets;
+    }
+    require(ndiPackets==2 && finalEpPackets==143 && capture->statuses>1,
+        "good NDI reply, final complete EP frame and periodic statuses survive the isolated source error");
+}
+}
+int main(){try{statusOnly();preserveIdsOnOpenFailure();failedReports();isolatedDeviceAndUnmapped();fastStopAndException();feedbackReadFailure();statusOnlyFrameBound();linkRecovery();oversizedDeviceReplyOnObservedLink();std::cout<<"V2 runner lifecycle tests passed\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -19,6 +19,49 @@ def row(identifier,module,requirement,measurement,threshold,measured,status,reas
     return dict(id=identifier,module_id=module,requirement=requirement,measurement=measurement,
                 threshold=threshold,measured=measured,status=status,reason=reason)
 
+def retry_timing_rows(module, stats):
+    intervals = stats.get('retry_intervals') or {}
+    timing = stats.get('request_lateness') or {}
+    rounds = unsigned(stats.get('nack_rounds'))
+    requests = unsigned(timing.get('count'))
+    lateness = unsigned(timing.get('max_us'))
+    count = unsigned(intervals.get('count'))
+    shortest = unsigned(intervals.get('min_us'))
+    longest = unsigned(intervals.get('max_us'))
+
+    request_status = 'not_tested'
+    if requests is not None and rounds is not None and requests != rounds:
+        request_status = 'fail'
+    elif requests and lateness is not None:
+        if lateness > 0:
+            request_status = 'fail'
+        elif rounds == requests:
+            request_status = 'pass'
+
+    interval_status = 'not_tested'
+    if count:
+        if ((rounds is not None and count >= rounds)
+                or (shortest is not None and shortest != 10000)
+                or (longest is not None and longest != 10000)):
+            interval_status = 'fail'
+        elif rounds is not None and shortest == longest == 10000:
+            interval_status = 'pass'
+
+    parts = (request_status, interval_status)
+    combined = 'fail' if 'fail' in parts else 'pass' if parts == ('pass', 'pass') else 'not_tested'
+    return [
+        row('receiver_retry_timing', module, '已观测NACK生成时序', '请求原定时刻偏差及后续生成间隔',
+            '原计划偏差0；后续间隔10000us',
+            {'retry_intervals': intervals, 'request_lateness': timing, 'rounds': rounds}, combined,
+            '任一已测项失败即判失败，两项都有完整合格样本才判通过。'),
+        row('receiver_request_lateness', module, 'NACK请求生成迟到', '全部已生成请求与各自原定时刻的偏差',
+            '最大迟到0us', {'rounds': rounds, 'request_lateness': timing}, request_status,
+            '按接收端主机时钟统计；样本数应覆盖所有请求轮次。'),
+        row('receiver_retry_interval', module, '后续NACK生成间隔', '同帧相邻两轮请求的最小及最大间隔',
+            '每个间隔10000us', intervals, interval_status,
+            '只有同一帧生成第二轮或更后请求时才有间隔样本。'),
+    ]
+
 def build_acceptance(sender,receiver=None):
     # Replace sender-only placeholders with receiver evidence, avoiding two
     # contradictory verdicts for the same requirement in the joint table.
@@ -49,16 +92,7 @@ def build_acceptance(sender,receiver=None):
             consumption_known=all(v is not None for v in (consumed,completed,errors)) and completed>0
             ok=consumption_known and consumed==completed and errors==0
             rows.append(row('consumer_delivery',int(module),'重组后独立消费','通过业务解析且未被更新帧覆盖的消费数量','消费数=完成数；业务解析错误=0',{'completed':completed,'consumed':consumed,'business_errors':errors},'pass' if ok else 'fail' if consumption_known else 'not_tested','NDI使用BX校验；电生理为字节消费接口，真实波形定义尚未提供；缺字段不默认计零。'))
-            intervals=r.get('retry_intervals',{});timing=r.get('request_lateness',{})
-            count_retry=unsigned(intervals.get('count'));rounds=unsigned(r.get('nack_rounds'))
-            interval_min=unsigned(intervals.get('min_us'));interval_max=unsigned(intervals.get('max_us'))
-            request_count=unsigned(timing.get('count'));lateness=unsigned(timing.get('max_us'))
-            timing_known=all(v is not None for v in (count_retry,rounds,interval_min,interval_max,request_count,lateness)) and count_retry>0
-            timing_consistent=timing_known and request_count==rounds and count_retry<rounds and interval_min<=interval_max
-            timing_pass=timing_consistent and interval_min==interval_max==10000 and lateness==0
-            rows.append(row('receiver_retry_timing',int(module),'已观测NACK生成时序','全量已生成请求的原定时刻偏差，以及相邻请求间隔最小/最大值','原计划偏差0；后续间隔10000us',{'retry_intervals':intervals,'request_lateness':timing,'rounds':rounds},'not_tested' if not timing_known else 'pass' if timing_pass else 'fail','没有重试或缺少完整统计为未检测；生成时间不是实际网卡出线。三轮耗尽、2ms尾部及隔离的完整分支覆盖另由确定性测试证明。'))
-        else:
-            rows.append(row('receiver_retry_timing',int(module),'接收缺片与重试时序','接收端同轮时序记录','2ms尾片、10ms间隔、3轮',None,'not_tested','缺少匹配接收报告。'))
+        rows.extend(retry_timing_rows(int(module), r))
     for identifier,title,why in [
         ('hardware_time','共同硬件时间域','未接入并验证共同硬件时间映射；主机单调时钟不是设备采样证据。'),
         ('wire_departure','实际网卡出线期限','本地send返回不证明实际出线；需要真实链路或硬件时间戳。'),

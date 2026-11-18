@@ -10,6 +10,27 @@ def sample_bx():
 
 class V2ReceiverTests(unittest.TestCase):
     def receiver(self):return Receiver(verify_bx=False)
+    def test_crc16_independent_vectors(self):
+        self.assertEqual(crc16(b''), 0)
+        self.assertEqual(crc16(b'123456789'), 0xbb3d)
+        self.assertEqual(crc16(b'OKAY'), 0xa896)
+
+    def test_reorder_evicts_oldest_frame_number_including_wrap(self):
+        for newest in (6, 1):
+            with self.subTest(newest=newest):
+                r = self.receiver()
+                payload = b'x' * 1437
+                ids = [(newest-distance) & 0xffffffff for distance in (1, 2, 3, 4, 0)]
+                for frame_id in ids:
+                    r.receive(encode_data(2, frame_id, 10, payload, 0), 100)
+                self.assertEqual(set(r.active[2]), set(ids) - {ids[3]})
+                # All remaining partial frames can still complete.
+                for frame_id in reversed(ids[:3]):
+                    r.receive(encode_data(2, frame_id, 10, payload, 1), 101)
+                r.receive(encode_data(2, newest, 10, payload, 1), 102)
+                self.assertEqual(r.stats[2]['completed'], 4)
+                self.assertEqual(r.stats[2]['consumed'], 4)
+                self.assertEqual(r.stats[2]['expired'], 1)
     def test_module_isolation_and_consumption(self):
         r=self.receiver();data=b'x'*1437
         r.receive(encode_data(1,1,100,data,0),100)

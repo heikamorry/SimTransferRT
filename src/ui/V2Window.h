@@ -23,6 +23,8 @@ private:
     void stopSending();
     void toggleReceiver();
     void refresh();
+    void refreshReceiver();
+    QJsonObject receiverReportForExport() const;
     void updateBudget();
     void exportReport();
     void archiveRun();

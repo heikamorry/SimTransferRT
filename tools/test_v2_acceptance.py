@@ -44,6 +44,17 @@ class V2AcceptanceEvidenceTests(unittest.TestCase):
     def test_request_statistics_must_cover_all_rounds(self):
         s,r=reports();r['modules']['1']['request_lateness']['count']=2
         self.assertEqual(verdict(s,r,'receiver_retry_timing'),'fail')
+    def test_first_request_lateness_without_another_round(self):
+        s,r=reports()
+        stats=r['modules']['1']
+        stats.update(nack_rounds=1, request_lateness={'count':1,'max_us':3581},
+                     retry_intervals={'count':0,'min_us':None,'max_us':0})
+        self.assertEqual(verdict(s,r,'receiver_retry_timing'),'fail')
+        self.assertEqual(verdict(s,r,'receiver_request_lateness'),'fail')
+        self.assertEqual(verdict(s,r,'receiver_retry_interval'),'not_tested')
+        stats['request_lateness']['max_us']=0
+        self.assertEqual(verdict(s,r,'receiver_request_lateness'),'pass')
+        self.assertEqual(verdict(s,r,'receiver_retry_timing'),'not_tested')
     def test_protocol_delivery_does_not_hide_business_failure(self):
         s,r=reports();r['modules']['1'].update(consumed=1,business_errors=1)
         self.assertEqual(verdict(s,r,'joint_delivery'),'pass')

@@ -1,0 +1,46 @@
+PASS CRC IEEE known vector
+PASS CRC fast path matches reference
+PASS CRC empty
+PASS DATA LE offsets
+PASS DATA roundtrip
+PASS 1MiB geometry
+PASS 2MiB geometry
+PASS size bounds
+PASS fragment bounds
+PASS payload CRC corruption
+PASS header CRC corruption
+PASS wrong length and magic
+PASS unknown flags
+PASS retry preserves fields recomputes CRC
+PASS NACK roundtrip
+PASS NACK max ranges
+PASS NACK invalid reserved and CRC
+PASS NACK range overflow
+PASS merge missing IDs
+PASS module order and mask
+PASS module duplicates rejected
+PASS modules cross fragment boundary and >64K
+PASS oversize sample skipped not stream failed
+PASS module bounds and trailing bytes
+PASS module hotplug snapshot immutable
+PASS three-slot cache exact ID
+PASS document modulo wrap caveat explicit
+PASS opt-in FIFO preserves three across wrap
+PASS modular ID comparison
+PASS no READY needed
+PASS NACK during first send
+PASS same round multiple NACK and pending dedup
+PASS later repeated requests not permanently suppressed
+PASS atomic NACK validation
+PASS expired cache NACK ignored
+PASS persistent loss does not stop stream
+PASS hotplug applies only next sampling frame
+PASS all-off skip explicit policy
+PASS sampling late skips burst catchup
+PASS pacer no burst flush
+PASS 2MiB@1Gb15ms rejected unless explicit lab override
+PASS frame limit drains without FIN
+PASS dispatcher bounded and stop priority
+PASS dispatcher coalesces module mask
+PASS stop local no control packet
+45/45 passed

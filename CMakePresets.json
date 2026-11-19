@@ -1,0 +1,41 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {"major": 3, "minor": 21, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "windows-debug",
+      "displayName": "MSVC v143 / Qt 6.12 / Debug (launch via scripts)",
+      "generator": "NMake Makefiles",
+      "binaryDir": "${sourceDir}/build/windows-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_DEPENDS_USE_COMPILER": "FALSE",
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.12.0/msvc2022_64",
+        "SIM_WITH_QT": "ON",
+        "SIM_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "windows-release",
+      "inherits": "windows-debug",
+      "binaryDir": "${sourceDir}/build/windows-release",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}
+    },
+    {
+      "name": "core-only",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/core",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release", "SIM_WITH_QT": "OFF"}
+    }
+  ],
+  "buildPresets": [
+    {"name": "windows-debug", "configurePreset": "windows-debug"},
+    {"name": "windows-release", "configurePreset": "windows-release"},
+    {"name": "core-only", "configurePreset": "core-only"}
+  ],
+  "testPresets": [
+    {"name": "windows-debug", "configurePreset": "windows-debug", "output": {"outputOnFailure": true}},
+    {"name": "windows-release", "configurePreset": "windows-release", "output": {"outputOnFailure": true}},
+    {"name": "core-only", "configurePreset": "core-only", "output": {"outputOnFailure": true}}
+  ]
+}

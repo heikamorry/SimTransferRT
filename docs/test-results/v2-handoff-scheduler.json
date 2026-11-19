@@ -1,0 +1,791 @@
+{
+  "kind": "sanitized_etw_handoff_evidence",
+  "schema_version": 1,
+  "observation": "One instrumented V2 loopback diagnostic. Circular ETL timeline overlaps trigger snapshot. Occupancy uses classic kernel Thread_V2 events and QPC integer microseconds.",
+  "trigger_snapshot_scope": {
+    "runtime_us": 4360961,
+    "payload_bytes": 1048576,
+    "ep_hz": 50,
+    "ndi_hz": 60,
+    "ndi_tools": 4,
+    "mode": "IPv4 loopback",
+    "declared_link_mbps": 1000,
+    "retained_ep_dispatch_records": 32,
+    "retained_ndi_dispatch_records": 32
+  },
+  "capture": {
+    "clock": "QPC",
+    "frequency_hz": 10000000,
+    "retained_scheduler_events": 1692129,
+    "coverage_duration_us": 20690188,
+    "event_loss_count": 0,
+    "buffer_loss_count": 0,
+    "short_record_count": 0,
+    "thread_identity_confirmed": true,
+    "coverage_relative_to_app_start_us": [
+      -15772907,
+      4917281
+    ],
+    "watcher_phases_relative_to_app_start_us": {
+      "starting": -15896757,
+      "armed": -15719911,
+      "trigger_seen": 4532905,
+      "stopping": 4798882,
+      "saved": 12211772
+    },
+    "roles": {
+      "sender": {
+        "thread_metadata": 2,
+        "ready_thread": 2443,
+        "switch_in": 4528,
+        "switch_out": 4528
+      },
+      "ndi_producer": {
+        "thread_metadata": 2,
+        "ready_thread": 3974,
+        "switch_in": 4091,
+        "switch_out": 4091
+      },
+      "ep_producer": {
+        "thread_metadata": 2,
+        "ready_thread": 3982,
+        "switch_in": 4105,
+        "switch_out": 4105
+      }
+    }
+  },
+  "ep_outliers": [
+    {
+      "stream": "EP",
+      "frame_id": 216,
+      "ready_to_first_us": 21758,
+      "stages_us": {
+        "sample_to_ready": 7,
+        "ready_to_enqueue": 4,
+        "enqueue_to_sender_observed": 654,
+        "observed_to_dequeue": 17,
+        "dequeue_to_submit": 0,
+        "submit_to_select": 21082,
+        "select_to_first": 1
+      },
+      "sender_while_ready_to_first_us": {
+        "running": 20463,
+        "ready": 1255,
+        "waiting": 0,
+        "unknown": 40
+      },
+      "sender_while_ready_to_submit_us": {
+        "running": 54,
+        "ready": 621,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "sender_while_submit_to_first_us": {
+        "running": 20409,
+        "ready": 634,
+        "waiting": 0,
+        "unknown": 40
+      },
+      "producer_while_sample_to_ready_us": {
+        "running": 7,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "app_wait_relation": "no_associated_wait",
+      "apparent_kernel_ready_events_in_window": 0,
+      "runnable_deschedule_segments_at_least_100us": [
+        {
+          "begin_since_app_ready_us": 0,
+          "duration_us": 621,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 3793,
+          "duration_us": 131,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 12375,
+          "duration_us": 142,
+          "observed_as": "CSwitch out Ready"
+        }
+      ],
+      "intervening_local_send_attempts_by_stream": {
+        "ndi": 2,
+        "ep": 697,
+        "status": 0,
+        "retry": 0
+      },
+      "ep_head_at_submit": {
+        "module_id": 2,
+        "frame_id": 215,
+        "next_fragment": 34,
+        "fragments_remaining": 697,
+        "duplicate_pending": false
+      },
+      "previous_ep_or_ndi_at_first": {
+        "module_id": 1,
+        "frame_id": 259,
+        "fragment_index": 0
+      },
+      "application_us_relative_to_ready": {
+        "enqueued_us": 4,
+        "notify_issue_us": 4,
+        "wait_begin_us": null,
+        "wait_return_us": null,
+        "sender_observed_us": 658,
+        "dequeued_us": 675,
+        "submitted_us": 675,
+        "selected_us": 21757,
+        "first_attempt_us": 21758
+      }
+    },
+    {
+      "stream": "EP",
+      "frame_id": 215,
+      "ready_to_first_us": 17918,
+      "stages_us": {
+        "sample_to_ready": 12,
+        "ready_to_enqueue": 5,
+        "enqueue_to_sender_observed": 23,
+        "observed_to_dequeue": 2,
+        "dequeue_to_submit": 0,
+        "submit_to_select": 17887,
+        "select_to_first": 1
+      },
+      "sender_while_ready_to_first_us": {
+        "running": 13864,
+        "ready": 4047,
+        "waiting": 0,
+        "unknown": 7
+      },
+      "sender_while_ready_to_submit_us": {
+        "running": 30,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "sender_while_submit_to_first_us": {
+        "running": 13834,
+        "ready": 4047,
+        "waiting": 0,
+        "unknown": 7
+      },
+      "producer_while_sample_to_ready_us": {
+        "running": 12,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "app_wait_relation": "no_associated_wait",
+      "apparent_kernel_ready_events_in_window": 0,
+      "runnable_deschedule_segments_at_least_100us": [
+        {
+          "begin_since_app_ready_us": 1319,
+          "duration_us": 2088,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 3455,
+          "duration_us": 112,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 5877,
+          "duration_us": 389,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 9998,
+          "duration_us": 778,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 12967,
+          "duration_us": 225,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 14168,
+          "duration_us": 136,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 15581,
+          "duration_us": 258,
+          "observed_as": "CSwitch out Ready"
+        }
+      ],
+      "intervening_local_send_attempts_by_stream": {
+        "ndi": 1,
+        "ep": 399,
+        "status": 0,
+        "retry": 0
+      },
+      "ep_head_at_submit": {
+        "module_id": 2,
+        "frame_id": 214,
+        "next_fragment": 332,
+        "fragments_remaining": 399,
+        "duplicate_pending": false
+      },
+      "previous_ep_or_ndi_at_first": {
+        "module_id": 1,
+        "frame_id": 257,
+        "fragment_index": 0
+      },
+      "application_us_relative_to_ready": {
+        "enqueued_us": 5,
+        "notify_issue_us": 6,
+        "wait_begin_us": null,
+        "wait_return_us": null,
+        "sender_observed_us": 28,
+        "dequeued_us": 30,
+        "submitted_us": 30,
+        "selected_us": 17917,
+        "first_attempt_us": 17918
+      }
+    },
+    {
+      "stream": "EP",
+      "frame_id": 217,
+      "ready_to_first_us": 17025,
+      "stages_us": {
+        "sample_to_ready": 11,
+        "ready_to_enqueue": 5,
+        "enqueue_to_sender_observed": 8,
+        "observed_to_dequeue": 1,
+        "dequeue_to_submit": 0,
+        "submit_to_select": 17010,
+        "select_to_first": 1
+      },
+      "sender_while_ready_to_first_us": {
+        "running": 17025,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "sender_while_ready_to_submit_us": {
+        "running": 14,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "sender_while_submit_to_first_us": {
+        "running": 17011,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "producer_while_sample_to_ready_us": {
+        "running": 11,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "app_wait_relation": "no_associated_wait",
+      "apparent_kernel_ready_events_in_window": 0,
+      "runnable_deschedule_segments_at_least_100us": [],
+      "intervening_local_send_attempts_by_stream": {
+        "ndi": 3,
+        "ep": 828,
+        "status": 0,
+        "retry": 0
+      },
+      "ep_head_at_submit": {
+        "module_id": 2,
+        "frame_id": 215,
+        "next_fragment": 634,
+        "fragments_remaining": 97,
+        "duplicate_pending": false
+      },
+      "previous_ep_or_ndi_at_first": {
+        "module_id": 1,
+        "frame_id": 260,
+        "fragment_index": 0
+      },
+      "application_us_relative_to_ready": {
+        "enqueued_us": 5,
+        "notify_issue_us": 6,
+        "wait_begin_us": null,
+        "wait_return_us": null,
+        "sender_observed_us": 13,
+        "dequeued_us": 14,
+        "submitted_us": 14,
+        "selected_us": 17024,
+        "first_attempt_us": 17025
+      }
+    },
+    {
+      "stream": "EP",
+      "frame_id": 218,
+      "ready_to_first_us": 7660,
+      "stages_us": {
+        "sample_to_ready": 9,
+        "ready_to_enqueue": 5,
+        "enqueue_to_sender_observed": 9,
+        "observed_to_dequeue": 1,
+        "dequeue_to_submit": 0,
+        "submit_to_select": 7644,
+        "select_to_first": 1
+      },
+      "sender_while_ready_to_first_us": {
+        "running": 7660,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "sender_while_ready_to_submit_us": {
+        "running": 15,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "sender_while_submit_to_first_us": {
+        "running": 7645,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "producer_while_sample_to_ready_us": {
+        "running": 9,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "app_wait_relation": "no_associated_wait",
+      "apparent_kernel_ready_events_in_window": 0,
+      "runnable_deschedule_segments_at_least_100us": [],
+      "intervening_local_send_attempts_by_stream": {
+        "ndi": 1,
+        "ep": 530,
+        "status": 0,
+        "retry": 0
+      },
+      "ep_head_at_submit": {
+        "module_id": 2,
+        "frame_id": 217,
+        "next_fragment": 201,
+        "fragments_remaining": 530,
+        "duplicate_pending": false
+      },
+      "previous_ep_or_ndi_at_first": {
+        "module_id": 1,
+        "frame_id": 261,
+        "fragment_index": 0
+      },
+      "application_us_relative_to_ready": {
+        "enqueued_us": 5,
+        "notify_issue_us": 6,
+        "wait_begin_us": null,
+        "wait_return_us": null,
+        "sender_observed_us": 14,
+        "dequeued_us": 15,
+        "submitted_us": 15,
+        "selected_us": 7659,
+        "first_attempt_us": 7660
+      }
+    }
+  ],
+  "ndi_overlap_controls": [
+    {
+      "stream": "NDI",
+      "frame_id": 257,
+      "ready_to_first_us": 32099,
+      "stages_us": {
+        "sample_to_ready": 51,
+        "ready_to_enqueue": 5,
+        "enqueue_to_sender_observed": 1921,
+        "observed_to_dequeue": 2,
+        "dequeue_to_submit": 1,
+        "submit_to_select": 30169,
+        "select_to_first": 1
+      },
+      "sender_while_ready_to_first_us": {
+        "running": 20648,
+        "ready": 11444,
+        "waiting": 0,
+        "unknown": 7
+      },
+      "sender_while_ready_to_submit_us": {
+        "running": 32,
+        "ready": 1897,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "sender_while_submit_to_first_us": {
+        "running": 20616,
+        "ready": 9547,
+        "waiting": 0,
+        "unknown": 7
+      },
+      "producer_while_sample_to_ready_us": {
+        "running": 51,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "app_wait_relation": "no_associated_wait",
+      "apparent_kernel_ready_events_in_window": 0,
+      "runnable_deschedule_segments_at_least_100us": [
+        {
+          "begin_since_app_ready_us": 0,
+          "duration_us": 1897,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 3684,
+          "duration_us": 4001,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 10907,
+          "duration_us": 1455,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 15529,
+          "duration_us": 2088,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 17665,
+          "duration_us": 112,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 20087,
+          "duration_us": 389,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 24208,
+          "duration_us": 778,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 27177,
+          "duration_us": 225,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 28378,
+          "duration_us": 136,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 29791,
+          "duration_us": 258,
+          "observed_as": "CSwitch out Ready"
+        }
+      ],
+      "intervening_local_send_attempts_by_stream": {
+        "ndi": 0,
+        "ep": 605,
+        "status": 0,
+        "retry": 0
+      },
+      "ep_head_at_submit": {
+        "module_id": 2,
+        "frame_id": 214,
+        "next_fragment": 126,
+        "fragments_remaining": 605,
+        "duplicate_pending": false
+      },
+      "previous_ep_or_ndi_at_first": {
+        "module_id": 2,
+        "frame_id": 214,
+        "fragment_index": 730
+      },
+      "application_us_relative_to_ready": {
+        "enqueued_us": 5,
+        "notify_issue_us": 6,
+        "wait_begin_us": null,
+        "wait_return_us": null,
+        "sender_observed_us": 1926,
+        "dequeued_us": 1928,
+        "submitted_us": 1929,
+        "selected_us": 32098,
+        "first_attempt_us": 32099
+      }
+    },
+    {
+      "stream": "NDI",
+      "frame_id": 258,
+      "ready_to_first_us": 37657,
+      "stages_us": {
+        "sample_to_ready": 104,
+        "ready_to_enqueue": 5,
+        "enqueue_to_sender_observed": 38,
+        "observed_to_dequeue": 3,
+        "dequeue_to_submit": 1,
+        "submit_to_select": 37609,
+        "select_to_first": 1
+      },
+      "sender_while_ready_to_first_us": {
+        "running": 34059,
+        "ready": 3551,
+        "waiting": 0,
+        "unknown": 47
+      },
+      "sender_while_ready_to_submit_us": {
+        "running": 13,
+        "ready": 34,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "sender_while_submit_to_first_us": {
+        "running": 34046,
+        "ready": 3517,
+        "waiting": 0,
+        "unknown": 47
+      },
+      "producer_while_sample_to_ready_us": {
+        "running": 89,
+        "ready": 15,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "app_wait_relation": "no_associated_wait",
+      "apparent_kernel_ready_events_in_window": 0,
+      "runnable_deschedule_segments_at_least_100us": [
+        {
+          "begin_since_app_ready_us": 2344,
+          "duration_us": 389,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 6465,
+          "duration_us": 778,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 9434,
+          "duration_us": 225,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 10635,
+          "duration_us": 136,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 12048,
+          "duration_us": 258,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 15527,
+          "duration_us": 1036,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 19735,
+          "duration_us": 131,
+          "observed_as": "CSwitch out Ready"
+        },
+        {
+          "begin_since_app_ready_us": 28317,
+          "duration_us": 142,
+          "observed_as": "CSwitch out Ready"
+        }
+      ],
+      "intervening_local_send_attempts_by_stream": {
+        "ndi": 1,
+        "ep": 1090,
+        "status": 0,
+        "retry": 0
+      },
+      "ep_head_at_submit": {
+        "module_id": 2,
+        "frame_id": 214,
+        "next_fragment": 372,
+        "fragments_remaining": 359,
+        "duplicate_pending": false
+      },
+      "previous_ep_or_ndi_at_first": {
+        "module_id": 2,
+        "frame_id": 215,
+        "fragment_index": 730
+      },
+      "application_us_relative_to_ready": {
+        "enqueued_us": 5,
+        "notify_issue_us": 5,
+        "wait_begin_us": null,
+        "wait_return_us": null,
+        "sender_observed_us": 43,
+        "dequeued_us": 46,
+        "submitted_us": 47,
+        "selected_us": 37656,
+        "first_attempt_us": 37657
+      }
+    },
+    {
+      "stream": "NDI",
+      "frame_id": 261,
+      "ready_to_first_us": 14558,
+      "stages_us": {
+        "sample_to_ready": 44,
+        "ready_to_enqueue": 3,
+        "enqueue_to_sender_observed": 9,
+        "observed_to_dequeue": 1,
+        "dequeue_to_submit": 0,
+        "submit_to_select": 14545,
+        "select_to_first": 0
+      },
+      "sender_while_ready_to_first_us": {
+        "running": 14558,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "sender_while_ready_to_submit_us": {
+        "running": 13,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "sender_while_submit_to_first_us": {
+        "running": 14545,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "producer_while_sample_to_ready_us": {
+        "running": 44,
+        "ready": 0,
+        "waiting": 0,
+        "unknown": 0
+      },
+      "app_wait_relation": "no_associated_wait",
+      "apparent_kernel_ready_events_in_window": 0,
+      "runnable_deschedule_segments_at_least_100us": [],
+      "intervening_local_send_attempts_by_stream": {
+        "ndi": 1,
+        "ep": 991,
+        "status": 0,
+        "retry": 0
+      },
+      "ep_head_at_submit": {
+        "module_id": 2,
+        "frame_id": 216,
+        "next_fragment": 471,
+        "fragments_remaining": 260,
+        "duplicate_pending": false
+      },
+      "previous_ep_or_ndi_at_first": {
+        "module_id": 2,
+        "frame_id": 217,
+        "fragment_index": 730
+      },
+      "application_us_relative_to_ready": {
+        "enqueued_us": 3,
+        "notify_issue_us": 3,
+        "wait_begin_us": null,
+        "wait_return_us": null,
+        "sender_observed_us": 12,
+        "dequeued_us": 13,
+        "submitted_us": 13,
+        "selected_us": 14558,
+        "first_attempt_us": 14558
+      }
+    }
+  ],
+  "short_ep_wake_controls": [
+    {
+      "frame_id": 36,
+      "stream": "EP",
+      "app_ready_to_first_us": 78,
+      "wait_kind": "work_event_or_timer",
+      "wait_result": "timer",
+      "app_notify_issue_since_app_ready_us": 2,
+      "app_wait_return_since_app_ready_us": 30,
+      "pairs": [
+        {
+          "kernel_ready_since_app_ready_us": -17,
+          "kernel_switch_in_since_app_ready_us": 19,
+          "ready_to_switch_in_us": 36.1,
+          "ready_from_dpc": true,
+          "observed_readying_role": "unattributed"
+        }
+      ],
+      "application_us_relative_to_ready": {
+        "enqueued_us": 2,
+        "notify_issue_us": 2,
+        "wait_begin_us": -1062,
+        "wait_return_us": 30,
+        "sender_observed_us": 30,
+        "dequeued_us": 36,
+        "submitted_us": 36,
+        "selected_us": 78,
+        "first_attempt_us": 78
+      }
+    },
+    {
+      "frame_id": 219,
+      "stream": "EP",
+      "app_ready_to_first_us": 113,
+      "wait_kind": "work_event_or_timer",
+      "wait_result": "work_event",
+      "app_notify_issue_since_app_ready_us": 3,
+      "app_wait_return_since_app_ready_us": 106,
+      "pairs": [
+        {
+          "kernel_ready_since_app_ready_us": 5,
+          "kernel_switch_in_since_app_ready_us": 103,
+          "ready_to_switch_in_us": 98.3,
+          "ready_from_dpc": false,
+          "observed_readying_role": "unattributed"
+        }
+      ],
+      "application_us_relative_to_ready": {
+        "enqueued_us": 2,
+        "notify_issue_us": 3,
+        "wait_begin_us": -7,
+        "wait_return_us": 106,
+        "sender_observed_us": 106,
+        "dequeued_us": 107,
+        "submitted_us": 107,
+        "selected_us": 112,
+        "first_attempt_us": 113
+      }
+    },
+    {
+      "frame_id": 211,
+      "stream": "EP",
+      "app_ready_to_first_us": 267,
+      "wait_kind": "work_event_or_timer",
+      "wait_result": "work_event",
+      "app_notify_issue_since_app_ready_us": 3,
+      "app_wait_return_since_app_ready_us": 38,
+      "pairs": [
+        {
+          "kernel_ready_since_app_ready_us": 4,
+          "kernel_switch_in_since_app_ready_us": 37,
+          "ready_to_switch_in_us": 32.2,
+          "ready_from_dpc": false,
+          "observed_readying_role": "unattributed"
+        }
+      ],
+      "application_us_relative_to_ready": {
+        "enqueued_us": 3,
+        "notify_issue_us": 3,
+        "wait_begin_us": -13,
+        "wait_return_us": 38,
+        "sender_observed_us": 38,
+        "dequeued_us": 41,
+        "submitted_us": 42,
+        "selected_us": 267,
+        "first_attempt_us": 267
+      }
+    }
+  ],
+  "method_bounds": [
+    "Ready and Running are scheduler states. Running means scheduled, and can include interrupt/DPC time.",
+    "ReadyThread-to-switch-in pairs are bounded by the associated user-mode wait. Pair timing alone does not attribute a shared wake to a particular notification.",
+    "Other process and thread identifiers, wall-clock timestamps, raw QPC offsets, ports, and raw events are intentionally omitted.",
+    "Unknown time is retained, including CSwitch-out states outside explicit Ready/Waiting.",
+    "Retained outliers do not give a population estimate and ETW overhead may affect preemption."
+  ]
+}

@@ -1,0 +1,82 @@
+[
+  {
+    "case": "normal",
+    "pass": true,
+    "completed": 15,
+    "expired": 0,
+    "sender_frames": 15,
+    "retransmissions": 0,
+    "deadline_misses": 0,
+    "note": "functional, not hard-real-time acceptance"
+  },
+  {
+    "case": "first_loss",
+    "pass": true,
+    "completed": 15,
+    "expired": 0,
+    "sender_frames": 15,
+    "retransmissions": 15,
+    "deadline_misses": 0,
+    "note": "functional, not hard-real-time acceptance"
+  },
+  {
+    "case": "crc_damage",
+    "pass": true,
+    "completed": 15,
+    "expired": 0,
+    "sender_frames": 15,
+    "retransmissions": 15,
+    "deadline_misses": 0,
+    "note": "functional, not hard-real-time acceptance"
+  },
+  {
+    "case": "duplicates",
+    "pass": true,
+    "completed": 15,
+    "expired": 0,
+    "sender_frames": 15,
+    "retransmissions": 0,
+    "deadline_misses": 0,
+    "note": "functional, not hard-real-time acceptance"
+  },
+  {
+    "case": "reverse",
+    "pass": true,
+    "completed": 15,
+    "expired": 0,
+    "sender_frames": 15,
+    "retransmissions": 165,
+    "deadline_misses": 0,
+    "note": "functional, not hard-real-time acceptance"
+  },
+  {
+    "case": "duplicate_nack",
+    "pass": true,
+    "completed": 15,
+    "expired": 0,
+    "sender_frames": 15,
+    "retransmissions": 25,
+    "deadline_misses": 0,
+    "note": "functional, not hard-real-time acceptance"
+  },
+  {
+    "case": "permanent_loss",
+    "pass": true,
+    "completed": 0,
+    "expired": 15,
+    "sender_frames": 15,
+    "retransmissions": 0,
+    "deadline_misses": 0,
+    "note": "functional, not hard-real-time acceptance"
+  },
+  {
+    "case": "wrap",
+    "pass": true,
+    "completed": 15,
+    "expired": 0,
+    "sender_frames": 15,
+    "retransmissions": 0,
+    "deadline_misses": 0,
+    "note": "functional, not hard-real-time acceptance"
+  }
+]

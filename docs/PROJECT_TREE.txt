@@ -1,0 +1,91 @@
+SimTransferRT/
+├── .vscode/
+│   ├── extensions.json
+│   ├── launch.json
+│   ├── settings.json
+│   └── tasks.json
+├── docs/
+│   ├── test-results/
+│   │   └── 测试日志、JSON测量、跨语言向量与e2e场景证据
+│   ├── ARCHITECTURE.md
+│   ├── BUILD_STATUS.md
+│   ├── CHANGELOG.md
+│   ├── PROTOCOL.md
+│   ├── SOURCE_SPEC_SHA256.txt
+│   ├── SPEC_DECISIONS.md
+│   ├── TECHNICAL_REFERENCES.md
+│   └── TESTING.md
+├── resources/
+│   ├── styles/
+│   │   └── light.qss
+│   └── resources.qrc
+├── scripts/
+│   ├── build.cmd
+│   ├── env.cmd
+│   ├── open-vscode.cmd
+│   ├── package.cmd
+│   ├── run.cmd
+│   └── test-network.cmd
+├── src/
+│   ├── application/
+│   │   ├── CommandDispatcher.cpp
+│   │   ├── CommandDispatcher.h
+│   │   ├── SessionManager.cpp
+│   │   ├── SessionManager.h
+│   │   ├── StreamRunner.cpp
+│   │   ├── StreamRunner.h
+│   │   ├── TransferController.cpp
+│   │   └── TransferController.h
+│   ├── core/
+│   │   ├── FrameCache.h
+│   │   ├── LogicalFrameBuilder.cpp
+│   │   ├── LogicalFrameBuilder.h
+│   │   ├── PacketPacer.h
+│   │   ├── RealtimeStream.cpp
+│   │   ├── RealtimeStream.h
+│   │   ├── SamplingClock.cpp
+│   │   ├── SamplingClock.h
+│   │   ├── Types.cpp
+│   │   └── Types.h
+│   ├── network/
+│   │   ├── IUdpTransport.h
+│   │   ├── NativeUdpTransport.cpp
+│   │   ├── NativeUdpTransport.h
+│   │   ├── QtUdpTransport.cpp
+│   │   └── QtUdpTransport.h
+│   ├── protocol/
+│   │   ├── Checksum.cpp
+│   │   ├── Checksum.h
+│   │   ├── PacketCodec.cpp
+│   │   ├── PacketCodec.h
+│   │   └── ProtocolTypes.h
+│   ├── support/
+│   │   ├── CliOptions.cpp
+│   │   └── CliOptions.h
+│   ├── ui/
+│   │   ├── ConfigPanel.cpp
+│   │   ├── ConfigPanel.h
+│   │   ├── FrameTableModel.cpp
+│   │   ├── FrameTableModel.h
+│   │   ├── MainWindow.cpp
+│   │   └── MainWindow.h
+│   ├── CMakeLists.txt
+│   ├── cli_main.cpp
+│   ├── main.cpp
+│   └── native_cli.cpp
+├── tests/
+│   ├── CMakeLists.txt
+│   ├── test_application.cpp
+│   └── test_core.cpp
+├── tools/
+│   ├── receiver_model.py
+│   ├── rt_protocol.py
+│   ├── run_e2e.py
+│   ├── test_protocol.py
+│   └── udp_feedback_stub.py
+├── .clang-format
+├── .gitignore
+├── CMakeLists.txt
+├── CMakePresets.json
+├── CMakeUserPresets.json.example
+└── README.md

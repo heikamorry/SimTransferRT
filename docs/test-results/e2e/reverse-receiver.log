@@ -1,0 +1,21 @@
+LISTEN 127.0.0.1:59023; NACK -> 127.0.0.1:46377; DATA/NACK only
+{
+  "datagrams": 345,
+  "invalid": 0,
+  "duplicate": 165,
+  "completed": 15,
+  "expired": 0,
+  "requested_fragments": 165,
+  "nack_packets": 15,
+  "recovered": 165,
+  "retry_flag": 165,
+  "metadata_failures": 0,
+  "module_failures": 0,
+  "total_bytes": 245760,
+  "max_requests_for_fragment": 1,
+  "active_evictions": 0,
+  "active_frames": 0,
+  "diagnostic_only": true,
+  "receiver_rendering_implemented": false,
+  "timing_note": "Python select loop is a functional test tool, NOT a microsecond timing oracle"
+}

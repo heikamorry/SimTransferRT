@@ -1,0 +1,474 @@
+#include "model/Model.h"
+#include "model/PreviewPanel.h"
+#include "protocol/V2PacketCodec.h"
+#include "ui/V2Window.h"
+#include <QApplication>
+#include <QComboBox>
+#include <QDir>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QLabel>
+#include <QOpenGLFunctions>
+#include <QOpenGLWidget>
+#include <QPushButton>
+#include <QSettings>
+#include <QSignalSpy>
+#include <QSpinBox>
+#include <QSplitter>
+#include <QSurfaceFormat>
+#include <QTabWidget>
+#include <QTableWidget>
+#include <QTemporaryDir>
+#include <QTest>
+#include <QTimer>
+#include <QUdpSocket>
+#include <QVTKOpenGLNativeWidget.h>
+#include <algorithm>
+#include <iostream>
+#ifdef Q_OS_WIN
+#include <QLibrary>
+#include <dxgi1_4.h>
+#include <psapi.h>
+#include <windows.h>
+#include <wrl/client.h>
+#else
+#include <sys/resource.h>
+#include <unistd.h>
+#endif
+using namespace rt::model;
+void expect(bool ok, const QString &txt) {
+    if (!ok)
+        throw std::runtime_error(txt.toUtf8().constData());
+}
+qint64 memory(bool peak) {
+#ifdef Q_OS_WIN
+    PROCESS_MEMORY_COUNTERS m{};
+    GetProcessMemoryInfo(GetCurrentProcess(), &m, sizeof m);
+    return peak ? m.PeakWorkingSetSize : m.WorkingSetSize;
+#else
+    if (peak) {
+        rusage r{};
+        getrusage(RUSAGE_SELF, &r);
+        return qint64(r.ru_maxrss) * 1024;
+    }
+    QFile f("/proc/self/statm");
+    if (!f.open(QIODevice::ReadOnly))
+        return 0;
+    return f.readAll().split(' ').value(1).toLongLong() * sysconf(_SC_PAGESIZE);
+#endif
+}
+QJsonArray gpuMemory() {
+    QJsonArray adapters;
+#ifdef Q_OS_WIN
+    using Microsoft::WRL::ComPtr;
+    static QLibrary dxgi("dxgi");
+    static const auto create =
+        reinterpret_cast<decltype(&CreateDXGIFactory1)>(dxgi.resolve("CreateDXGIFactory1"));
+    ComPtr<IDXGIFactory1> factory;
+    if (!create || FAILED(create(IID_PPV_ARGS(&factory))))
+        return adapters;
+    for (UINT i = 0;; ++i) {
+        ComPtr<IDXGIAdapter1> item;
+        if (factory->EnumAdapters1(i, &item) != S_OK)
+            break;
+        DXGI_ADAPTER_DESC1 desc{};
+        if (FAILED(item->GetDesc1(&desc)) || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
+            continue;
+        ComPtr<IDXGIAdapter3> adapter;
+        if (FAILED(item.As(&adapter)))
+            continue;
+        DXGI_QUERY_VIDEO_MEMORY_INFO local{}, shared{};
+        if (FAILED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local)) ||
+            FAILED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &shared)))
+            continue;
+        adapters.append(
+            QJsonObject{{"adapter", QString::fromWCharArray(desc.Description)},
+                        {"index", int(i)},
+                        {"luid", QString("%1:%2")
+                                     .arg(quint32(desc.AdapterLuid.HighPart), 8, 16, QChar('0'))
+                                     .arg(desc.AdapterLuid.LowPart, 8, 16, QChar('0'))},
+                        {"localBytes", qint64(local.CurrentUsage)},
+                        {"nonLocalBytes", qint64(shared.CurrentUsage)}});
+    }
+#endif
+    return adapters;
+}
+int main(int argc, char **argv) {
+    QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
+    QApplication app(argc, argv);
+    QTemporaryDir tmp;
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, tmp.path());
+    app.setOrganizationName("SimTransferRTTests");
+    app.setApplicationName("ModelGui");
+    try {
+        const auto args = app.arguments();
+        QString fixturePath = args.value(1);
+        if (fixturePath.isEmpty()) {
+            QDir executableDir(app.applicationDirPath());
+            for (const auto &relative : {"model-fixtures", "../tests/model-fixtures",
+                                         "tests/model-fixtures", "../model-fixtures"}) {
+                QDir candidate(executableDir.filePath(relative));
+                if (candidate.exists("ready.stamp")) {
+                    fixturePath = candidate.absolutePath();
+                    break;
+                }
+            }
+        }
+        if (fixturePath.isEmpty() || !QDir(fixturePath).exists("tools.bx")) {
+            std::cerr << "Model test fixtures could not be found.\n"
+                         "Usage: SimModelGuiTests [model-fixtures-directory [evidence-directory "
+                         "[large-model-file]]]\n";
+            return 2;
+        }
+        QDir files(fixturePath);
+        QDir evidence(args.value(2, tmp.path()));
+        expect(evidence.mkpath("."), "evidence directory");
+        rt::V2Window w;
+        w.resize(1380, 900);
+        w.show();
+        auto panel = w.findChild<PreviewPanel *>();
+        expect(panel, "panel");
+        auto tabs = w.findChild<QTabWidget *>();
+        for (int i = 0; i < tabs->count(); ++i)
+            if (tabs->widget(i)->isAncestorOf(panel))
+                tabs->setCurrentIndex(i);
+        auto split = w.findChild<QSplitter *>("localModelSplitter");
+        auto live = w.findChild<QTableWidget *>("v2NdiToolsTable");
+        expect(split && split->orientation() == Qt::Horizontal && split->widget(0) == live &&
+                   split->widget(1) == panel,
+               "splitter");
+        auto viewport = panel->findChild<QOpenGLWidget *>("modelViewport");
+        expect(viewport, "native OpenGL viewport");
+        QTest::qWait(150);
+        auto state = panel->findChild<QLabel *>("modelStatus");
+        auto info = panel->findChild<QLabel *>("modelInfo");
+        auto until = [&](auto predicate, int ms = 30000) {
+            QElapsedTimer timer;
+            timer.start();
+            while (!predicate() && timer.elapsed() < ms)
+                QTest::qWait(8);
+            expect(predicate(), "timeout " + state->text());
+        };
+        auto open = [&](QString path) {
+            QSignalSpy spy(panel, &PreviewPanel::fileTaskFinished);
+            panel->openFile(path);
+            until([&] { return !spy.isEmpty(); });
+            expect(spy[0][0].toBool(), state->text());
+        };
+        auto saveShot = [&](QString name) {
+            expect(w.grab().save(evidence.filePath(name)), "screenshot");
+        };
+        auto dark = viewport->grabFramebuffer();
+        expect(!dark.isNull(), "OpenGL readback");
+        QUdpSocket tx;
+        expect(tx.bind(QHostAddress::LocalHost, 0), "test port allocation");
+        const auto localPort = tx.localPort();
+        tx.close();
+        auto rx = w.findChild<QPushButton *>("v2Receive");
+        auto port = w.findChild<QSpinBox *>("v2ReceiverPort");
+        port->setValue(localPort);
+        QTest::mouseClick(rx, Qt::LeftButton);
+        until(
+            [&] {
+                return w.reportForExport()["receiver"].toObject()["receiver_port"].toInt() ==
+                       localPort;
+            },
+            5000);
+        rt::v2::Frame liveFrame;
+        liveFrame.bytes = rt::aurora::generateSample(2, 77);
+        auto sendLiveFrame = [&] {
+            ++liveFrame.frameId;
+            auto packet = rt::v2::encodeData(liveFrame, 0);
+            return tx.writeDatagram(reinterpret_cast<const char *>(packet.bytes.data()),
+                                    packet.size, QHostAddress::LocalHost,
+                                    localPort) == qint64(packet.size);
+        };
+        expect(sendLiveFrame(), "send BX test datagram");
+        QTimer liveTimer;
+        QObject::connect(&liveTimer, &QTimer::timeout, [&] { sendLiveFrame(); });
+        liveTimer.setTimerType(Qt::PreciseTimer);
+        liveTimer.start(4);
+        auto liveToolsIntact = [&] {
+            return live->rowCount() == 2 && live->item(0, 0)->text() == "1" &&
+                   live->item(1, 0)->text() == "2" && live->item(0, 6)->text() == "77";
+        };
+        until(liveToolsIntact, 5000);
+        liveTimer.stop();
+        QTest::qWait(150);
+        // A complete multi-frame BX object over V2 must use the same decoder.
+        auto bxFrame = [](std::uint32_t id, float x) {
+            rt::aurora::Reply reply;
+            rt::aurora::Tool tool;
+            tool.handle = 0x0A;
+            tool.status = rt::aurora::HandleStatus::Valid;
+            tool.quaternion = {1, 0, 0, 0};
+            tool.positionMm = {x, 0, 0};
+            tool.quality = 0;
+            tool.portStatus = 0x31;
+            tool.frameNumber = id;
+            reply.tools = {tool};
+            return rt::aurora::encodeBx(reply);
+        };
+        auto first = bxFrame(8, 1), second = bxFrame(16, 2), third = bxFrame(24, 3);
+        rt::v2::Frame object;
+        object.moduleId = 1;
+        object.bytes = first;
+        object.bytes.insert(object.bytes.end(), second.begin(), second.end());
+        object.bytes.insert(object.bytes.end(), third.begin(), third.end());
+        object.frameId = liveFrame.frameId + 1;
+        auto objectPacket = rt::v2::encodeData(object, 0);
+        QSignalSpy bxObject(panel, &PreviewPanel::bxObjectFinished);
+        expect(tx.writeDatagram(reinterpret_cast<const char *>(objectPacket.bytes.data()),
+                                objectPacket.size, QHostAddress::LocalHost,
+                                localPort) == qint64(objectPacket.size),
+               "send BX object");
+        until([&] {
+                  return !bxObject.isEmpty() && info->text().contains("网络接收") &&
+                         state->text().contains("3 点");
+              },
+              5000);
+        expect(live->rowCount() == 1 && live->item(0, 0)->text() == "10",
+               "last reply drives the live table");
+        QFile objectFile(tmp.filePath("network-object.bx"));
+        expect(objectFile.open(QIODevice::WriteOnly) &&
+                   objectFile.write(reinterpret_cast<const char *>(object.bytes.data()),
+                                    qsizetype(object.bytes.size())) ==
+                       qsizetype(object.bytes.size()),
+               "write received object");
+        objectFile.close();
+        QTest::mouseClick(rx, Qt::LeftButton);
+        until([&] { return port->isEnabled(); });
+        open(files.filePath("tools.bx"));
+        until([&] { return !panel->busy(); }, 5000);
+        auto table = panel->findChild<QTableWidget *>("localBxTools");
+        expect(!table->isVisible() && table->rowCount() == 0 && live->rowCount() == 1,
+               "BX isolation");
+        expect(info->text().contains("tools.bx") && info->text().contains("1 帧") &&
+                   info->text().contains("3 有效位置") && state->text().contains("3 点") &&
+                   state->text().contains("点云已显示"),
+               "BX point cloud display");
+        auto sizeBox = panel->findChild<QSpinBox *>("modelPointSize");
+        expect(sizeBox && sizeBox->value() == 8, "point size control");
+        auto smallPoints = viewport->grabFramebuffer();
+        sizeBox->setValue(12);
+        QTest::qWait(30);
+        expect(viewport->grabFramebuffer() != smallPoints, "point size applied");
+        sizeBox->setValue(8);
+        saveShot("local-bx.png");
+        until([&] { return !panel->busy(); }, 5000);
+        QSignalSpy bxArchiveSaved(panel, &PreviewPanel::fileTaskFinished);
+        panel->saveFile(tmp.filePath("tools-archive.h5"), tmp.path());
+        until([&] { return !bxArchiveSaved.isEmpty(); });
+        expect(bxArchiveSaved[0][0].toBool(), "BX archive write: " + state->text());
+        QSignalSpy bxArchiveOpened(panel, &PreviewPanel::fileTaskFinished);
+        panel->openFile(tmp.filePath("tools-archive.h5"));
+        until([&] { return !bxArchiveOpened.isEmpty(); });
+        expect(bxArchiveOpened[0][0].toBool() &&
+                   info->text().contains("tools-archive.h5") &&
+                   info->text().contains("3 有效位置"),
+               "BX archive readback: " + state->text());
+        QSignalSpy objectOpen(panel, &PreviewPanel::fileTaskFinished);
+        panel->openFile(objectFile.fileName());
+        until([&] { return !objectOpen.isEmpty(); });
+        expect(objectOpen[0][0].toBool() && info->text().contains("本地文件") &&
+                   info->text().contains("3 有效位置") && state->text().contains("3 点"),
+               "same BX bytes from a local file");
+        QSignalSpy changes(panel, &PreviewPanel::fileTaskFinished);
+        panel->openFile(files.filePath("tools.bx"));
+        panel->openFile(files.filePath("bad-index.ply"));
+        panel->openFile(files.filePath("surface.ply"));
+        until([&] { return !panel->busy(); });
+        expect(info->text().contains("surface.ply") && info->text().contains("metres"),
+               "latest generation");
+        QTest::qWait(100);
+        auto frame = viewport->grabFramebuffer();
+        int sky = 0, colored = 0;
+        for (int y = 0; y < frame.height(); y += 3)
+            for (int x = 0; x < frame.width(); x += 3) {
+                auto c = frame.pixelColor(x, y);
+                if (std::abs(c.red() - 183) < 4 && std::abs(c.green() - 213) < 4 &&
+                    std::abs(c.blue() - 234) < 4)
+                    ++sky;
+                else if (c.green() > 25 && c.green() < 190 && std::abs(c.red() - c.blue()) > 15)
+                    ++colored;
+            }
+        expect(sky > 40 && colored > 5,
+               QString("framebuffer sky=%1 color=%2").arg(sky).arg(colored));
+        saveShot("local-surface.png");
+        const auto selectors = panel->findChildren<QComboBox *>();
+        auto mode = std::find_if(selectors.begin(), selectors.end(),
+                                 [](auto combo) { return combo->findText("线框") >= 0; });
+        auto attribute = std::find_if(selectors.begin(), selectors.end(),
+                                      [](auto combo) { return combo->findText("原始颜色") >= 0; });
+        expect(mode != selectors.end() && attribute != selectors.end(), "display selectors");
+        (*mode)->setCurrentIndex((*mode)->findText("线框"));
+        expect(viewport->grabFramebuffer() != frame, "wireframe");
+        (*mode)->setCurrentIndex((*mode)->findText("点云"));
+        auto cloudFrame = viewport->grabFramebuffer();
+        expect(cloudFrame != frame, "point mode");
+        (*mode)->setCurrentIndex((*mode)->findText("表面"));
+        (*attribute)->setCurrentIndex(2);
+        expect(viewport->grabFramebuffer() != frame, "attribute pseudocolor");
+        (*attribute)->setCurrentIndex(0);
+        auto center = viewport->rect().center();
+        QTest::mousePress(viewport, Qt::LeftButton, {}, center);
+        QTest::mouseMove(viewport, center + QPoint(40, 25), 20);
+        QTest::mouseRelease(viewport, Qt::LeftButton, {}, center + QPoint(40, 25));
+        QTest::qWait(60);
+        expect(viewport->grabFramebuffer() != frame, "rotation");
+        auto rotated = viewport->grabFramebuffer();
+        QTest::mousePress(viewport, Qt::MiddleButton, {}, center);
+        QTest::mouseMove(viewport, center + QPoint(22, 16), 20);
+        QTest::mouseRelease(viewport, Qt::MiddleButton, {}, center + QPoint(22, 16));
+        QTest::qWait(40);
+        expect(viewport->grabFramebuffer() != rotated, "pan");
+        auto before = panel->cameraDistance();
+        QWheelEvent wheel(center, viewport->mapToGlobal(center), {}, QPoint(0, 120), Qt::NoButton,
+                          Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(viewport, &wheel);
+        QTest::qWait(30);
+        expect(panel->cameraDistance() != before, "zoom");
+        auto buttons = panel->findChildren<QPushButton *>();
+        auto reset = std::find_if(buttons.begin(), buttons.end(),
+                                  [](auto button) { return button->text() == "重置视图"; });
+        expect(reset != buttons.end(), "reset button");
+        QTest::mouseClick(*reset, Qt::LeftButton);
+        expect(viewport->grabFramebuffer() == frame, "reset view");
+        QSignalSpy failedOpen(panel, &PreviewPanel::fileTaskFinished);
+        panel->openFile(files.filePath("bad-index.ply"));
+        until([&] { return !failedOpen.isEmpty(); });
+        expect(!failedOpen[0][0].toBool() && state->text().contains("失败") &&
+                   info->text().contains("surface.ply"),
+               "bad model error and previous view");
+        until([&] { return !panel->busy(); }, 5000);
+        QSignalSpy exported(panel, &PreviewPanel::fileTaskFinished);
+        panel->saveFile(tmp.filePath("surface-export.bx"), tmp.path());
+        until([&] { return !exported.isEmpty(); });
+        expect(exported[0][0].toBool() &&
+                   QFileInfo(tmp.filePath("surface-export.bx")).size() == 4 * 53,
+               "model to BX export");
+        QSignalSpy exportedOpen(panel, &PreviewPanel::fileTaskFinished);
+        panel->openFile(tmp.filePath("surface-export.bx"));
+        until([&] { return !exportedOpen.isEmpty(); });
+        expect(exportedOpen[0][0].toBool() && info->text().contains("4 点") &&
+                   state->text().contains("点云已显示"),
+               "exported BX readback");
+        auto cancel = [&] {
+            QSignalSpy s(panel, &PreviewPanel::fileTaskFinished);
+            panel->openFile(files.filePath("cloud.ply"));
+            panel->cancel();
+            until([&] { return !s.isEmpty(); });
+            expect(!s[0][0].toBool(), "load cancellation");
+        };
+        cancel();
+        QSignalSpy saved(panel, &PreviewPanel::fileTaskFinished);
+        panel->saveFile(tmp.filePath("cancelled.vtp"), tmp.path());
+        panel->cancel();
+        until([&] { return !saved.isEmpty(); });
+        expect(!saved[0][0].toBool() && !QFileInfo::exists(tmp.filePath("cancelled.vtp")),
+               "conversion cancellation");
+        viewport->makeCurrent();
+        const auto gl = viewport->context()->functions();
+        const QString renderer =
+            QString::fromLatin1(reinterpret_cast<const char *>(gl->glGetString(GL_RENDERER)));
+        const QString vendor =
+            QString::fromLatin1(reinterpret_cast<const char *>(gl->glGetString(GL_VENDOR)));
+        viewport->doneCurrent();
+        QJsonObject result{{"platform", QGuiApplication::platformName()},
+                           {"skySamples", sky},
+                           {"coloredSamples", colored},
+                           {"GLRenderer", renderer},
+                           {"GLVendor", vendor}};
+        if (args.size() > 3) {
+            QString big = args[3];
+            QElapsedTimer parse;
+            parse.start();
+            {
+                auto source = load(big, {});
+                result["parseAndVerifyMs"] = parse.elapsed();
+                result["vertices"] = source->points(0);
+                result["cells"] = source->cells(0);
+                result["sourceSHA256"] = source->sourceHash;
+            }
+            QJsonArray cycles;
+            for (int i = 0; i < 3; ++i) {
+                panel->unload();
+                QTest::qWait(120);
+                qint64 idle = memory(false);
+                const auto gpuBefore = gpuMemory();
+                QTimer beat;
+                beat.setInterval(20);
+                QElapsedTimer gap, elapsed;
+                gap.start();
+                elapsed.start();
+                qint64 maxGap = 0;
+                int beats = 0;
+                QObject::connect(&beat, &QTimer::timeout, [&] {
+                    ++beats;
+                    maxGap = std::max(maxGap, gap.restart());
+                });
+                beat.start();
+                open(big);
+                QTest::qWait(10);
+                auto fb = viewport->grabFramebuffer();
+                qint64 drawn = elapsed.elapsed();
+                expect(!fb.isNull(), "large frame");
+                beat.stop();
+                maxGap = std::max(maxGap, gap.elapsed());
+                if (!i)
+                    saveShot("large-model.png");
+                QElapsedTimer drag;
+                drag.start();
+                QTest::mousePress(viewport, Qt::LeftButton, {}, center);
+                QTest::mouseMove(viewport, center + QPoint(18, 8), 10);
+                QTest::mouseRelease(viewport, Qt::LeftButton, {}, center + QPoint(18, 8));
+                const auto dragged = viewport->grabFramebuffer();
+                auto dragMs = drag.elapsed();
+                expect(dragged != fb, "large model rotated");
+                QJsonObject row{{"beforeBytes", idle},        {"displayBytes", memory(false)},
+                                {"gpuBefore", gpuBefore},     {"gpuDisplay", gpuMemory()},
+                                {"openToRenderMs", drawn},    {"peakWorkingSetBytes", memory(true)},
+                                {"heartbeatEvents", beats},   {"maxHeartbeatGapMs", maxGap},
+                                {"dragAndReadbackMs", dragMs}};
+                if (!i) {
+                    for (int tick = 0; tick < 5; ++tick)
+                        QApplication::sendEvent(viewport, &wheel);
+                    saveShot("large-detail.png");
+                    QElapsedTimer convertTime;
+                    convertTime.start();
+                    QSignalSpy completed(panel, &PreviewPanel::fileTaskFinished);
+                    panel->saveFile(tmp.filePath("gate.vtp"), tmp.path());
+                    until([&] { return !completed.isEmpty(); }, 420000);
+                    expect(completed[0][0].toBool(), state->text());
+                    row["convertVerifyArchiveMs"] = convertTime.elapsed();
+                    row["peakAfterConvertBytes"] = memory(true);
+                }
+                panel->unload();
+                QTest::qWait(200);
+                row["afterUnloadBytes"] = memory(false);
+                row["gpuAfterUnload"] = gpuMemory();
+                cycles.append(row);
+                std::cout << QJsonDocument(row).toJson(QJsonDocument::Compact).constData()
+                          << std::endl;
+            }
+            result["largeModel"] = QFileInfo(big).fileName();
+            result["sourceBytes"] = QFileInfo(big).size();
+            result["cycles"] = cycles;
+        }
+        QDir output(evidence);
+        QFile record(output.filePath("ui-measurements.json"));
+        expect(record.open(QIODevice::WriteOnly), "write metrics");
+        record.write(QJsonDocument(result).toJson());
+        record.close();
+        panel->openFile(files.filePath("surface.ply"));
+        w.close();
+        std::cout << "PASS native Qt/VTK integration and lifecycle" << std::endl;
+        return 0;
+    } catch (const std::exception &e) {
+        std::cerr << "FAIL " << e.what() << std::endl;
+        return 1;
+    }
+}

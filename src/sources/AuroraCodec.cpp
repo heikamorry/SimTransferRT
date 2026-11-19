@@ -40,6 +40,67 @@ Reply decodeBx(const std::uint8_t*p,std::size_t n){
     }
     if(off!=n-4)throw ProtocolError("Aurora BX unexpected trailing data");r.systemStatus=readLe16(p+off);return r;
 }
+
+void scanBxSequence(const std::uint8_t*p,std::size_t n,
+                    const std::function<void(const BxPosition&)>& onValid,
+                    BxScanStats& stats,Reply* lastReply){
+    if(!p&&n)throw ProtocolError("Aurora null BX buffer");
+    std::size_t off=0,lastOffset=0,lastLength=0;
+    while(off<n){
+        if(n-off<6)throw ProtocolError("Aurora truncated BX header at offset "+std::to_string(off));
+        if(readLe16(p+off)!=0xa5c4)throw ProtocolError("Aurora BX start mismatch at offset "+std::to_string(off));
+        const auto bodyLength=std::size_t(readLe16(p+off+2));
+        const auto length=bodyLength+8;
+        if(length<11||length>MaxBxReplyBytes||off+length>n)
+            throw ProtocolError("Aurora BX length mismatch at offset "+std::to_string(off));
+        if(crc16(p+off,4)!=readLe16(p+off+4))
+            throw ProtocolError("Aurora BX header CRC16 mismatch at offset "+std::to_string(off));
+        if(crc16(p+off+6,bodyLength)!=readLe16(p+off+length-2))
+            throw ProtocolError("Aurora BX body CRC16 mismatch at offset "+std::to_string(off));
+        const auto*body=p+off;const auto count=body[6];std::size_t at=7;std::array<bool,256> handles{};
+        const auto recordEnd=std::size_t(6)+bodyLength-2; // body minus the 2-byte SystemStatus
+        for(unsigned i=0;i<count;++i){
+            if(at+2>recordEnd)throw ProtocolError("Aurora truncated tool record at offset "+std::to_string(off+at));
+            Tool t;t.handle=body[at];t.status=static_cast<HandleStatus>(body[at+1]);
+            const auto size=recordSize(t.status);
+            if(at+size>recordEnd)throw ProtocolError("Aurora truncated tool body at offset "+std::to_string(off+at));
+            if(handles[t.handle])throw ProtocolError("Aurora duplicate handle at offset "+std::to_string(off+at));
+            handles[t.handle]=true;
+            if(t.status==HandleStatus::Valid){
+                for(unsigned k=0;k<4;++k)t.quaternion[k]=getFloat(body+at+2+4*k);
+                for(unsigned k=0;k<3;++k)t.positionMm[k]=getFloat(body+at+18+4*k);
+                t.quality=getFloat(body+at+30);t.portStatus=readLe32(body+at+34);t.frameNumber=readLe32(body+at+38);
+                validNumbers(t);
+                if(onValid)onValid({t.handle,t.positionMm,t.portStatus,t.frameNumber});
+                ++stats.valid;
+            }else if(t.status==HandleStatus::Missing)++stats.missing;
+            else ++stats.disabled;
+            at+=size;
+        }
+        if(at!=recordEnd)throw ProtocolError("Aurora BX unexpected trailing data at offset "+std::to_string(off+at));
+        ++stats.frames;lastOffset=off;lastLength=length;off+=length;
+    }
+    if(lastReply){
+        if(!stats.frames)throw ProtocolError("Aurora BX sequence is empty");
+        *lastReply=decodeBx(p+lastOffset,lastLength);
+    }
+}
+std::array<std::uint8_t,SingleToolBxSize> encodeSingleValidTool(
+    std::uint8_t handle,const std::array<float,3>& positionMm,std::uint32_t frameNumber,
+    std::uint32_t portStatus,const std::array<float,4>& quaternion,float indicator,
+    std::uint16_t systemStatus){
+    Tool tool;tool.handle=handle;tool.status=HandleStatus::Valid;tool.quaternion=quaternion;
+    tool.positionMm=positionMm;tool.quality=indicator;tool.portStatus=portStatus;tool.frameNumber=frameNumber;
+    validNumbers(tool);
+    std::array<std::uint8_t,SingleToolBxSize> b{};
+    auto*p=b.data();writeLe16(p,0xa5c4);writeLe16(p+2,45);writeLe16(p+4,crc16(p,4));
+    p[6]=1;p[7]=handle;p[8]=1;
+    for(unsigned k=0;k<4;++k)putFloat(p+9+4*k,quaternion[k]);
+    for(unsigned k=0;k<3;++k)putFloat(p+25+4*k,positionMm[k]);
+    putFloat(p+37,indicator);writeLe32(p+41,portStatus);writeLe32(p+45,frameNumber);
+    writeLe16(p+49,systemStatus);writeLe16(p+51,crc16(p+6,45));
+    return b;
+}
 Bytes encodeBx(const Reply&r){
     if(r.tools.size()>255)throw ProtocolError("Aurora handle count exceeds one byte");std::size_t n=11;std::set<std::uint8_t> handles;
     for(const auto&t:r.tools){n+=recordSize(t.status);if(!handles.insert(t.handle).second)throw ProtocolError("Aurora duplicate handle");if(t.status==HandleStatus::Valid)validNumbers(t);}

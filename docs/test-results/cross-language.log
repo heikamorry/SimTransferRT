@@ -1,2 +1,0 @@
-PASS: C++ DATA -> independent Python decode -> byte-identical encode
-5a a5 55 aa 33 00 01 00 78 56 34 12 0f 00 00 00 00 00 01 00 08 07 06 05 04 03 02 01 05 00 00 00 00 03 00 00 00 01 02 03 02 02 00 00 00 09 08 e5 1c fb 1e

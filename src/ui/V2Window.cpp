@@ -1,5 +1,9 @@
 #include "ui/V2Window.h"
+#ifdef SIM_MODEL_PREVIEW
+#include "model/PreviewPanel.h"
+#endif
 #include "ui/MainWindow.h"
+#include "ui/MedicalBackdrop.h"
 #include "v2/Runner.h"
 #include "v2/Receiver.h"
 #include "network/QtUdpTransport.h"
@@ -13,7 +17,9 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -198,17 +204,38 @@ struct V2Window::Impl {
     std::mutex receiverMutex;
     std::optional<ReceiverUpdate> receiverLatest,presentedUpdate;
     QString receiverError;
+#ifdef SIM_MODEL_PREVIEW
+    model::PreviewPanel* preview=nullptr;
+#endif
 };
 V2Window::V2Window(QWidget* parent):QMainWindow(parent),p_(std::make_unique<Impl>()) {
     setWindowTitle(QStringLiteral("SimTransfer RT · V2 多模块传输"));resize(1350,900);setMinimumSize(1020,720);
-    auto* root=new QWidget;setCentralWidget(root);auto* layout=new QVBoxLayout(root);
-    auto* head=new QHBoxLayout;auto* title=new QLabel(QStringLiteral("SimTransfer · V2 / 方案 B"));title->setObjectName("brand");head->addWidget(title);head->addStretch();
-    auto* legacy=new QPushButton(QStringLiteral("打开原 V1 版本"));legacy->setObjectName("v1WindowButton");head->addWidget(legacy);layout->addLayout(head);
+    auto* root=new ui::MedicalBackdrop;setCentralWidget(root);auto* layout=new QVBoxLayout(root);
+    layout->setContentsMargins(18,14,18,14);layout->setSpacing(10);
+    auto* header=new QFrame;header->setObjectName("headerCard");auto* hl=new QHBoxLayout(header);hl->setContentsMargins(16,10,16,10);hl->setSpacing(12);
+    auto* mark=new QLabel;mark->setPixmap(ui::medicalMark(40));mark->setFixedSize(40,40);hl->addWidget(mark);
+    auto* titles=new QVBoxLayout;titles->setSpacing(1);
+    auto* title=new QLabel(QStringLiteral("SimTransfer RT · V2"));title->setObjectName("brand");titles->addWidget(title);
+    auto* subtitle=new QLabel(QStringLiteral("多模块 UDP 传输模拟器 · 医疗设备数据链路验证台"));subtitle->setObjectName("subtitle");titles->addWidget(subtitle);
+    hl->addLayout(titles);hl->addStretch();
+    auto* badge=new QLabel(QStringLiteral("模拟数据 · 非临床用途"));badge->setObjectName("badge");hl->addWidget(badge);
+    auto* legacy=new QPushButton(QStringLiteral("打开原 V1 版本"));legacy->setObjectName("ghostButton");hl->addWidget(legacy);layout->addWidget(header);
     connect(legacy,&QPushButton::clicked,this,[this] {auto* w=new MainWindow;w->setAttribute(Qt::WA_DeleteOnClose);w->show();p_->log->appendPlainText(QStringLiteral("已打开独立 V1 窗口，请为并行运行选择不同端口。"));});
-    auto* scope=new QLabel(QStringLiteral("独立采集准备 → 有界队列 → 统一发送。当前可验证模拟 / 回放输入；真实设备采样、共同硬件时钟和物理出线需另行验证。"));scope->setWordWrap(true);layout->addWidget(scope);
+    auto* scope=new QLabel(QStringLiteral("独立采集准备 → 有界队列 → 统一发送。当前可验证模拟 / 回放输入；真实设备采样、共同硬件时钟和物理出线需另行验证。"));scope->setObjectName("hint");scope->setWordWrap(true);layout->addWidget(scope);
     auto* tabs=new QTabWidget;layout->addWidget(tabs,1);
-    auto* sendPage=new QWidget;auto* sendLayout=new QVBoxLayout(sendPage);tabs->addTab(sendPage,QStringLiteral("发送与网络"));
-    p_->configBox=new QWidget;auto* grid=new QHBoxLayout(p_->configBox);auto* left=new QFormLayout;auto* right=new QFormLayout;grid->addLayout(left);grid->addLayout(right);sendLayout->addWidget(p_->configBox);
+    auto* sendPage=new QWidget;auto* sendLayout=new QVBoxLayout(sendPage);sendLayout->setContentsMargins(0,8,0,0);sendLayout->setSpacing(9);tabs->addTab(sendPage,QStringLiteral("发送与网络"));
+    p_->configBox=new QFrame;p_->configBox->setObjectName("card");auto* grid=new QHBoxLayout(p_->configBox);grid->setContentsMargins(16,12,16,12);grid->setSpacing(26);auto* left=new QFormLayout;auto* right=new QFormLayout;left->setSpacing(7);right->setSpacing(7);grid->addLayout(left);grid->addLayout(right);
+    auto* targets=new QVBoxLayout;targets->setSpacing(6);auto* targetsTitle=new QLabel(QStringLiteral("验收目标"));targetsTitle->setObjectName("sectionTitle");targets->addWidget(targetsTitle);
+    auto chip=[](const QString& value,const QString& caption) {
+        auto* box=new QFrame;box->setObjectName("chip");auto* row=new QHBoxLayout(box);row->setContentsMargins(12,7,14,7);row->setSpacing(9);
+        auto* v=new QLabel(value);v->setObjectName("chipValue");row->addWidget(v);
+        auto* c=new QLabel(caption);c->setObjectName("chipLabel");c->setWordWrap(true);row->addWidget(c,1);return box;};
+    targets->addWidget(chip(QStringLiteral("≤ 15 ms"),QStringLiteral("NDI 采样到完整首发")));
+    targets->addWidget(chip(QStringLiteral("≤ 18 ms"),QStringLiteral("电生理采样到完整首发")));
+    targets->addWidget(chip(QStringLiteral("< 1 ms"),QStringLiteral("采样与包间隔抖动")));
+    targets->addStretch(1);
+    auto* targetNote=new QLabel(QStringLiteral("计时为 Windows 用户态观测；真实网卡出线时刻需独立验证。"));targetNote->setObjectName("muted");targetNote->setWordWrap(true);targets->addWidget(targetNote);
+    grid->addLayout(targets,1);sendLayout->addWidget(p_->configBox);
     p_->profile=new QComboBox;p_->profile->setObjectName("v2NetworkProfile");p_->profile->addItem(QStringLiteral("100Mbps（备选）"),100);p_->profile->addItem(QStringLiteral("1GbE（推荐）"),1000);p_->profile->addItem(QStringLiteral("2.5GbE（备选）"),2500);left->addRow(QStringLiteral("网络档位"),p_->profile);
     auto line=[](const QString& value,const char* name) {auto* v=new QLineEdit(value);v->setObjectName(name);return v;};
     auto spin=[](int lo,int hi,int value,const char* name) {auto* s=new QSpinBox;s->setRange(lo,hi);s->setValue(value);s->setObjectName(name);return s;};
@@ -227,24 +254,59 @@ V2Window::V2Window(QWidget* parent):QMainWindow(parent),p_(std::make_unique<Impl
     p_->epFile=line({},"v2EpReplay");auto* epBrowse=new QPushButton(QStringLiteral("选择数据"));auto* er=new QHBoxLayout;er->addWidget(p_->epFile);er->addWidget(epBrowse);right->addRow(QStringLiteral("电生理回放（空为模拟）"),er);
     p_->overload=new QCheckBox(QStringLiteral("显式过载测试（容量不足仍运行，验收不放宽）"));right->addRow(p_->overload);
     p_->budget=new QLabel;p_->budget->setObjectName("v2Budget");p_->budget->setWordWrap(true);sendLayout->addWidget(p_->budget);
-    auto* actions=new QHBoxLayout;p_->start=new QPushButton(QStringLiteral("开始 V2 发送"));p_->start->setObjectName("v2Start");p_->stop=new QPushButton(QStringLiteral("停止"));p_->stop->setObjectName("v2Stop");p_->stop->setEnabled(false);actions->addWidget(p_->start);actions->addWidget(p_->stop);p_->runState=new QLabel(QStringLiteral("就绪"));actions->addWidget(p_->runState);actions->addStretch();sendLayout->addLayout(actions);
+    auto* actions=new QHBoxLayout;p_->start=new QPushButton(QStringLiteral("开始 V2 发送"));p_->start->setObjectName("v2Start");p_->start->setMinimumSize(148,36);p_->stop=new QPushButton(QStringLiteral("停止"));p_->stop->setMinimumHeight(36);p_->stop->setObjectName("v2Stop");p_->stop->setEnabled(false);actions->addWidget(p_->start);actions->addWidget(p_->stop);p_->runState=new QLabel(QStringLiteral("就绪"));actions->addWidget(p_->runState);actions->addStretch();sendLayout->addLayout(actions);
     auto* statusRow=new QHBoxLayout;p_->statusBody=line(QStringLiteral("ready"),"v2StatusBody");p_->statusBody->setMaxLength(1444);p_->post=new QPushButton(QStringLiteral("发送完整状态快照"));p_->post->setEnabled(false);statusRow->addWidget(p_->statusBody);statusRow->addWidget(p_->post);sendLayout->addLayout(statusRow);
     p_->senderStats=table({QStringLiteral("模块"),QStringLiteral("已构建"),QStringLiteral("完整首发"),QStringLiteral("跳采"),QStringLiteral("首发超期"),QStringLiteral("补发包"),QStringLiteral("首发最大耗时 μs")},"v2SenderStats");sendLayout->addWidget(p_->senderStats,1);
-    auto* receivePage=new QWidget;auto* rl=new QVBoxLayout(receivePage);tabs->addTab(receivePage,QStringLiteral("接收与显示"));auto* rxControls=new QHBoxLayout;p_->receiverBind=line("127.0.0.1","v2ReceiverBind");p_->receiverPort=spin(1,65535,5650,"v2ReceiverPort");p_->receive=new QPushButton(QStringLiteral("启动接收"));p_->receive->setObjectName("v2Receive");rxControls->addWidget(new QLabel(QStringLiteral("绑定地址")));rxControls->addWidget(p_->receiverBind);rxControls->addWidget(p_->receiverPort);rxControls->addWidget(p_->receive);rl->addLayout(rxControls);
-    p_->receiveState=new QLabel(QStringLiteral("接收未启动。重启会清空本地会话；请与发送端协调并换用新端口隔离旧报文。"));p_->receiveState->setWordWrap(true);rl->addWidget(p_->receiveState);
-    p_->toolsTable=table({QStringLiteral("工具"),QStringLiteral("有效性"),QStringLiteral("位置 x/y/z（mm）"),QStringLiteral("四元数 w/x/y/z"),QStringLiteral("质量指标"),QStringLiteral("端口状态"),QStringLiteral("设备帧号")},"v2NdiToolsTable");rl->addWidget(p_->toolsTable,1);
+    auto* receivePage=new QWidget;auto* rl=new QVBoxLayout(receivePage);rl->setContentsMargins(0,8,0,0);rl->setSpacing(8);tabs->addTab(receivePage,QStringLiteral("接收与显示"));auto* rxControls=new QHBoxLayout;rxControls->setSpacing(8);p_->receiverBind=line("127.0.0.1","v2ReceiverBind");p_->receiverPort=spin(1,65535,5650,"v2ReceiverPort");p_->receive=new QPushButton(QStringLiteral("启动接收"));p_->receive->setObjectName("v2Receive");rxControls->addWidget(new QLabel(QStringLiteral("绑定地址")));rxControls->addWidget(p_->receiverBind,1);rxControls->addWidget(p_->receiverPort);rxControls->addWidget(p_->receive);rl->addLayout(rxControls);
+    p_->receiveState=new QLabel(QStringLiteral("接收未启动。重启会清空本地会话；请与发送端协调并换用新端口隔离旧报文。"));p_->receiveState->setObjectName("muted");p_->receiveState->setWordWrap(true);rl->addWidget(p_->receiveState);
+    p_->toolsTable=table({QStringLiteral("工具"),QStringLiteral("有效性"),QStringLiteral("位置 x/y/z（mm）"),QStringLiteral("四元数 w/x/y/z"),QStringLiteral("质量指标"),QStringLiteral("端口状态"),QStringLiteral("设备帧号")},"v2NdiToolsTable");
+#ifdef SIM_MODEL_PREVIEW
+    auto* models = new QSplitter(Qt::Horizontal, receivePage);
+    models->setObjectName("localModelSplitter");
+    models->setChildrenCollapsible(false);
+    p_->toolsTable->setMinimumWidth(220);
+    p_->toolsTable->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    p_->toolsTable->horizontalHeader()->setStretchLastSection(false);
+    models->addWidget(p_->toolsTable);
+    p_->preview=new model::PreviewPanel(models);
+    models->addWidget(p_->preview);
+    connect(p_->preview,&model::PreviewPanel::bxObjectFinished,this,[this](bool ok,const QString& detail) {
+        p_->log->appendPlainText(ok?QStringLiteral("BX 解码完成，点云已显示：")+detail
+                                   :QStringLiteral("传输完成，但 BX 预览未完成：")+detail);
+    });
+    models->setStretchFactor(0, 2);
+    models->setStretchFactor(1, 3);
+    models->setSizes({430, 750});
+    models->restoreState(settings.value("models/splitter").toByteArray());
+    connect(models, &QSplitter::splitterMoved, models, [models] {
+        QSettings().setValue("models/splitter", models->saveState());
+    });
+    rl->addWidget(models, 1);
+#else
+    rl->addWidget(p_->toolsTable,1);
+#endif
     // Live coordinates change every frame. Content-based sizing repeatedly measures every tool.
     p_->toolsTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     const std::array<int,7> toolColumnWidths{80,110,300,340,110,110,120};
     for(int i=0;i<static_cast<int>(toolColumnWidths.size());++i)p_->toolsTable->setColumnWidth(i,toolColumnWidths[i]);
-    p_->epState=new QLabel(QStringLiteral("电生理尚未收到"));p_->epState->setObjectName("v2EpState");rl->addWidget(p_->epState);p_->wave=new WaveView;rl->addWidget(p_->wave);
-    p_->statusState=new QLabel(QStringLiteral("状态尚未收到"));p_->statusState->setObjectName("v2StatusState");p_->statusState->setWordWrap(true);rl->addWidget(p_->statusState);p_->association=new QLabel(QStringLiteral("共同硬件时间域未验证；匹配仅作模拟/回放观察"));p_->association->setWordWrap(true);rl->addWidget(p_->association);
-    auto* reportPage=new QWidget;auto* reportLayout=new QVBoxLayout(reportPage);tabs->addTab(reportPage,QStringLiteral("逐项验收"));auto* reportActions=new QHBoxLayout;auto* exp=new QPushButton(QStringLiteral("导出当前收发报告"));auto* archives=new QPushButton(QStringLiteral("打开每轮运行档案"));reportActions->addWidget(exp);reportActions->addWidget(archives);reportActions->addStretch();reportLayout->addLayout(reportActions);p_->acceptance=table({QStringLiteral("要求"),QStringLiteral("测量口径"),QStringLiteral("阈值"),QStringLiteral("实测值"),QStringLiteral("结果"),QStringLiteral("原因")},"v2Acceptance");reportLayout->addWidget(p_->acceptance,1);
+    p_->epState=new QLabel(QStringLiteral("电生理尚未收到"));p_->epState->setObjectName("v2EpState");p_->epState->setWordWrap(true);p_->epState->setMinimumWidth(250);
+    p_->wave=new WaveView;p_->wave->setMinimumHeight(56);p_->wave->setMaximumHeight(68);
+    auto* waveCard=new QFrame;waveCard->setObjectName("card");auto* waveLayout=new QHBoxLayout(waveCard);waveLayout->setContentsMargins(12,7,12,8);waveLayout->setSpacing(12);
+    auto* waveHead=new QVBoxLayout;waveHead->setSpacing(1);auto* waveTitle=new QLabel(QStringLiteral("电生理字节预览"));waveTitle->setObjectName("sectionTitle");waveHead->addWidget(waveTitle);waveHead->addWidget(p_->epState,1);
+    waveLayout->addLayout(waveHead,2);waveLayout->addWidget(p_->wave,3);rl->addWidget(waveCard);
+    p_->statusState=new QLabel(QStringLiteral("状态尚未收到"));p_->statusState->setObjectName("v2StatusState");p_->statusState->setWordWrap(true);
+    p_->association=new QLabel(QStringLiteral("共同硬件时间域未验证；匹配仅作模拟/回放观察"));p_->association->setObjectName("muted");p_->association->setWordWrap(true);
+    auto* rxStatusRow=new QHBoxLayout;rxStatusRow->setSpacing(12);rxStatusRow->addWidget(p_->statusState,1);rxStatusRow->addWidget(p_->association,1);rl->addLayout(rxStatusRow);
+    auto* reportPage=new QWidget;auto* reportLayout=new QVBoxLayout(reportPage);reportLayout->setContentsMargins(0,8,0,0);reportLayout->setSpacing(8);tabs->addTab(reportPage,QStringLiteral("逐项验收"));auto* reportActions=new QHBoxLayout;reportActions->setSpacing(8);auto* exp=new QPushButton(QStringLiteral("导出当前收发报告"));exp->setObjectName("primary");auto* archives=new QPushButton(QStringLiteral("打开每轮运行档案"));reportActions->addWidget(exp);reportActions->addWidget(archives);reportActions->addStretch();reportLayout->addLayout(reportActions);p_->acceptance=table({QStringLiteral("要求"),QStringLiteral("测量口径"),QStringLiteral("阈值"),QStringLiteral("实测值"),QStringLiteral("结果"),QStringLiteral("原因")},"v2Acceptance");reportLayout->addWidget(p_->acceptance,1);
     connect(tabs,&QTabWidget::currentChanged,this,[this,tabs,reportPage] {
         if(tabs->currentWidget()==reportPage)p_->acceptance->resizeRowsToContents();
     });
     connect(archives,&QPushButton::clicked,this,[] {const auto directory=QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)+"/v2-runs";QDir().mkpath(directory);QDesktopServices::openUrl(QUrl::fromLocalFile(directory));});
-    p_->log=new QPlainTextEdit;p_->log->setReadOnly(true);p_->log->setMaximumBlockCount(300);p_->log->setMaximumHeight(130);layout->addWidget(p_->log);
+    auto* logCard=new QFrame;logCard->setObjectName("card");auto* logLayout=new QVBoxLayout(logCard);logLayout->setContentsMargins(12,8,12,10);logLayout->setSpacing(4);
+    auto* logHead=new QHBoxLayout;auto* logTitle=new QLabel(QStringLiteral("运行日志"));logTitle->setObjectName("sectionTitle");logHead->addWidget(logTitle);logHead->addStretch();
+    auto* clearLog=new QPushButton(QStringLiteral("清空"));clearLog->setObjectName("ghost");clearLog->setCursor(Qt::PointingHandCursor);logHead->addWidget(clearLog);logLayout->addLayout(logHead);
+    p_->log=new QPlainTextEdit;p_->log->setReadOnly(true);p_->log->setMaximumBlockCount(300);p_->log->setFixedHeight(72);logLayout->addWidget(p_->log);layout->addWidget(logCard);
+    connect(clearLog,&QPushButton::clicked,p_->log,&QPlainTextEdit::clear);
     int index=p_->profile->findData(settings.value("v2/networkMbps",1000).toUInt());if(index<0) {index=1;p_->log->appendPlainText(QStringLiteral("保存的网络档位无效，已恢复为 1GbE。"));}p_->profile->setCurrentIndex(index);
     connect(p_->profile,&QComboBox::currentIndexChanged,this,[this] {QSettings().setValue("v2/networkMbps",p_->profile->currentData());updateBudget();});
     for(auto* s:{p_->epBytes,p_->tools,p_->pathLimit})connect(s,&QSpinBox::valueChanged,this,[this] {updateBudget();});
@@ -262,7 +324,15 @@ v2::Config V2Window::selectedConfig() const {
 }
 void V2Window::setSenderControlsLocked(bool locked) {p_->configBox->setEnabled(!locked);p_->start->setEnabled(!locked);p_->stop->setEnabled(locked);p_->post->setEnabled(locked);}
 void V2Window::updateBudget() {
-    try {const auto c=selectedConfig();const auto ndiSize=p_->ndiFile->text().isEmpty()?0:QFileInfo(p_->ndiFile->text()).size();const auto epSize=p_->epFile->text().isEmpty()?0:QFileInfo(p_->epFile->text()).size();const auto b=v2::preflight(c,static_cast<std::size_t>(ndiSize),static_cast<std::size_t>(epSize));p_->budget->setText(QStringLiteral("所选 %1 Mbps；本机连接速率在启动时检测；有效预算 %2 Mbps。理论线路占用 %3%；NDI %4 字节 / 电生理 %5 字节；同相出线下限 %6 ms。%7\n这只是容量预检；NDI ≤15ms、电生理 ≤18ms，附加抖动目标 <1ms 保持不变。").arg(c.linkMbps).arg(b.effectiveMbps).arg(b.utilization*100,0,'f',3).arg(b.ndiBytes).arg(b.epBytes).arg(b.synchronousWireUs/1000,0,'f',3).arg(QString::fromStdString(b.reason)));}
+    try {
+        const auto c=selectedConfig();
+        const auto ndiSize=p_->ndiFile->text().isEmpty()?0:QFileInfo(p_->ndiFile->text()).size();
+        const auto epSize=p_->epFile->text().isEmpty()?0:QFileInfo(p_->epFile->text()).size();
+        const auto b=v2::preflight(c,static_cast<std::size_t>(ndiSize),static_cast<std::size_t>(epSize));
+        const auto verdict=b.feasible?QStringLiteral("容量预检通过；主机停顿、状态突发、设备时序和物理出线仍需独立验证。"):QStringLiteral("容量预检未通过：声明负载超过平均容量或 15/18 ms 最小串行化预算。");
+        p_->budget->setText(QStringLiteral("所选 %1 Mbps；本机连接速率在启动时检测；有效预算 %2 Mbps。理论线路占用 %3%；NDI %4 字节 / 电生理 %5 字节；同相出线下限 %6 ms。\n%7 NDI ≤15ms、电生理 ≤18ms，附加抖动目标 <1ms 保持不变。").arg(c.linkMbps).arg(b.effectiveMbps).arg(b.utilization*100,0,'f',3).arg(b.ndiBytes).arg(b.epBytes).arg(b.synchronousWireUs/1000,0,'f',3).arg(verdict));
+        p_->budget->setToolTip(QString::fromStdString(b.reason));
+    }
     catch(const std::exception& e) {p_->budget->setText(QString::fromUtf8(e.what()));}
 }
 void V2Window::startSending() {
@@ -306,7 +376,7 @@ void V2Window::presentSenderReport(const QJsonObject& report) {
     }
     p_->senderReport=report;const auto modules=report["modules"].toObject();p_->senderStats->setRowCount(2);
     const auto config=report["config"].toObject();const auto link=report["link_observation"].toObject();
-    if(!config.isEmpty())p_->budget->setText(QStringLiteral("所选档位 %1；本机检测速率 %2 Mbps；有效调度预算 %3 Mbps；已知路径上限 %4 Mbps（0 为未知）。\n%5\nNDI ≤15ms、电生理 ≤18ms；附加抖动目标 <1ms。链路能力与实际出线时序分别验收。").arg(text(config["network_profile"]),text(link["local_link_mbps"]),text(config["effective_link_mbps"]),text(config["path_limit_mbps"]),link["loopback"].toBool()?QStringLiteral("当前是本机环回，真实网口与物理出线未检测。"):text(link["reason"])));
+    if(!config.isEmpty())p_->budget->setText(QStringLiteral("所选档位 %1；本机检测速率 %2 Mbps；有效调度预算 %3 Mbps；已知路径上限 %4 Mbps（0 为未知）。\n%5\nNDI ≤15ms、电生理 ≤18ms；附加抖动目标 <1ms。链路能力与实际出线时序分别验收。").arg(text(config["network_profile"]),text(link["local_link_mbps"]),text(config["effective_link_mbps"]),text(config["path_limit_mbps"]),link["loopback"].toBool()?QStringLiteral("当前是本机环回，真实网口与物理出线未检测。"):QStringLiteral("已观测到非环回路由；物理出线时刻仍需独立验证。")));
     for(int i=0;i<2;++i) {const auto m=modules[QString::number(i+1)].toObject();cell(p_->senderStats,i,0,i?QStringLiteral("电生理"):QStringLiteral("NDI"));int col=1;for(const auto* key:{"built","initial_complete","skipped_slots","deadline_misses","retransmissions"})cell(p_->senderStats,i,col++,text(m[key]));cell(p_->senderStats,i,6,text(m["initial_duration"].toObject()["max_us"]));}
     const auto rows=report["acceptance"].toArray();p_->acceptance->setRowCount(rows.size());int row=0;
     for(const auto& value:rows) {const auto r=value.toObject();int col=0;for(const auto* key:{"requirement","measurement","threshold","measured"})cell(p_->acceptance,row,col++,text(r[key]));cell(p_->acceptance,row,4,verdict(r["status"].toString()));cell(p_->acceptance,row,5,text(r["reason"]));++row;}
@@ -363,7 +433,12 @@ void V2Window::refresh() {
     const auto now=monotonicUs();
     if(p_->sending && (now-p_->lastSenderPollUs>=100000 || !p_->session.busy())) {p_->lastSenderPollUs=now;auto result=p_->session.snapshot();if(!result.reportJson.empty())presentSenderReport(QJsonDocument::fromJson(QByteArray::fromStdString(result.reportJson)).object());if(!p_->session.busy()) {result=p_->session.wait();if(!result.reportJson.empty())presentSenderReport(QJsonDocument::fromJson(QByteArray::fromStdString(result.reportJson)).object());p_->nextNdi=result.nextNdiId;p_->nextEp=result.nextEpId;p_->nextStatus=result.nextStatusSequence;p_->sending=false;p_->archivePending=true;p_->archiveDueUs=now+200000;setSenderControlsLocked(false);p_->runState->setText(result.success?QStringLiteral("已停止，正在整理本轮报告"):QStringLiteral("已停止，请查看错误及验收"));if(!result.error.empty())p_->log->appendPlainText(QString::fromStdString(result.error));}}
     refreshReceiver();
-    if(!p_->receiverRunning && p_->receiverWorker.joinable()) {p_->receiverWorker.join();refreshReceiver();p_->receive->setText(QStringLiteral("启动接收"));p_->receive->setEnabled(true);p_->receiverBind->setEnabled(true);p_->receiverPort->setEnabled(true);}
+    if(!p_->receiverRunning && p_->receiverWorker.joinable()) {
+        p_->receiverWorker.join();refreshReceiver();
+        p_->receive->setText(QStringLiteral("启动接收"));p_->receive->setEnabled(true);p_->receiverBind->setEnabled(true);p_->receiverPort->setEnabled(true);
+        if(!p_->receiveState->text().startsWith(QStringLiteral("接收停止")))
+            p_->receiveState->setText(QStringLiteral("接收已停止。重启会清空本地会话；请与发送端协调并换用新端口隔离旧报文。"));
+    }
     if(p_->archivePending && monotonicUs()>=p_->archiveDueUs)archiveRun();
 }
 void V2Window::refreshReceiver() {
@@ -453,7 +528,13 @@ QJsonObject V2Window::reportForExport() const {
     }
     out["acceptance"]=rows;out["joint_scope"]=QJsonObject{{"eligible",eligible},{"receiver_generation",static_cast<qint64>(p_->receiverGeneration)},{"baseline_generation",static_cast<qint64>(p_->baselineGeneration)},{"baseline_run_id",p_->baselineRun},{"expected_source_endpoint",expectedEndpoint}};return out;
 }
-void V2Window::closeEvent(QCloseEvent* event) {p_->session.stop();p_->receiverStop=true;event->accept();}
+void V2Window::closeEvent(QCloseEvent* event) {
+    p_->session.stop();p_->receiverStop=true;
+#ifdef SIM_MODEL_PREVIEW
+    if(p_->preview)p_->preview->stop();
+#endif
+    event->accept();
+}
 void V2Window::toggleReceiver() {
     if(p_->receiverRunning) {p_->receiverStop=true;p_->receive->setEnabled(false);p_->receiveState->setText(QStringLiteral("正在停止接收…"));return;}
     if(p_->receiverWorker.joinable())p_->receiverWorker.join();
@@ -483,6 +564,23 @@ void V2Window::toggleReceiver() {
             if(!socket.bind(address,port,QUdpSocket::DontShareAddress))throw std::runtime_error(socket.errorString().toStdString());
             socket.setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,4*1024*1024);
             v2::Receiver receiver(true,[] {return monotonicUs();});
+#ifdef SIM_MODEL_PREVIEW
+            if(p_->preview) {
+                receiver.setFrameConsumer([this,generation](const v2::Frame& frame,std::uint64_t completed) {
+                    if(frame.moduleId!=1 || p_->receiverGeneration!=generation)return;
+                    // The preview panel keeps at most one pending object and
+                    // replaces it, so transport completion is never blocked.
+                    auto bytes=QByteArray(reinterpret_cast<const char*>(frame.bytes.data()),
+                                          qsizetype(frame.bytes.size()));
+                    const auto id=frame.frameId;const auto size=frame.bytes.size();
+                    QMetaObject::invokeMethod(this,[this,generation,bytes=std::move(bytes),id,size,completed] {
+                        if(p_->receiverGeneration!=generation)return;
+                        p_->log->appendPlainText(QStringLiteral("NDI 对象 #%1 传输完成（%2 字节，主机完成 %3 μs），提交 BX 解码。").arg(id).arg(size).arg(completed));
+                        if(p_->preview)p_->preview->showBxObject(bytes,QStringLiteral("网络接收 · NDI 帧 #%1").arg(id));
+                    },Qt::QueuedConnection);
+                });
+            }
+#endif
             QHostAddress peer;quint16 peerPort=0;bool pinned=false;
             std::uint64_t rejectedSources=0,feedbackErrors=0,nextPublish=0;
             const auto bindAddress=address.toString();

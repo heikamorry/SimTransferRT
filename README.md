@@ -12,6 +12,10 @@ SimTransferRT 是用 C++17 和 Qt 6 编写的多模块 UDP 传输模拟器。本
 
 本分支 `mid-term` 减少了旧帧发送分片时的逐包开销。两次 30 分钟、1 MiB EP 与 4 工具 NDI 的双路回环中，EP 就绪至首片的最大等待从 11.228 ms 降至 5.271 ms。两路的首发超期、P99.9、最大抖动、跳采、接收完整率和 Windows 调度测点见[帧移交诊断与本轮优化对比](docs/V2_HANDOFF_LATENCY.md)。
 
+V2 的“接收与显示”页可打开本地 PLY、VTP、legacy VTK POLYDATA、Aurora BX 帧序列和本程序的 HDF5 过程档案。模型可单向导出为标准 Aurora BX 帧序列：每个顶点一帧，坐标换算为毫米，帧号从 8 起每帧加 8；颜色、面连接、纹理和法向不写入 BX。BX 只做严格校验、解码和点云预览，不反向导出 PLY/VTP/VTK，也不恢复原模型属性。右侧预览支持旋转、缩放、属性切换、点大小调整和经过逐帧回读校验的转换。分发版从 `dist\model-preview\bin\SimTransfer.exe` 启动。参见[操作与报错](docs/MODEL_PREVIEW.md)、[格式能力矩阵](docs/MODEL_FORMATS.md)、[HDF5 数据布局](docs/MODEL_ARCHIVE.md)及[Windows 构建与验证结果](docs/MODEL_VERIFICATION.md)。
+
+V2 与 V1 窗口共用医疗数据链路主题：浅色临床渐变、阿斯克勒庇俄斯之杖水印和心电图基线；EXE、任务栏与窗口图标使用同一单蛇绕杖图形（`resources/app.ico`，由 `tools/make_app_icon.py` 生成）。右侧预览以“打开”为主操作，模型、BX 帧序列与过程档案入口集中在同一菜单；转换、取消和重置视图按主次排布，窄窗口下优先保证表格与三维视口可见。
+
 ## 1. 数据路径与 C++ 技术栈
 
 V2 的 NDI 定位数据（模块 1）和电生理数据 EP（模块 2）独立成帧，分别持有帧号、采样时间戳与重传缓存。默认 NDI 使用 4 个工具、60 Hz，EP 使用 200 KiB、50 Hz。可用模拟数据或分别回放完整 Aurora BX 应答、原始 EP 二进制文件。GUI 能显示 NDI 姿态和质量字段，以及 EP 字节预览。真实设备采样率、共同硬件时钟、实际网卡出线时刻以及电生理波形解释均需独立验证。
@@ -46,6 +50,9 @@ call scripts\env.cmd
 ```
 
 ```bat
+:: 首次构建包含三维预览的桌面端时，安装与构建类型一致的 VTK，以及 HDF5 SDK。需要 Ninja。
+powershell -NoProfile -File scripts\setup-model-deps.ps1 -Configuration Debug
+powershell -NoProfile -File scripts\setup-model-deps.ps1 -Configuration Release
 scripts\build.cmd Debug
 scripts\build.cmd Release
 ```
@@ -125,7 +132,7 @@ scripts\test-network.cmd Release > artifacts\logs\network-release.log 2>&1
 
 | 测试层次 | 覆盖内容与输出 |
 |---|---|
-| CTest | C++ 核心、协议、Aurora 编解码、V2 引擎／会话／接收器、Qt 应用与 GUI 冒烟等。`ctest --preset windows-release -N` 列出本次构建注册的用例。 |
+| CTest | C++ 核心、协议、Aurora 编解码、V2 引擎／会话／接收器、Qt 应用与 GUI 冒烟等；含 GUI 启动参数／截图回归与 BX 档案回读。`ctest --preset windows-release -N` 列出本次构建注册的用例。 |
 | `scripts\test-network.cmd` | 先运行 Python 单元测试，再用对应构建的 Qt CLI 跑 V1 UDP 环回，包括正常、首轮丢片、CRC 损坏、重复、逆序、重复 NACK、持续丢片和帧号回绕。每轮案例的收发日志、JSON 和汇总放在 `artifacts\udp-diagnostics\network-windows-debug\` 或 `network-windows-release\` 下的 `e2e-<编号>\` 子目录。 |
 | V2 UDP 功能矩阵 | 下方命令运行独立 Python 接收桩、原生发送器及 Qt CLI，覆盖三档线路预算、故障注入、边界长度、回绕、状态和回放。输出根目录必须是新目录。根部 `matrix.json` 汇总场景，每个正常启动的收发场景含 `commands.json`、`sender.log`、`receiver.log`、两端 JSON、`acceptance.json`、`resources.json` 和 `result.json`。 |
 | V1 定时诊断 | `scripts\test-diagnostics.cmd --build Release --cases A64,A1 --seconds 10` 分别跑 64 KiB 和 1 MiB。可用 `--build Debug` 做功能对照。证据在 `artifacts\udp-diagnostics\` 下的独立目录。`A0-drain` 只丢弃收到的报文，接收完整性应看完整重组场景。 |

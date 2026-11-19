@@ -1,4 +1,0 @@
-g++ (Debian 14.2.0-19) 14.2.0
-cmake version 3.31.6
-Linux-6.18.57-x86_64-with-glibc2.41
-Qt SDK: not found; Qt configure log included. Windows host access: none.

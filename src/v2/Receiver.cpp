@@ -2,6 +2,7 @@
 #include "protocol/Checksum.h"
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <sstream>
 
 namespace rt::v2 {
@@ -18,7 +19,19 @@ void Receiver::complete(std::size_t module,Assembly& a,std::uint64_t now){
     stats.ledger.crcSum+=rt::crc32(a.frame.bytes);stats.ledger.stampSum+=a.frame.timestampUs;
     rt::aurora::Reply ndi;
     bool valid=true;
-    try{if(module==0&&decodeAurora_)ndi=rt::aurora::decodeBx(a.frame.bytes);}
+    try{
+        if(module==0&&decodeAurora_){
+            // A single reply is the common NDI case. A model-to-BX object is a
+            // concatenated sequence; validate every frame and surface the last
+            // reply for the live tool table.
+            try{ndi=rt::aurora::decodeBx(a.frame.bytes);}
+            catch(const rt::ProtocolError&){
+                rt::aurora::BxScanStats sequence;
+                rt::aurora::scanBxSequence(a.frame.bytes.data(),a.frame.bytes.size(),
+                    std::function<void(const rt::aurora::BxPosition&)>(),sequence,&ndi);
+            }
+        }
+    }
     catch(const std::exception&){++stats.businessErrors;valid=false;}
     const auto completed=std::max(now,clock_());
     stats.maxCompletionUs=std::max(stats.maxCompletionUs,completed-a.firstUs);

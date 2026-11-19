@@ -272,6 +272,7 @@ bool Engine::canServeNdiAtEpBoundary(const Slot& ndi,const Slot& ep,std::uint64_
     if(now>=epDeadline)return true; // Only NDI can still meet its deadline.
 
     const auto& payload=*ep.p->payload;
+    if(ep.next>=payload.packets.size())return false; // duplicate tail, no EP stream left to protect
     const auto remaining=payload.packets.size()-ep.next;
     const auto remainingBytes=payload.byteSize-ep.next*rt::PayloadStep;
     const auto epWireUs=wireUs(remainingBytes+remaining*(rt::Overhead+66));

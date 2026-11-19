@@ -497,7 +497,8 @@ void Session::Impl::source(Config c,unsigned id,std::uint64_t origin,SourceMailb
         }
     }catch(const std::exception&e){if(stopRequested)++stats.cancelledAttempts;else{++stats.errors;stats.error=e.what();}}
     if(ndi){try{ndi->shutdown();}catch(const std::exception&e){++stats.errors;if(stats.error.empty())stats.error=e.what();}}
-    publish();mail.nextSample=0;mail.done.store(true,std::memory_order_release);wake.notify();
+    try{publish();}catch(...){}
+    mail.nextSample=0;mail.done.store(true,std::memory_order_release);wake.notify();
 }
 void Session::Impl::execute(Config c){
     State local;local.config=c;std::array<SourceMailbox,2> sources;std::array<std::thread,2> producers;
@@ -670,7 +671,11 @@ void Session::Impl::execute(Config c){
     if(engineOwner)engineOwner->stop();
     if(local.feedbackReadErrors && local.error.empty())
         local.error="UDP feedback read error: "+local.lastFeedbackReadError;
-    local.finished=true;local.endedUs=rt::monotonicUs();publish(engineOwner.get());active.store(false,std::memory_order_release);
+    local.finished=true;local.endedUs=rt::monotonicUs();
+    // A throw here would escape the worker thread and terminate the process while
+    // busy() still reports true. Keep the flag transition unconditional.
+    try{publish(engineOwner.get());}catch(const std::exception&e){if(local.error.empty())local.error=std::string("publish failed: ")+e.what();}catch(...){if(local.error.empty())local.error="publish failed";}
+    active.store(false,std::memory_order_release);
 }
 Session::Session(TransportFactory f,rt::aurora::NdiSourceFactory n,LinkObserver observer)
     :p_(std::make_unique<Impl>(std::move(f),std::move(n),std::move(observer))){}

@@ -1,8 +1,10 @@
 #include "ui/MainWindow.h"
 #include "ui/ConfigPanel.h"
 #include "ui/FrameTableModel.h"
+#include "ui/MedicalBackdrop.h"
 #include "application/AcceptanceReport.h"
 #include <QApplication>
+#include <QFrame>
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -24,20 +26,34 @@ namespace rt {
         setWindowTitle(QStringLiteral("SimTransfer RT · 多模块实时 UDP 发送平台"));
         resize(1500,920);
         setMinimumSize(1180,720);
-        auto*root=new QWidget;
+        auto*root=new ui::MedicalBackdrop;
         setCentralWidget(root);
         auto*layout=new QVBoxLayout(root);
-        layout->setContentsMargins(20,16,20,16);
-        layout->setSpacing(12);
-        auto*head=new QHBoxLayout;
+        layout->setContentsMargins(18,14,18,14);
+        layout->setSpacing(10);
+        auto*headCard=new QFrame;
+        headCard->setObjectName("headerCard");
+        auto*head=new QHBoxLayout(headCard);
+        head->setContentsMargins(16,10,16,10);
+        head->setSpacing(12);
+        auto*mark=new QLabel;
+        mark->setPixmap(ui::medicalMark(40));
+        mark->setFixedSize(40,40);
+        head->addWidget(mark);
+        auto*titles=new QVBoxLayout;
+        titles->setSpacing(1);
         auto*brand=new QLabel("SimTransfer RT");
         brand->setObjectName("brand");
-        head->addWidget(brand);
+        titles->addWidget(brand);
+        auto*subtitle=new QLabel(QStringLiteral("多模块实时 UDP 发送平台 · 医疗设备数据链路验证台"));
+        subtitle->setObjectName("subtitle");
+        titles->addWidget(subtitle);
+        head->addLayout(titles);
         head->addStretch();
         auto*badge=new QLabel(QStringLiteral("SIMULATED TS / 接收结果未知"));
         badge->setObjectName("badge");
         head->addWidget(badge);
-        layout->addLayout(head);
+        layout->addWidget(headCard);
         auto*actions=new QHBoxLayout;
         start_=new QPushButton(QStringLiteral("开始实时发送"));
         start_->setObjectName("primary");
@@ -59,9 +75,10 @@ namespace rt {
         auto*body=new QSplitter(Qt::Horizontal);
         config_=new ConfigPanel;
         config_->setObjectName("card");
+        config_->setAttribute(Qt::WA_StyledBackground,true);
         config_->setMinimumWidth(350);
         body->addWidget(config_);
-        auto*center=new QWidget;
+        auto*center=new QFrame;
         center->setObjectName("card");
         auto*cl=new QVBoxLayout(center);
         auto*ct=new QLabel(QStringLiteral("最近缓存帧 · 分片监视（10Hz刷新）"));
@@ -79,7 +96,7 @@ namespace rt {
         table->horizontalHeader()->setSectionResizeMode(3,QHeaderView::Stretch);
         cl->addWidget(table,1);
         body->addWidget(center);
-        auto*stats=new QWidget;
+        auto*stats=new QFrame;
         stats->setObjectName("card");
         auto*sl=new QVBoxLayout(stats);
         auto*st=new QLabel(QStringLiteral("实时统计"));
@@ -134,7 +151,7 @@ namespace rt {
             370,850,240
         });
         vertical->addWidget(body);
-        auto*logBox=new QWidget;
+        auto*logBox=new QFrame;
         logBox->setObjectName("card");
         auto*ll=new QVBoxLayout(logBox);
         ll->addWidget(new QLabel(QStringLiteral("运行日志")));

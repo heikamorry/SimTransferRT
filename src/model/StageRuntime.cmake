@@ -1,0 +1,11 @@
+# Several test programs can share one runtime directory in a parallel build.
+file(LOCK "${directory}/.model-runtime.lock" TIMEOUT 120)
+file(MAKE_DIRECTORY "${directory}/platforms")
+foreach(library IN LISTS libraries)
+    get_filename_component(name "${library}" NAME)
+    file(COPY_FILE "${library}" "${directory}/${name}" ONLY_IF_DIFFERENT)
+endforeach()
+foreach(plugin IN LISTS platforms)
+    get_filename_component(name "${plugin}" NAME)
+    file(COPY_FILE "${plugin}" "${directory}/platforms/${name}" ONLY_IF_DIFFERENT)
+endforeach()

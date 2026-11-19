@@ -57,17 +57,25 @@ namespace rt {
                     std::shared_ptr<const Snapshot> previous; {
                         std::lock_guard<std::mutex> lock(mutex_);previous=latest_;
                     }
-                    Snapshot failure=*previous;
-                    failure.running=false;failure.detail=std::string("Local failure: ")+e.what();publish(failure);log(failure.detail);
+                    Snapshot failure=previous?*previous:Snapshot{};
+                    failure.running=false;failure.detail=std::string("Local failure: ")+e.what();
+                    try{publish(failure);log(failure.detail);}catch(...){}
                 }
                 catch(...) {
-                    Snapshot failure;failure.detail="Local failure: unknown exception";publish(failure);log(failure.detail);
+                    Snapshot failure;failure.detail="Local failure: unknown exception";
+                    try{publish(failure);log(failure.detail);}catch(...){}
                 }
                 done_.store(true,std::memory_order_release);
             }));
             worker_->start();
         }
         catch(...) {
+            Snapshot failure;
+            failure.nextLogicId=c.initialLogicId;
+            failure.config=c;failure.runId=c.runId;
+            failure.running=false;
+            failure.detail="Local failure: worker thread could not start";
+            try{publish(failure);}catch(...){}
             busy_=false;
             done_=true;
             timer_.stop();

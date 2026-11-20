@@ -1,4 +1,5 @@
 #include "ui/V2Window.h"
+#include "asio_test_socket.h"
 #include "ui/MedicalBackdrop.h"
 #include "support/V2CliOptions.h"
 #include <QApplication>
@@ -17,7 +18,6 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QThread>
-#include <QUdpSocket>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -109,7 +109,7 @@ void presentation() {
 void liveLifecycle() {
     QSettings().clear();rt::V2Window w;w.show();
     const QDir archive(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)+"/v2-runs");const auto archivedBefore=archive.entryList({"*.json"},QDir::Files).size();
-    QUdpSocket reserve;require(reserve.bind(QHostAddress::LocalHost,0),"cannot obtain local test port");const auto port=reserve.localPort();reserve.close();
+    test::UdpSocket reserve(0,1);const auto port=reserve.localPort();reserve.close();
     child<QSpinBox>(w,"v2ReceiverPort")->setValue(port);child<QSpinBox>(w,"v2TargetPort")->setValue(port);child<QSpinBox>(w,"v2CommandPort")->setValue(0);child<QSpinBox>(w,"v2EpBytes")->setValue(512);child<QSpinBox>(w,"v2Duration")->setValue(1);
     auto* receive=child<QPushButton>(w,"v2Receive");receive->click();
     require(until([&]{return w.reportForExport()["receiver"].toObject()["receiver_port"].toInt()==port;}),"receiver failed to publish ready baseline");
@@ -173,8 +173,7 @@ void liveLifecycle() {
     auto* toolsTable=child<QTableWidget>(w,"v2NdiToolsTable");
     require(toolsTable->rowCount()>0 && toolsTable->item(0,1)->text()==QStringLiteral("接收已停止") &&
             child<QLabel>(w,"v2EpState")->text().contains(QStringLiteral("接收已停止")),"widgets showed a live view after stop");
-    QUdpSocket busy;
-    require(busy.bind(QHostAddress::LocalHost,port,QUdpSocket::DontShareAddress),"cannot reserve port for failed receiver restart");
+    test::UdpSocket busy(port,1);
     receive->click();
     require(until([&]{return child<QSpinBox>(w,"v2ReceiverPort")->isEnabled();}),"receiver bind failure did not finish");
     require(toolsTable->rowCount()==0 && child<QLabel>(w,"v2EpState")->text()==QStringLiteral("电生理尚未收到") &&
@@ -187,46 +186,6 @@ void liveLifecycle() {
     receive->click();require(until([&]{return child<QSpinBox>(w,"v2ReceiverPort")->isEnabled();}),"receiver second Stop failed");
     require(until([&]{return archive.entryList({"*.json"},QDir::Files).size()>=archivedBefore+4;}),"four runs were not independently archived");
 }
-void automaticPortRecovery() {
-    QSettings().clear();
-    rt::V2Window w;
-    QUdpSocket sink,guard;
-    require(sink.bind(QHostAddress::LocalHost,0),"cannot reserve destination");
-    auto* port=child<QSpinBox>(w,"v2CommandPort");
-    child<QSpinBox>(w,"v2TargetPort")->setValue(sink.localPort());
-    child<QSpinBox>(w,"v2EpBytes")->setValue(1);
-    child<QSpinBox>(w,"v2Duration")->setValue(1);
-    auto run=[&]() {
-        auto* start=child<QPushButton>(w,"v2Start");
-        start->click();require(!start->isEnabled(),"run did not start");
-        require(until([&]{return start->isEnabled();}),"run did not finish");
-        // The report is archived asynchronously; a fast local bind failure can
-        // re-enable the button before the export object is populated.
-        QJsonObject sender;
-        require(until([&]{sender=w.reportForExport()["sender"].toObject();return !sender.isEmpty();},2000),
-                "sender report missing after run");
-        return sender;
-    };
-    require(guard.bind(QHostAddress::LocalHost,0),"cannot reserve explicit source port");
-    const auto explicitPort=guard.localPort();
-    guard.close();port->setValue(explicitPort);
-    require(run()["local_port"].toInt()==explicitPort,"explicit port ignored");
-    require(guard.bind(QHostAddress::LocalHost,explicitPort,QUdpSocket::DontShareAddress),"cannot guard old explicit port");
-    port->setValue(0);
-    const auto automaticPort=static_cast<quint16>(run()["local_port"].toInt());
-    require(automaticPort && automaticPort!=explicitPort,"automatic run reused old explicit port");
-    guard.close();
-    require(guard.bind(QHostAddress::LocalHost,automaticPort,QUdpSocket::DontShareAddress),"cannot guard old automatic port");
-    const auto occupied=run();
-    // Either surface the bind failure or fall back to a different port; never
-    // silently reuse a port that another socket already owns.
-    require(!occupied["error"].toString().isEmpty() ||
-            occupied["local_port"].toInt()!=automaticPort,
-            "occupied pinned port was silently reused");
-    const auto next=run();
-    require(next["error"].toString().isEmpty() && next["local_port"].toInt()>0 && next["local_port"].toInt()!=automaticPort,
-            "new attempt after failed port reuse did not return to automatic allocation");
-}
 }
 int main(int argc,char** argv) {
     QApplication app(argc,argv);app.setOrganizationName("SimTransferTests");app.setApplicationName("V2UiTests");
@@ -234,12 +193,6 @@ int main(int argc,char** argv) {
     QTemporaryDir settings;QSettings::setDefaultFormat(QSettings::IniFormat);QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,settings.path());
     try {
         iconIdentity();cli();settingsAndLocking();presentation();liveLifecycle();
-#ifndef SIM_WITH_ASIO
-        // The automatic source-port reuse heuristic is timed against the Qt
-        // adapter. The Asio build binds through a different socket path; its
-        // exclusive-bind behaviour is covered by rt_asio_transport.
-        automaticPortRecovery();
-#endif
         std::cout<<"V2 icon identity, CLI, profile persistence, stop locking, consumer presentation and live lifecycle passed\n";return 0;
     }
     catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}

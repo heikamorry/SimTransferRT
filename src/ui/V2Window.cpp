@@ -2,7 +2,6 @@
 #ifdef SIM_MODEL_PREVIEW
 #include "model/PreviewPanel.h"
 #endif
-#include "ui/MainWindow.h"
 #include "ui/MedicalBackdrop.h"
 #include "v2/Runner.h"
 #include "v2/Receiver.h"
@@ -39,14 +38,8 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
-#include <QHostAddress>
-#ifdef SIM_WITH_ASIO
 #include "network/AsioReceiverSocket.h"
 #include "network/AsioUdpTransport.h"
-#else
-#include "network/QtUdpTransport.h"
-#include <QUdpSocket>
-#endif
 #include <algorithm>
 #include <atomic>
 #include <mutex>
@@ -56,6 +49,21 @@
 
 namespace rt {
 namespace {
+std::uint32_t parseIpv4(const QString& text) {
+    const auto parts=text.split('.');
+    if(parts.size()!=4)throw std::invalid_argument("IPv4 address required");
+    std::uint32_t value=0;
+    for(const auto& part:parts) {
+        bool ok=false;const auto number=part.toUInt(&ok);
+        if(!ok||number>255)throw std::invalid_argument("IPv4 address required");
+        value=(value<<8)|number;
+    }
+    return value;
+}
+QString formatIpv4(std::uint32_t value) {
+    return QStringLiteral("%1.%2.%3.%4").arg((value>>24)&255).arg((value>>16)&255)
+        .arg((value>>8)&255).arg(value&255);
+}
 QString text(const QJsonValue& v) {
     if(v.isString())return v.toString();
     if(v.isUndefined() || v.isNull())return QStringLiteral("未检测");
@@ -89,40 +97,12 @@ struct ReceiverUpdate {
     bool final=false;
 };
 
-#ifdef SIM_WITH_ASIO
 using GuiReceiverSocket = AsioReceiverSocket;
 inline v2::Session::TransportFactory guiTransportFactory() {
-    // The asio branch hardwires the GUI sender to Boost.Asio. No runtime switch
-    // and no Qt socket is involved in the V2 send or receive path.
+    // The GUI sender and receiver are hardwired to Boost.Asio. There is no
+    // runtime switch and no Qt socket in the V2 path.
     return [] {return makeAsioUdpTransport(true);};
 }
-#else
-// Comparison-only build (SIM_WITH_ASIO=OFF); never used by the asio release.
-class GuiReceiverSocket {
-public:
-    GuiReceiverSocket(quint32 ip, quint16 port) : address_(ip) {
-        if (!socket_.bind(address_, port, QUdpSocket::DontShareAddress))
-            throw std::runtime_error(socket_.errorString().toStdString());
-        socket_.setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption, 4 * 1024 * 1024);
-    }
-    void waitReadable() { if (!socket_.hasPendingDatagrams()) socket_.waitForReadyRead(1); }
-    int read(std::uint8_t* data, std::size_t capacity, std::uint32_t& ip, std::uint16_t& port) {
-        if (!socket_.hasPendingDatagrams()) return -1;
-        QHostAddress source;
-        const auto length = socket_.readDatagram(reinterpret_cast<char*>(data), static_cast<qint64>(capacity), &source, &port);
-        ip = source.toIPv4Address();
-        return static_cast<int>(length);
-    }
-    bool sendFeedback(const Datagram& packet, std::uint32_t ip, std::uint16_t port) {
-        const auto size = static_cast<qint64>(packet.size);
-        return socket_.writeDatagram(reinterpret_cast<const char*>(packet.bytes.data()), size, QHostAddress(ip), port) == size;
-    }
-private:
-    QHostAddress address_;
-    QUdpSocket socket_;
-};
-inline v2::Session::TransportFactory guiTransportFactory() { return makeV2QtUdpTransport; }
-#endif
 
 QString routeKey(const v2::Config& c) {
     return QString::fromStdString(c.bindIp)+"/"+QString::fromStdString(c.targetIp)+":"+QString::number(c.targetPort);
@@ -260,8 +240,7 @@ V2Window::V2Window(QWidget* parent):QMainWindow(parent),p_(std::make_unique<Impl
     auto* subtitle=new QLabel(QStringLiteral("多模块 UDP 传输模拟器 · 医疗设备数据链路验证台"));subtitle->setObjectName("subtitle");titles->addWidget(subtitle);
     hl->addLayout(titles);hl->addStretch();
     auto* badge=new QLabel(QStringLiteral("模拟数据 · 非临床用途"));badge->setObjectName("badge");hl->addWidget(badge);
-    auto* legacy=new QPushButton(QStringLiteral("打开原 V1 版本"));legacy->setObjectName("ghostButton");hl->addWidget(legacy);layout->addWidget(header);
-    connect(legacy,&QPushButton::clicked,this,[this] {auto* w=new MainWindow;w->setAttribute(Qt::WA_DeleteOnClose);w->show();p_->log->appendPlainText(QStringLiteral("已打开独立 V1 窗口，请为并行运行选择不同端口。"));});
+    layout->addWidget(header);
     auto* scope=new QLabel(QStringLiteral("独立采集准备 → 有界队列 → 统一发送。当前可验证模拟 / 回放输入；真实设备采样、共同硬件时钟和物理出线需另行验证。"));scope->setObjectName("hint");scope->setWordWrap(true);layout->addWidget(scope);
     auto* tabs=new QTabWidget;layout->addWidget(tabs,1);
     auto* sendPage=new QWidget;auto* sendLayout=new QVBoxLayout(sendPage);sendLayout->setContentsMargins(0,8,0,0);sendLayout->setSpacing(9);tabs->addTab(sendPage,QStringLiteral("发送与网络"));
@@ -407,7 +386,7 @@ void V2Window::presentSenderReport(const QJsonObject& report) {
             const bool rejectedBeforeOpen=!p_->baselineConfig.allowOversubscribed && feasible.isBool() && !feasible.toBool();
             if(!rejectedBeforeOpen) {
                 try {
-                    GuiReceiverSocket probe(QHostAddress(QString::fromStdString(p_->baselineConfig.bindIp)).toIPv4Address(),
+                    GuiReceiverSocket probe(parseIpv4(QString::fromStdString(p_->baselineConfig.bindIp)),
                                             p_->previousSourcePort);
                 } catch(const std::exception&) {
                     p_->autoPortKey.clear();
@@ -580,8 +559,9 @@ void V2Window::closeEvent(QCloseEvent* event) {
 void V2Window::toggleReceiver() {
     if(p_->receiverRunning) {p_->receiverStop=true;p_->receive->setEnabled(false);p_->receiveState->setText(QStringLiteral("正在停止接收…"));return;}
     if(p_->receiverWorker.joinable())p_->receiverWorker.join();
-    const QHostAddress address(p_->receiverBind->text().trimmed());
-    if(address.protocol()!=QAbstractSocket::IPv4Protocol) {p_->receiveState->setText(QStringLiteral("请输入有效的 IPv4 绑定地址。"));return;}
+    std::uint32_t bindAddress=0;
+    try { bindAddress=parseIpv4(p_->receiverBind->text().trimmed()); }
+    catch(const std::exception&) {p_->receiveState->setText(QStringLiteral("请输入有效的 IPv4 绑定地址。"));return;}
     const auto port=static_cast<quint16>(p_->receiverPort->value());
     p_->receiverStop=false;p_->receiverRunning=true;p_->receiverBind->setEnabled(false);p_->receiverPort->setEnabled(false);p_->receive->setText(QStringLiteral("停止接收"));p_->receiveState->setText(QStringLiteral("接收准备中；只接受本次首个有效数据源的同一端点。"));
     p_->lastDisplay={};p_->displayedFrames={};p_->displayMaxDelayUs={};p_->displayLate={};p_->haveDisplayed={};
@@ -600,9 +580,9 @@ void V2Window::toggleReceiver() {
         p_->receiverLatest.reset();
         p_->receiverError.clear();
     }
-    p_->receiverWorker=std::thread([this,address,port,generation] {
+    p_->receiverWorker=std::thread([this,bindAddress,port,generation] {
         try {
-            GuiReceiverSocket socket(address.toIPv4Address(),port);
+            GuiReceiverSocket socket(bindAddress,port);
             v2::Receiver receiver(true,[] {return monotonicUs();});
 #ifdef SIM_MODEL_PREVIEW
             if(p_->preview) {
@@ -623,11 +603,11 @@ void V2Window::toggleReceiver() {
 #endif
             std::uint32_t peer=0;quint16 peerPort=0;bool pinned=false;
             std::uint64_t rejectedSources=0,feedbackErrors=0,nextPublish=0;
-            const auto bindAddress=address.toString();
+            const auto bindAddressText=formatIpv4(bindAddress);
             QString peerAddress;
             auto publish=[&](bool final) {
                 const auto now=monotonicUs();
-                std::optional<ReceiverUpdate> update{ReceiverUpdate{receiver.snapshot(now),bindAddress,peerAddress,QStringLiteral("asio"),port,peerPort,
+                std::optional<ReceiverUpdate> update{ReceiverUpdate{receiver.snapshot(now),bindAddressText,peerAddress,QStringLiteral("asio"),port,peerPort,
                                       generation,now,rejectedSources,feedbackErrors,final}};
                 std::lock_guard<std::mutex> lock(p_->receiverMutex);
                 p_->receiverLatest.swap(update); // Release the overwritten frame after unlocking.
@@ -639,7 +619,7 @@ void V2Window::toggleReceiver() {
                         ++feedbackErrors;
                 }
             };
-            {std::lock_guard<std::mutex> lock(p_->receiverMutex);p_->receiverError=QStringLiteral("接收已启动（Boost.Asio）：%1:%2；NDI / 电生理独立消费，状态即时应用。").arg(address.toString()).arg(port);}
+            {std::lock_guard<std::mutex> lock(p_->receiverMutex);p_->receiverError=QStringLiteral("接收已启动（Boost.Asio）：%1:%2；NDI / 电生理独立消费，状态即时应用。").arg(bindAddressText).arg(port);}
             std::array<std::uint8_t,1473> buffer;
             while(!p_->receiverStop) {
                 socket.waitReadable();
@@ -658,7 +638,7 @@ void V2Window::toggleReceiver() {
                             if(bytes[6]==1)(void)v2::decodeData(bytes,static_cast<std::size_t>(length));
                             else if(bytes[6]==3)(void)v2::decodeStatus(bytes,static_cast<std::size_t>(length));
                             else throw ProtocolError("not data/status");
-                            peer=source;peerAddress=QHostAddress(source).toString();peerPort=sourcePort;pinned=true;
+                            peer=source;peerAddress=formatIpv4(source);peerPort=sourcePort;pinned=true;
                         }catch(const ProtocolError&) {receiver.receive(bytes,static_cast<std::size_t>(length),monotonicUs());continue;}
                     }
                     sendFeedback(receiver.receiveAndPollObserved(bytes,static_cast<std::size_t>(length),monotonicUs()));

@@ -17,11 +17,12 @@
 
 | 路径 | 状态 |
 |---|---|
-| V2 CLI 发送（`SimTransferCli --protocol v2`） | `--transport qt`（默认）、`native`、`asio-sync`、`asio-async` 均可选 |
+| V2 CLI 发送（`SimTransferCli --protocol v2`） | `--transport native`（默认）、`asio-sync`、`asio-async` |
 | V2 原生探针（`SimRtProbe`） | `--transport native`（默认）、`asio-sync`、`asio-async` |
 | V2 GUI 接收 socket | **固定使用 `AsioReceiverSocket`**，界面无 Qt socket 分支（`SIM_WITH_ASIO=ON` 时） |
 | V2 GUI 发送 | **固定 `makeAsioUdpTransport(true)`**，无运行时后端选择 |
-| V1、模型转换、BX 点云、VTK 预览 | 未改动，仍用原实现 |
+| V1 | 已从本分支删除（源码、界面、测试、脚本） |
+| 模型转换、BX 点云、VTK 预览 | 未改动，仍用原实现 |
 
 ## 线程与所有权
 
@@ -74,7 +75,7 @@ build\asio-enabled\SimTransferCli.exe --protocol v2 --transport asio-sync  ^
   --status-interval-us 0 --report tx.json
 ```
 
-`--transport qt` 在 `SimTransferCli` 中可用；`SimRtProbe` 不链接 Qt，只接受 `native` 与 Asio。
+`SimTransferCli` 与 `SimRtProbe` 都不再链接 Qt Network；GUI 固定 Asio 异步，没有运行时选择。
 
 ## 未完成 / 边界
 

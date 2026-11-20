@@ -37,7 +37,7 @@ CliOptions parseV2Options(int argc,char** argv) {
         else if(a=="--protocol") {if(value()!="v2")throw std::invalid_argument("V2 options require --protocol v2");}
         else if(a=="--transport") {
             auto v=value();
-            if(v!="qt" && v!="native" && v!="asio-sync" && v!="asio-async") throw std::invalid_argument("--transport expects qt, native, asio-sync or asio-async");
+            if(v!="native" && v!="asio-sync" && v!="asio-async") throw std::invalid_argument("--transport expects native, asio-sync or asio-async");
             o.transport=v;
         }
         else if(a=="--mailbox-fast-path")o.config.mailboxFastPath=traceMode(value(),a);
@@ -102,9 +102,9 @@ CliOptions parseV2Options(int argc,char** argv) {
     return o;
 }
 std::string v2CliHelp() {
-    return "SimTransfer V2 / Plan B (V1 remains available through --protocol v1)\n"
-        "  --protocol v2 --network-profile 100m|1g|2g5 (default 1g; 2.5g alias)\n"
-        "  --transport qt|native|asio-sync|asio-async (Qt CLI defaults to qt, native probe to native)\n"
+    return "SimTransfer V2 / Plan B (Asio-only branch)\n"
+        "  --protocol v2 (required) --network-profile 100m|1g|2g5 (default 1g; 2.5g alias)\n"
+        "  --transport native|asio-sync|asio-async (both CLIs default to native; the GUI is Asio-only)\n"
         "  --mailbox-fast-path on|off (four-slot SPSC frame handoff; default off)\n"
         "  --link-mbps 100|1000|2500 (compatibility alias; conflicting values fail)\n"
         "  --target 127.0.0.1 --port 5650 --bind 127.0.0.1 --command-port 5500\n"

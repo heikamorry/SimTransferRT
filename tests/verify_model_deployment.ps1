@@ -58,7 +58,7 @@ try {
     }
     if (!($loaded.Keys -like 'vtkRenderingOpenGL2-*.dll')) { throw 'VTK OpenGL renderer missing' }
     if ((Get-Item -LiteralPath $screenshot).Length -eq 0) { throw 'Empty screenshot' }
-    Test-Launch '--v1 --smoke-test'
+    Test-Launch '--smoke-test'
     $json = [ordered]@{
         executableSHA256 = (Get-FileHash -LiteralPath $exe).Hash
         model = [IO.Path]::GetFileName($modelPath)

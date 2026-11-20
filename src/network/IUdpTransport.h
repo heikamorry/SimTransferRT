@@ -15,7 +15,7 @@ namespace rt {
         virtual ~IUdpTransport()=default;
         virtual void open(const StreamConfig& config)=0;
         virtual bool send(const std::uint8_t* data,std::size_t size)=0;
-        // Synchronous V1 callers retain bool send(). V2 owns this socket on
+        // Synchronous callers retain bool send(). V2 owns this socket on
         // one thread, including initiation, completion observation and shutdown.
         virtual SendDisposition submitDatagram(const std::uint8_t* p,std::size_t n,std::uint64_t) {
             return send(p,n) ? SendDisposition::Complete : SendDisposition::Failed;

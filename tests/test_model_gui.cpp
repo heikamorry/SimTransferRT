@@ -2,6 +2,7 @@
 #include "model/PreviewPanel.h"
 #include "protocol/V2PacketCodec.h"
 #include "ui/V2Window.h"
+#include "asio_test_socket.h"
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
@@ -23,7 +24,6 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
-#include <QUdpSocket>
 #include <QVTKOpenGLNativeWidget.h>
 #include <algorithm>
 #include <iostream>
@@ -163,10 +163,10 @@ int main(int argc, char **argv) {
         };
         auto dark = viewport->grabFramebuffer();
         expect(!dark.isNull(), "OpenGL readback");
-        QUdpSocket tx;
-        expect(tx.bind(QHostAddress::LocalHost, 0), "test port allocation");
-        const auto localPort = tx.localPort();
-        tx.close();
+        test::UdpSocket probe(0, 1);
+        const auto localPort = probe.localPort();
+        probe.close();
+        test::UdpSocket tx(0, localPort);
         auto rx = w.findChild<QPushButton *>("v2Receive");
         auto port = w.findChild<QSpinBox *>("v2ReceiverPort");
         port->setValue(localPort);
@@ -182,9 +182,7 @@ int main(int argc, char **argv) {
         auto sendLiveFrame = [&] {
             ++liveFrame.frameId;
             auto packet = rt::v2::encodeData(liveFrame, 0);
-            return tx.writeDatagram(reinterpret_cast<const char *>(packet.bytes.data()),
-                                    packet.size, QHostAddress::LocalHost,
-                                    localPort) == qint64(packet.size);
+            return tx.send(packet.bytes.data(), packet.size);
         };
         expect(sendLiveFrame(), "send BX test datagram");
         QTimer liveTimer;
@@ -221,10 +219,7 @@ int main(int argc, char **argv) {
         object.frameId = liveFrame.frameId + 1;
         auto objectPacket = rt::v2::encodeData(object, 0);
         QSignalSpy bxObject(panel, &PreviewPanel::bxObjectFinished);
-        expect(tx.writeDatagram(reinterpret_cast<const char *>(objectPacket.bytes.data()),
-                                objectPacket.size, QHostAddress::LocalHost,
-                                localPort) == qint64(objectPacket.size),
-               "send BX object");
+        expect(tx.send(objectPacket.bytes.data(), objectPacket.size), "send BX object");
         until([&] {
                   return !bxObject.isEmpty() && info->text().contains("网络接收") &&
                          state->text().contains("3 点");

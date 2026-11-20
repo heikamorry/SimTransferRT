@@ -24,16 +24,11 @@ class GuiLaunchTests(unittest.TestCase):
 
     def test_smoke_finishes_screenshot_before_exiting(self):
         image = self.directory / "window.png"
-        self.assertEqual(self.launch("--v1", "--smoke-test", "--screenshot", image), 0)
+        self.assertEqual(self.launch("--smoke-test", "--screenshot", image), 0)
         self.assertTrue(image.read_bytes().startswith(png_signature))
 
     def test_missing_model_argument_returns_usage_error(self):
         self.assertEqual(self.launch("--smoke-test", "--model"), 2)
-
-    def test_v1_cannot_claim_model_preview_succeeded(self):
-        image = self.directory / "unused.png"
-        self.assertEqual(self.launch("--v1", "--model", fixture, "--screenshot", image), 2)
-        self.assertFalse(image.exists())
 
     def test_capture_cannot_replace_model_with_its_image(self):
         # Content detection allows a PLY to have any filename.

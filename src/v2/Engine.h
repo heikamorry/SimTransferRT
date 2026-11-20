@@ -4,10 +4,16 @@
 #include "protocol/V2PacketCodec.h"
 #include "core/Diagnostics.h"
 #include "network/IUdpTransport.h"
+#include <array>
 #include <atomic>
+#include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <set>
+#include <string>
+#include <vector>
 
 namespace rt::v2 {
 struct EncodedPayload {

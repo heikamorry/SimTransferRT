@@ -1,6 +1,6 @@
 #include "core/Types.h"
 #include <sstream>
-#include <limits>
+#include <stdexcept>
 namespace rt {
     std::set<std::uint16_t> parseFragmentIds(const std::string& s) {
         std::set<std::uint16_t> out;
@@ -14,10 +14,5 @@ namespace rt {
             out.insert(static_cast<std::uint16_t>(v));
         }
         return out;
-    }
-    std::uint64_t conservativeWireBytes(std::size_t n) {
-        // Each frame fragment adds 36 application + 28 IPv4/UDP + 38 Ethernet/preamble/IFG.
-        // VLAN/tunnels not included. This is a feasibility estimate, not measured throughput.
-        return n+std::uint64_t(fragmentCount(n))*102u;
     }
 }

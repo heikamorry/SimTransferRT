@@ -1,19 +1,13 @@
-#include "ui/MainWindow.h"
 #include "ui/MedicalBackdrop.h"
 #include "ui/V2Window.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QFile>
 #include <QFileInfo>
-#include <QIcon>
 #include <QImageWriter>
-#include <QPixmap>
 #include <QSaveFile>
 #include <QTimer>
 #include <cstdio>
-#ifdef Q_OS_WIN
-#include <windows.h>
-#endif
 #ifdef SIM_MODEL_PREVIEW
 #include "model/PreviewPanel.h"
 #include <QSurfaceFormat>
@@ -42,25 +36,9 @@ int saveScreenshot(QWidget& window, const QString& path) {
     return 0;
 }
 bool samePath(const QString& left, const QString& right) {
-    // QFileInfo::operator== compares file-system identity, which is not what a
-    // "do not overwrite the model" guard needs. Compare normalized absolute paths.
     return QFileInfo(left).absoluteFilePath().compare(QFileInfo(right).absoluteFilePath(),
                                                       Qt::CaseInsensitive) == 0;
 }
-#ifdef Q_OS_WIN
-void setTaskbarIdentity() {
-    // Without an explicit identity Windows may group the window with whatever
-    // launched it (terminal, IDE, file manager) and reuse that process's
-    // taskbar icon. Set it before the first window exists so the button keeps
-    // our own icon. shell32 stays loaded for the lifetime of the process.
-    if (HMODULE shell = LoadLibraryW(L"shell32.dll")) {
-        using SetAumid = HRESULT(WINAPI*)(PCWSTR);
-        if (auto setAumid = reinterpret_cast<SetAumid>(
-                GetProcAddress(shell, "SetCurrentProcessExplicitAppUserModelID")))
-            setAumid(L"SimTransferLab.SimTransferRT");
-    }
-}
-#endif
 }
 
 int main(int argc,char**argv) {
@@ -71,23 +49,16 @@ int main(int argc,char**argv) {
     app.setOrganizationName("SimTransferLab");
     app.setApplicationName("SimTransferRT");
     app.setWindowIcon(rt::ui::appIcon());
-#ifdef Q_OS_WIN
-    setTaskbarIdentity();
-#endif
-    qRegisterMetaType<rt::Snapshot>();
     QFile style(":/styles/light.qss");
     if(style.open(QIODevice::ReadOnly))app.setStyleSheet(QString::fromUtf8(style.readAll()));
     QCommandLineParser parser;
     parser.addOptions({
-        {QStringLiteral("v1"), "打开 V1 窗口"},
-        {QStringLiteral("v2"), "打开 V2 窗口"},
         {QStringLiteral("model"), "打开本地模型", "file"},
         {QStringLiteral("screenshot"), "保存窗口截图", "image"},
         {QStringLiteral("smoke-test"), "启动检查完成后退出"},
     });
     if (!parser.parse(app.arguments()))
         return reportError(parser.errorText(), 2);
-    const bool v1 = parser.isSet("v1");
     const bool smoke = parser.isSet("smoke-test");
     const QString model = parser.value("model");
     const QString screenshot = parser.value("screenshot");
@@ -96,22 +67,15 @@ int main(int argc,char**argv) {
         if (parser.isSet(option) && (path.isEmpty() || path.startsWith("--")))
             return reportError("--" + option + " 需要文件路径", 2);
     }
-    if (v1 && parser.isSet("v2"))
-        return reportError("--v1 和 --v2 只能选一个", 2);
     if (!model.isEmpty()) {
 #ifdef SIM_MODEL_PREVIEW
-        if (v1)
-            return reportError("本地模型预览需要 V2 窗口", 2);
         if (!screenshot.isEmpty() && samePath(model, screenshot))
             return reportError("截图路径与模型路径相同：" + model, 2);
 #else
         return reportError("当前构建未启用本地模型预览", 2);
 #endif
     }
-    std::unique_ptr<QMainWindow> selected;
-    if(v1)selected=std::make_unique<rt::MainWindow>();
-    else selected=std::make_unique<rt::V2Window>();
-    auto& window=*selected;
+    rt::V2Window window;
     window.show();
 #ifdef SIM_MODEL_PREVIEW
     if (!model.isEmpty()) {

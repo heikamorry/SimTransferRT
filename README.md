@@ -14,7 +14,7 @@ SimTransferRT 是用 C++17 和 Qt 6 编写的多模块 UDP 传输模拟器。本
 
 V2 的“接收与显示”页可打开本地 PLY、VTP、legacy VTK POLYDATA、Aurora BX 帧序列和本程序的 HDF5 过程档案。模型可单向导出为标准 Aurora BX 帧序列：每个顶点一帧，坐标换算为毫米，帧号从 8 起每帧加 8；颜色、面连接、纹理和法向不写入 BX。BX 只做严格校验、解码和点云预览，不反向导出 PLY/VTP/VTK，也不恢复原模型属性。右侧预览支持旋转、缩放、属性切换、点大小调整和经过逐帧回读校验的转换。分发版从 `dist\model-preview\bin\SimTransfer.exe` 启动。参见[操作与报错](docs/MODEL_PREVIEW.md)、[格式能力矩阵](docs/MODEL_FORMATS.md)、[HDF5 数据布局](docs/MODEL_ARCHIVE.md)及[Windows 构建与验证结果](docs/MODEL_VERIFICATION.md)。
 
-V2 与 V1 窗口共用医疗数据链路主题：浅色临床渐变、阿斯克勒庇俄斯之杖水印和心电图基线；EXE、任务栏与窗口图标使用同一单蛇绕杖图形（`resources/app.ico`，由 `tools/make_app_icon.py` 生成）。右侧预览以“打开”为主操作，模型、BX 帧序列与过程档案入口集中在同一菜单；转换、取消和重置视图按主次排布，窄窗口下优先保证表格与三维视口可见。
+V2 与 V1 窗口共用医疗数据链路主题：浅色临床渐变、阿斯克勒庇俄斯之杖水印和心电图基线；EXE、任务栏与窗口图标使用同一单蛇绕杖图形：`resources/app.ico` 提供 9 个尺寸给 Windows 外壳，`resources/icons/app-*.png` 由 `tools/make_app_icon.py` 一并生成，窗口与任务栏图标按 16/20/24/32/40/48/64/128/256 像素直接加载，不依赖可选的 ICO 图片插件。右侧预览以“打开”为主操作，模型、BX 帧序列与过程档案入口集中在同一菜单；转换、取消和重置视图按主次排布，窄窗口下优先保证表格与三维视口可见。
 
 ## 1. 数据路径与 C++ 技术栈
 

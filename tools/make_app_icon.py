@@ -5,6 +5,10 @@ script keeps the Windows .ico reproducible: it renders every size separately
 with a small-size stroke boost, then assembles a PNG-compressed ICO by hand so
 each entry can carry its own geometry.
 
+The same sizes are also written as PNG next to the .ico. Qt loads those through
+its built-in PNG reader, so the window/taskbar icon does not depend on the
+optional ICO image-format plugin being deployed.
+
 Usage: python tools/make_app_icon.py resources/app.ico
 """
 
@@ -18,7 +22,9 @@ from PIL import Image, ImageDraw
 TEAL_TOP = (15, 124, 153)
 TEAL_BOTTOM = (10, 67, 88)
 INK = (240, 252, 255, 236)
-SIZES = (16, 24, 32, 48, 64, 128, 256)
+# 20 and 40 cover the 125% / 250% Windows title-bar sizes; QIcon picks the
+# nearest entry instead of rescaling a 16 or 32 pixel bitmap.
+SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 
 
 def gradient(size):
@@ -126,8 +132,16 @@ def write_ico(path, images):
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "resources/app.ico")
     out.parent.mkdir(parents=True, exist_ok=True)
-    write_ico(out, [render(size) for size in SIZES])
-    print(f"wrote {out} ({out.stat().st_size} bytes, {len(SIZES)} sizes)")
+    images = {size: render(size) for size in SIZES}
+    write_ico(out, [images[size] for size in SIZES])
+    png_dir = out.parent / "icons"
+    png_dir.mkdir(parents=True, exist_ok=True)
+    for size, img in images.items():
+        img.save(png_dir / f"app-{size}.png", format="PNG", optimize=True)
+    print(
+        f"wrote {out} ({out.stat().st_size} bytes, {len(SIZES)} sizes) "
+        f"and {len(SIZES)} PNG renditions in {png_dir}"
+    )
 
 
 if __name__ == "__main__":

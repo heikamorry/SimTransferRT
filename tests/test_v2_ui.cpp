@@ -1,11 +1,14 @@
 #include "ui/V2Window.h"
+#include "ui/MedicalBackdrop.h"
 #include "support/V2CliOptions.h"
 #include <QApplication>
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QDir>
+#include <QIcon>
 #include <QJsonArray>
 #include <QLabel>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -40,6 +43,27 @@ void cli() {
     const auto o=parse({"--protocol","v2","--duration","0.125","--target","192.0.2.10","--command-port","0","--ep-bytes","200000","--ndi-tools","40","--observed-link-mbps","100","--path-limit-mbps","1000"});
     require(o.config.durationUs==125000 && o.config.allowedNackIp==o.config.targetIp,"duration/source defaults failed");
     require(rt::v2::effectiveMbps(o.config)==100 && o.config.epBytes==200000,"effective capacity or exact EP length lost");
+}
+void iconIdentity() {
+    const QIcon icon=rt::ui::appIcon();
+    require(!icon.isNull(),"application icon is null");
+    const auto sizes=icon.availableSizes();
+    // 20 and 40 exist only in the PNG resource set, so this also proves the
+    // renditions were compiled in rather than the painted fallback being used.
+    for(int size:{16,20,24,32,40,48,64,128,256})
+        require(sizes.contains(QSize(size,size)),"application icon rendition missing");
+    // Decoded by QtGui's built-in PNG reader, so a deployment without the
+    // optional ICO image plugin still gets a window icon.
+    require(!QPixmap(":/icons/app-16.png").isNull(),"PNG icon rendition not compiled in");
+    rt::V2Window w;
+    require(!w.windowIcon().isNull(),"window icon not set");
+    require(w.windowIcon().availableSizes().contains(QSize(16,16)),"window icon lost its small rendition");
+    bool headerMark=false;
+    for(auto* label:w.findChildren<QLabel*>()) {
+        if(label->width()==40 && label->height()==40 && !label->pixmap().isNull())
+            headerMark=true;
+    }
+    require(headerMark,"header mark missing");
 }
 void settingsAndLocking() {
     QSettings().clear();
@@ -187,6 +211,6 @@ int main(int argc,char** argv) {
     QApplication app(argc,argv);app.setOrganizationName("SimTransferTests");app.setApplicationName("V2UiTests");
     QStandardPaths::setTestModeEnabled(true);
     QTemporaryDir settings;QSettings::setDefaultFormat(QSettings::IniFormat);QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,settings.path());
-    try {cli();settingsAndLocking();presentation();liveLifecycle();automaticPortRecovery();std::cout<<"V2 CLI, profile persistence, stop locking, consumer presentation and live lifecycle passed\n";return 0;}
+    try {iconIdentity();cli();settingsAndLocking();presentation();liveLifecycle();automaticPortRecovery();std::cout<<"V2 icon identity, CLI, profile persistence, stop locking, consumer presentation and live lifecycle passed\n";return 0;}
     catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

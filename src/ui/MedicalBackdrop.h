@@ -3,6 +3,8 @@
 // Asclepius watermark and an ECG baseline. Header-only so every GUI target that
 // compiles the windows picks it up without another translation unit.
 #include <QColor>
+#include <QIcon>
+#include <QImage>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
@@ -87,6 +89,30 @@ inline QPixmap medicalMark(int logical) {
 }
 } // namespace detail
 using detail::medicalMark;
+
+// Window and taskbar icon. The PNG renditions are decoded by QtGui's built-in
+// PNG reader, so the icon still appears when the optional ICO image-format
+// plugin is missing from a deployment. Each size is registered explicitly so
+// Windows picks the crisp 16/20/24/32 pixel rendition instead of downscaling a
+// large bitmap for the title bar.
+inline QIcon appIcon() {
+    QIcon icon;
+    for (int size : {16, 20, 24, 32, 40, 48, 64, 128, 256}) {
+        const QPixmap pixmap(QStringLiteral(":/icons/app-%1.png").arg(size));
+        if (!pixmap.isNull())
+            icon.addPixmap(pixmap, QIcon::Normal, QIcon::Off);
+    }
+    if (icon.isNull()) {
+        // Last resort: paint the mark directly, no image plugin involved.
+        for (int size : {16, 24, 32, 48, 64, 128, 256}) {
+            QImage image = detail::medicalMark(size).toImage().scaled(
+                size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            image.setDevicePixelRatio(1.0);
+            icon.addPixmap(QPixmap::fromImage(image), QIcon::Normal, QIcon::Off);
+        }
+    }
+    return icon;
+}
 class MedicalBackdrop final : public QWidget {
   public:
     explicit MedicalBackdrop(QWidget *parent = nullptr) : QWidget(parent) {

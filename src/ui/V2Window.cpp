@@ -209,7 +209,7 @@ struct V2Window::Impl {
 #endif
 };
 V2Window::V2Window(QWidget* parent):QMainWindow(parent),p_(std::make_unique<Impl>()) {
-    setWindowTitle(QStringLiteral("SimTransfer RT · V2 多模块传输"));resize(1350,900);setMinimumSize(1020,720);
+    setWindowTitle(QStringLiteral("SimTransfer RT · V2 多模块传输"));setWindowIcon(ui::appIcon());resize(1350,900);setMinimumSize(1020,720);
     auto* root=new ui::MedicalBackdrop;setCentralWidget(root);auto* layout=new QVBoxLayout(root);
     layout->setContentsMargins(18,14,18,14);layout->setSpacing(10);
     auto* header=new QFrame;header->setObjectName("headerCard");auto* hl=new QHBoxLayout(header);hl->setContentsMargins(16,10,16,10);hl->setSpacing(12);

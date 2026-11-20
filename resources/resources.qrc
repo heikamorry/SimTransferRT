@@ -1,4 +1,15 @@
 <RCC>
   <qresource prefix="/"><file>styles/light.qss</file></qresource>
-  <qresource prefix="/icons"><file alias="app.ico">app.ico</file></qresource>
+  <qresource prefix="/icons">
+    <file alias="app.ico">app.ico</file>
+    <file alias="app-16.png">icons/app-16.png</file>
+    <file alias="app-20.png">icons/app-20.png</file>
+    <file alias="app-24.png">icons/app-24.png</file>
+    <file alias="app-32.png">icons/app-32.png</file>
+    <file alias="app-40.png">icons/app-40.png</file>
+    <file alias="app-48.png">icons/app-48.png</file>
+    <file alias="app-64.png">icons/app-64.png</file>
+    <file alias="app-128.png">icons/app-128.png</file>
+    <file alias="app-256.png">icons/app-256.png</file>
+  </qresource>
 </RCC>

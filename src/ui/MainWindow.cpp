@@ -24,6 +24,7 @@
 namespace rt {
     MainWindow::MainWindow(QWidget*p):QMainWindow(p),controller_(this) {
         setWindowTitle(QStringLiteral("SimTransfer RT · 多模块实时 UDP 发送平台"));
+        setWindowIcon(ui::appIcon());
         resize(1500,920);
         setMinimumSize(1180,720);
         auto*root=new ui::MedicalBackdrop;

@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "ui/MedicalBackdrop.h"
 #include "ui/V2Window.h"
 #include <QApplication>
 #include <QCommandLineParser>
@@ -10,6 +11,9 @@
 #include <QSaveFile>
 #include <QTimer>
 #include <cstdio>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 #ifdef SIM_MODEL_PREVIEW
 #include "model/PreviewPanel.h"
 #include <QSurfaceFormat>
@@ -43,6 +47,20 @@ bool samePath(const QString& left, const QString& right) {
     return QFileInfo(left).absoluteFilePath().compare(QFileInfo(right).absoluteFilePath(),
                                                       Qt::CaseInsensitive) == 0;
 }
+#ifdef Q_OS_WIN
+void setTaskbarIdentity() {
+    // Without an explicit identity Windows may group the window with whatever
+    // launched it (terminal, IDE, file manager) and reuse that process's
+    // taskbar icon. Set it before the first window exists so the button keeps
+    // our own icon. shell32 stays loaded for the lifetime of the process.
+    if (HMODULE shell = LoadLibraryW(L"shell32.dll")) {
+        using SetAumid = HRESULT(WINAPI*)(PCWSTR);
+        if (auto setAumid = reinterpret_cast<SetAumid>(
+                GetProcAddress(shell, "SetCurrentProcessExplicitAppUserModelID")))
+            setAumid(L"SimTransferLab.SimTransferRT");
+    }
+}
+#endif
 }
 
 int main(int argc,char**argv) {
@@ -52,7 +70,10 @@ int main(int argc,char**argv) {
     QApplication app(argc,argv);
     app.setOrganizationName("SimTransferLab");
     app.setApplicationName("SimTransferRT");
-    app.setWindowIcon(QIcon(":/icons/app.ico"));
+    app.setWindowIcon(rt::ui::appIcon());
+#ifdef Q_OS_WIN
+    setTaskbarIdentity();
+#endif
     qRegisterMetaType<rt::Snapshot>();
     QFile style(":/styles/light.qss");
     if(style.open(QIODevice::ReadOnly))app.setStyleSheet(QString::fromUtf8(style.readAll()));

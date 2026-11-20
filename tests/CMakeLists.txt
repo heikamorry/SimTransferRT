@@ -23,7 +23,8 @@ if(SIM_WITH_QT)
         ../src/ui/V2Window.cpp ../src/ui/V2Window.h
         ../src/ui/MainWindow.cpp ../src/ui/MainWindow.h
         ../src/ui/ConfigPanel.cpp ../src/ui/ConfigPanel.h
-        ../src/ui/FrameTableModel.cpp ../src/ui/FrameTableModel.h)
+        ../src/ui/FrameTableModel.cpp ../src/ui/FrameTableModel.h
+        ../resources/resources.qrc)
     target_link_libraries(SimRtV2UiTests PRIVATE sim_rt_v2 sim_rt_app Qt6::Widgets)
     add_test(NAME rt_v2_ui COMMAND SimRtV2UiTests)
     set_tests_properties(rt_v2_ui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)

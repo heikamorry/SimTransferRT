@@ -10,7 +10,7 @@
   `46d9d2c06637b219270877c9e16155cbd015b6dc84349af064c088e9b5b12f7b`，
   只解压 `boost/` 与许可证到 `%LOCALAPPDATA%\SimTransferRT\deps\boost_1_88_0`。
   离线时用 `-ArchivePath <已下载文件>`；也可 `-DSIM_BOOST_ROOT=<含 boost/asio.hpp 的目录>`。
-- CMake：默认 `SIM_WITH_ASIO=OFF`，既有构建不受影响；`-DSIM_WITH_ASIO=ON` 时由
+- CMake：asio 分支默认 `SIM_WITH_ASIO=ON`；对比构建可显式 `-DSIM_WITH_ASIO=OFF`，此时 GUI 回退到 Qt 适配器用于对照。启用时由
   `cmake/AsioDependencies.cmake` 校验版本并生成 `sim_asio_headers`。
 
 ## 已迁移路径
@@ -19,8 +19,8 @@
 |---|---|
 | V2 CLI 发送（`SimTransferCli --protocol v2`） | `--transport qt`（默认）、`native`、`asio-sync`、`asio-async` 均可选 |
 | V2 原生探针（`SimRtProbe`） | `--transport native`（默认）、`asio-sync`、`asio-async` |
-| V2 GUI 接收 socket | 已加入 `AsioReceiverSocket`，但当前界面仍使用 `QUdpSocket`；尚未提供界面切换 |
-| V2 GUI 发送后端选择 | 未完成；界面仍固定 Qt 适配器 |
+| V2 GUI 接收 socket | **固定使用 `AsioReceiverSocket`**，界面无 Qt socket 分支（`SIM_WITH_ASIO=ON` 时） |
+| V2 GUI 发送 | **固定 `makeAsioUdpTransport(true)`**，无运行时后端选择 |
 | V1、模型转换、BX 点云、VTK 预览 | 未改动，仍用原实现 |
 
 ## 线程与所有权
@@ -78,6 +78,7 @@ build\asio-enabled\SimTransferCli.exe --protocol v2 --transport asio-sync  ^
 
 ## 未完成 / 边界
 
-- GUI 接收器尚未切到 Asio，也没有界面选择器；`AsioReceiverSocket` 只是可用组件。
+- GUI 的收发已写死 Asio，没有界面选择器；`SIM_WITH_ASIO=OFF` 仅用于保留 Qt 对照构建。
+- `rt_v2_ui` 中依赖 Qt 时序的自动源端口复用用例在 Asio 构建下跳过；Asio 的独占绑定由 `rt_asio_transport` 覆盖。
 - 异步路径一次只观察一个完成，未实现多包在途流水线；因此本轮不宣称异步优于同步。
 - 未做 30 分钟长测、真实网卡双机、ETW 逐片定位；这些需要在本机 Windows 环境继续执行。

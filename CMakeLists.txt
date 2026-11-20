@@ -29,7 +29,7 @@ if(SIM_WITH_QT)
     set(CMAKE_AUTOUIC OFF) # Entire interface is C++, no .ui or QML.
     set(CMAKE_AUTORCC ON)
 endif()
-option(SIM_WITH_ASIO "Build the pinned Boost.Asio V2 transport candidates" OFF)
+option(SIM_WITH_ASIO "Build the pinned Boost.Asio V2 transport (required by the asio GUI)" ON)
 if(SIM_WITH_ASIO)
     include(cmake/AsioDependencies.cmake)
 endif()

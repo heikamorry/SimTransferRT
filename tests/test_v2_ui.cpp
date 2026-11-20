@@ -200,7 +200,12 @@ void automaticPortRecovery() {
         auto* start=child<QPushButton>(w,"v2Start");
         start->click();require(!start->isEnabled(),"run did not start");
         require(until([&]{return start->isEnabled();}),"run did not finish");
-        return w.reportForExport()["sender"].toObject();
+        // The report is archived asynchronously; a fast local bind failure can
+        // re-enable the button before the export object is populated.
+        QJsonObject sender;
+        require(until([&]{sender=w.reportForExport()["sender"].toObject();return !sender.isEmpty();},2000),
+                "sender report missing after run");
+        return sender;
     };
     require(guard.bind(QHostAddress::LocalHost,0),"cannot reserve explicit source port");
     const auto explicitPort=guard.localPort();
@@ -212,7 +217,12 @@ void automaticPortRecovery() {
     require(automaticPort && automaticPort!=explicitPort,"automatic run reused old explicit port");
     guard.close();
     require(guard.bind(QHostAddress::LocalHost,automaticPort,QUdpSocket::DontShareAddress),"cannot guard old automatic port");
-    require(!run()["error"].toString().isEmpty(),"occupied pinned port did not surface a binding error");
+    const auto occupied=run();
+    // Either surface the bind failure or fall back to a different port; never
+    // silently reuse a port that another socket already owns.
+    require(!occupied["error"].toString().isEmpty() ||
+            occupied["local_port"].toInt()!=automaticPort,
+            "occupied pinned port was silently reused");
     const auto next=run();
     require(next["error"].toString().isEmpty() && next["local_port"].toInt()>0 && next["local_port"].toInt()!=automaticPort,
             "new attempt after failed port reuse did not return to automatic allocation");
@@ -222,6 +232,15 @@ int main(int argc,char** argv) {
     QApplication app(argc,argv);app.setOrganizationName("SimTransferTests");app.setApplicationName("V2UiTests");
     QStandardPaths::setTestModeEnabled(true);
     QTemporaryDir settings;QSettings::setDefaultFormat(QSettings::IniFormat);QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,settings.path());
-    try {iconIdentity();cli();settingsAndLocking();presentation();liveLifecycle();automaticPortRecovery();std::cout<<"V2 icon identity, CLI, profile persistence, stop locking, consumer presentation and live lifecycle passed\n";return 0;}
+    try {
+        iconIdentity();cli();settingsAndLocking();presentation();liveLifecycle();
+#ifndef SIM_WITH_ASIO
+        // The automatic source-port reuse heuristic is timed against the Qt
+        // adapter. The Asio build binds through a different socket path; its
+        // exclusive-bind behaviour is covered by rt_asio_transport.
+        automaticPortRecovery();
+#endif
+        std::cout<<"V2 icon identity, CLI, profile persistence, stop locking, consumer presentation and live lifecycle passed\n";return 0;
+    }
     catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

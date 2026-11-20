@@ -76,6 +76,18 @@ void roundTrip(bool async) {
     require(sender->inFlight() == 0, "cancelled operations are reaped, not leaked");
     (void)pressured;
 }
+void exclusiveBind() {
+    auto owner = rt::makeAsioUdpTransport(false);
+    owner->open(config(0, 1));
+    auto second = rt::makeAsioUdpTransport(false);
+    bool failed = false;
+    try {
+        second->open(config(owner->localPort(), 1));
+    } catch (const std::exception&) {
+        failed = true;
+    }
+    require(failed, "a port owned by another socket must not be silently shared");
+}
 void feedback() {
     auto sender = rt::makeAsioUdpTransport(false);
     sender->open(config(0, 1));
@@ -100,6 +112,7 @@ int main() {
     try {
         roundTrip(false);
         roundTrip(true);
+        exclusiveBind();
         feedback();
         std::cout << "Asio transport sync, async, backpressure and cancellation passed\n";
         return 0;

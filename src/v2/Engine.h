@@ -1,7 +1,9 @@
 #pragma once
 #include "v2/Config.h"
+#include "network/IUdpTransport.h"
 #include "protocol/V2PacketCodec.h"
 #include "core/Diagnostics.h"
+#include "network/IUdpTransport.h"
 #include <atomic>
 #include <deque>
 #include <memory>
@@ -163,6 +165,9 @@ public:
     void setEffectiveMbps(unsigned,std::uint64_t nowUs);
     void setNextSample(std::uint8_t module,std::uint64_t plannedUs);
     bool step(std::uint64_t nowUs,const SendFunction&,const std::function<std::uint64_t()>& clock);
+    // Same selection and accounting as step(); an asynchronous transport is
+    // observed to completion on this thread, so initiation is never success.
+    bool stepTransport(std::uint64_t nowUs,IUdpTransport&,const std::function<std::uint64_t()>& clock);
     std::uint64_t nextDueUs() const;
     bool pendingInitial()const;
     void stop();
@@ -208,6 +213,7 @@ private:
     std::uint64_t statusAccepted_=0,statusSent_=0,statusDropped_=0,statusSendErrors_=0,statusCancelled_=0,statusHigh_=0,statusLatency_=0;
     std::uint64_t invalidFeedback_=0,sourceRejected_=0,globalViolations_=0,rateChanges_=0;
     std::uint32_t nextStatus_;
+    std::uint64_t asyncToken_=0;
     static constexpr std::size_t MaxPacketEvents=32;
     std::vector<PacketEvent> worst_;
     std::size_t lowestPacketEvent_=0;
@@ -216,6 +222,7 @@ private:
     void cancel(Slot&,bool stopping);
     void recordEvent(const PacketEvent&);
     void recordFirstDispatch(Slot&,std::uint64_t pacingDueUs);
+    bool stepInternal(std::uint64_t nowUs,const std::function<SendDisposition(const std::uint8_t*,std::size_t)>&,const std::function<std::uint64_t()>& clock,bool allowDefer);
     bool canServeNdiAtEpBoundary(const Slot& ndi,const Slot& ep,std::uint64_t now)const;
     void recordFragment(Slot&,FragmentInterval);
     void finishFragmentSpan(Slot&);

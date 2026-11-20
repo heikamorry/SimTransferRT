@@ -7,6 +7,11 @@
 #include "v2/Runner.h"
 #include "v2/Receiver.h"
 #include "network/QtUdpTransport.h"
+#ifdef SIM_WITH_ASIO
+#include "network/AsioReceiverSocket.h"
+#include "network/AsioUdpTransport.h"
+#include "network/NativeUdpTransport.h"
+#endif
 #include "core/SamplingClock.h"
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -77,11 +82,87 @@ void cell(QTableWidget* t,int r,int c,const QString& s) {
 }
 struct ReceiverUpdate {
     v2::ReceiverSnapshot snapshot;
-    QString bindAddress,peerAddress;
+    QString bindAddress,peerAddress,backend;
     quint16 port=0,peerPort=0;
     std::uint64_t generation=0,observedUs=0,rejectedSources=0,feedbackErrors=0;
     bool final=false;
 };
+
+class QtReceiverSocket {
+public:
+    QtReceiverSocket(const QHostAddress& address,quint16 port) {
+        if(!socket_.bind(address,port,QUdpSocket::DontShareAddress))
+            throw std::runtime_error(socket_.errorString().toStdString());
+        socket_.setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,4*1024*1024);
+    }
+    void waitReadable() {
+        if(!socket_.hasPendingDatagrams())socket_.waitForReadyRead(1);
+    }
+    int read(std::uint8_t* data,std::size_t capacity,std::uint32_t& ip,std::uint16_t& port) {
+        if(!socket_.hasPendingDatagrams())return -1;
+        QHostAddress source;
+        const auto length=socket_.readDatagram(reinterpret_cast<char*>(data),static_cast<qint64>(capacity),&source,&port);
+        ip=source.toIPv4Address();
+        return static_cast<int>(length);
+    }
+    bool sendFeedback(const Datagram& packet,std::uint32_t ip,std::uint16_t port) {
+        const auto size=static_cast<qint64>(packet.size);
+        return socket_.writeDatagram(reinterpret_cast<const char*>(packet.bytes.data()),size,QHostAddress(ip),port)==size;
+    }
+private:
+    QUdpSocket socket_;
+};
+
+template<class Socket,class Publish>
+void receiveLoop(Socket& socket,const std::atomic<bool>& stop,ReceiverUpdate state,Publish publish) {
+    v2::Receiver receiver(true,[] {return monotonicUs();});
+    std::optional<std::uint32_t> peer;
+    std::uint64_t nextPublish=0;
+    auto snapshot=[&](bool final) {
+        auto update=state;
+        update.observedUs=monotonicUs();
+        update.snapshot=receiver.snapshot(update.observedUs);
+        update.final=final;
+        publish(std::move(update));
+    };
+    auto sendFeedback=[&](const std::vector<Datagram>& packets) {
+        for(const auto& packet:packets) {
+            if(stop)break;
+            if(!socket.sendFeedback(packet,*peer,state.peerPort))++state.feedbackErrors;
+        }
+    };
+    // 容纳整个 IPv4 UDP 负载，让协议层拒绝超长包，不会把截断前缀当作合法报文。
+    std::array<std::uint8_t,65536> buffer;
+    try {
+        while(!stop) {
+            socket.waitReadable();
+            const auto batchStart=monotonicUs();
+            for(unsigned n=0;n<64 && !stop;++n) {
+                // 即使线程被抢占，也先尝试读取一个排队报文，再处理到期定时器。
+                if(n && monotonicUs()-batchStart>=500)break;
+                std::uint32_t source=0;std::uint16_t port=0;
+                const int length=socket.read(buffer.data(),buffer.size(),source,port);
+                if(length<0)break;
+                if(peer && (*peer!=source || state.peerPort!=port)) {++state.rejectedSources;continue;}
+                const auto size=static_cast<std::size_t>(length);
+                if(!peer) {
+                    try {
+                        if(size<8)throw ProtocolError("short packet");
+                        if(buffer[6]==DataType)(void)v2::decodeData(buffer.data(),size);
+                        else if(buffer[6]==v2::StatusType)(void)v2::decodeStatus(buffer.data(),size);
+                        else throw ProtocolError("not data/status");
+                    } catch(const ProtocolError&) {receiver.receive(buffer.data(),size,monotonicUs());continue;}
+                    peer=source;state.peerAddress=QHostAddress(source).toString();state.peerPort=port;
+                }
+                sendFeedback(receiver.receiveAndPollObserved(buffer.data(),size,monotonicUs()));
+            }
+            if(peer && !stop)sendFeedback(receiver.poll(monotonicUs()));
+            const auto now=monotonicUs();
+            if(now>=nextPublish) {snapshot(false);nextPublish=now+5000;}
+        }
+    } catch(...) {snapshot(true);throw;}
+    snapshot(true);
+}
 
 QString routeKey(const v2::Config& c) {
     return QString::fromStdString(c.bindIp)+"/"+QString::fromStdString(c.targetIp)+":"+QString::number(c.targetPort);
@@ -587,7 +668,7 @@ void V2Window::toggleReceiver() {
             QString peerAddress;
             auto publish=[&](bool final) {
                 const auto now=monotonicUs();
-                std::optional<ReceiverUpdate> update{ReceiverUpdate{receiver.snapshot(now),bindAddress,peerAddress,port,peerPort,
+                std::optional<ReceiverUpdate> update{ReceiverUpdate{receiver.snapshot(now),bindAddress,peerAddress,QStringLiteral("qt"),port,peerPort,
                                       generation,now,rejectedSources,feedbackErrors,final}};
                 std::lock_guard<std::mutex> lock(p_->receiverMutex);
                 p_->receiverLatest.swap(update); // Release the overwritten frame after unlocking.

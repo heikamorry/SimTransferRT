@@ -8,6 +8,7 @@ struct Config {
     std::uint16_t targetPort=5650, commandPort=5500, allowedNackPort=0;
     unsigned linkMbps=1000, observedLinkMbps=0, pathLimitMbps=0;
     bool allowOversubscribed=false;
+    bool mailboxFastPath=false; // opt-in candidate; queue capacity and admission are unchanged
     bool handoffTrace=false;
     bool fragmentTrace=false;
     std::uint64_t durationUs=0, frameLimit=0;

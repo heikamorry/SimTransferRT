@@ -3,6 +3,10 @@
 #include "protocol/PacketCodec.h"
 #include "core/SamplingClock.h"
 #include <algorithm>
+#include <thread>
+#if defined(_M_X64)||defined(_M_IX86)
+#include <intrin.h>
+#endif
 #include <limits>
 
 namespace rt::v2 {
@@ -285,6 +289,39 @@ bool Engine::canServeNdiAtEpBoundary(const Slot& ndi,const Slot& ep,std::uint64_
     return epWireUs<=leftover&&serviceUs<=leftover/remaining;
 }
 bool Engine::step(std::uint64_t now,const SendFunction& send,const std::function<std::uint64_t()>& clock) {
+    return stepInternal(now,[&](const std::uint8_t* p,std::size_t n){
+        return send(p,n)?SendDisposition::Complete:SendDisposition::Failed;
+    },clock,false);
+}
+bool Engine::stepTransport(std::uint64_t now,IUdpTransport& transport,const std::function<std::uint64_t()>& clock) {
+    const bool asynchronous=transport.sendApi().find("async_send_to")!=std::string::npos;
+    if(!asynchronous)
+        return stepInternal(now,[&](const std::uint8_t* p,std::size_t n){
+            return transport.submitDatagram(p,n,0);
+        },clock,true);
+    // One dispatch at a time. The completion is observed before the next
+    // selection, so this candidate never reports initiation as a completed send
+    // and never reuses a buffer still owned by the socket.
+    std::uint64_t token=0;
+    return stepInternal(now,[&](const std::uint8_t* p,std::size_t n){
+        token=++asyncToken_;
+        const auto started=transport.submitDatagram(p,n,token);
+        if(started!=SendDisposition::Pending)return started;
+        for(unsigned spin=0;spin<200000;++spin){
+            SendCompletion done;
+            while(transport.pollCompletion(done))
+                if(done.token==token)return done.disposition;
+            if(!transport.inFlight())break;
+#if defined(_M_X64)||defined(_M_IX86)
+            _mm_pause();
+#else
+            std::this_thread::yield();
+#endif
+        }
+        return SendDisposition::Failed;
+    },clock,true);
+}
+bool Engine::stepInternal(std::uint64_t now,const std::function<SendDisposition(const std::uint8_t*,std::size_t)>& send,const std::function<std::uint64_t()>& clock,bool allowDefer) {
     // Selection below already tests whether any packet is pending.
     const auto adjusted=(allowedTick_+rate_-1)/rate_;
     if(now<adjusted)return false;
@@ -339,7 +376,9 @@ bool Engine::step(std::uint64_t now,const SendFunction& send,const std::function
         end=clock();
     }else{
         if(traceOriginal)callStart=clock();
-        success=send(packet.bytes.data(),packet.size);
+        const auto disposition=send(packet.bytes.data(),packet.size);
+        if(disposition==SendDisposition::Backpressure && allowDefer)return false;
+        success=disposition==SendDisposition::Complete;
         end=clock();
     }
     const auto cost=(packet.size+66)*8ULL;

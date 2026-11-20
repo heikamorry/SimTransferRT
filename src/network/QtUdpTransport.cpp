@@ -26,27 +26,41 @@ namespace rt {
             void open(const StreamConfig& config)override {
                 QtUdpTransport::open(config);
                 descriptor_=static_cast<SOCKET>(socket_.socketDescriptor());
+                // QUdpSocket can leave the Winsock send buffer at its 64 KiB
+                // default. Set the same 4 MiB budget on the native descriptor
+                // so a fair comparison does not measure a socket-option gap.
+                int buffer=4*1024*1024;
+                setsockopt(descriptor_,SOL_SOCKET,SO_SNDBUF,reinterpret_cast<const char*>(&buffer),sizeof(buffer));
+                setsockopt(descriptor_,SOL_SOCKET,SO_RCVBUF,reinterpret_cast<const char*>(&buffer),sizeof(buffer));
+                int actual=0;int length=sizeof(actual);
+                if(!getsockopt(descriptor_,SOL_SOCKET,SO_SNDBUF,reinterpret_cast<char*>(&actual),&length))sendBuffer_=actual;
+                length=sizeof(actual);
+                if(!getsockopt(descriptor_,SOL_SOCKET,SO_RCVBUF,reinterpret_cast<char*>(&actual),&length))receiveBuffer_=actual;
                 peer_.sin_family=AF_INET;
                 peer_.sin_port=htons(config.targetPort);
                 peer_.sin_addr.s_addr=htonl(target_.toIPv4Address());
             }
             bool send(const std::uint8_t* data,std::size_t size)override {
+                return submitDatagram(data,size,0)==SendDisposition::Complete;
+            }
+            SendDisposition submitDatagram(const std::uint8_t* data,std::size_t size,std::uint64_t)override {
                 if(size>MaxDatagram){
                     error_="datagram exceeds 1472";
-                    return false;
+                    return SendDisposition::Failed;
                 }
                 const auto sent=::sendto(descriptor_,reinterpret_cast<const char*>(data),
                                          static_cast<int>(size),0,reinterpret_cast<const sockaddr*>(&peer_),sizeof(peer_));
                 if(sent==SOCKET_ERROR){
                     const int code=WSAGetLastError();
+                    if(code==WSAEWOULDBLOCK)return SendDisposition::Backpressure;
                     error_="Winsock sendto error "+std::to_string(code);
-                    return false;
+                    return SendDisposition::Failed;
                 }
                 if(sent!=static_cast<int>(size)){
                     error_="short UDP sendto: "+std::to_string(sent)+" of "+std::to_string(size)+" bytes";
-                    return false;
+                    return SendDisposition::Failed;
                 }
-                return true;
+                return SendDisposition::Complete;
             }
             std::string sendApi()const override {return "Winsock sendto";}
         private:
@@ -116,6 +130,10 @@ namespace rt {
         out.sourceIp=from.toString().toStdString();
         out.sourcePort=port;
         return true;
+    }
+    SendDisposition QtUdpTransport::submitDatagram(const std::uint8_t* p,std::size_t n,std::uint64_t) {
+        if(send(p,n))return SendDisposition::Complete;
+        return n<=MaxDatagram && socket_.error()==QAbstractSocket::TemporaryError ? SendDisposition::Backpressure : SendDisposition::Failed;
     }
     ReceiveOutcome QtUdpTransport::receiveFeedback(IncomingDatagram& out) {
         return readUdpFeedback(static_cast<FeedbackSocket>(socket_.socketDescriptor()),out,error_);

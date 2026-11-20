@@ -30,6 +30,7 @@ namespace rt {
         };
         std::uint16_t port=0;
         bool df=false;
+        int sendBuffer=0,receiveBuffer=0,resetError=0;
         std::string error;
     };
     NativeUdpTransport::NativeUdpTransport():p_(std::make_unique<Impl>()) {
@@ -76,7 +77,7 @@ namespace rt {
         if(setsockopt(p_->fd,IPPROTO_IP,IP_DONTFRAGMENT,reinterpret_cast<const char*>(&df),sizeof(df)))throw std::runtime_error("DF: "+socketError());
         BOOL reset=FALSE;
         DWORD ignored=0;
-        WSAIoctl(p_->fd,SIO_UDP_CONNRESET,&reset,sizeof(reset),nullptr,0,&ignored,nullptr,nullptr);
+        if(WSAIoctl(p_->fd,SIO_UDP_CONNRESET,&reset,sizeof(reset),nullptr,0,&ignored,nullptr,nullptr))p_->resetError=WSAGetLastError();
 #else
         if(p_->fd<0)throw std::runtime_error(socketError());
         if(fcntl(p_->fd,F_SETFL,fcntl(p_->fd,F_GETFL,0)|O_NONBLOCK)<0)throw std::runtime_error(socketError());
@@ -109,18 +110,27 @@ namespace rt {
 #endif
         if(getsockname(p_->fd,reinterpret_cast<sockaddr*>(&local),&len))throw std::runtime_error(socketError());
         p_->port=ntohs(local.sin_port);
+        len=sizeof(int);getsockopt(p_->fd,SOL_SOCKET,SO_SNDBUF,reinterpret_cast<char*>(&p_->sendBuffer),&len);
+        len=sizeof(int);getsockopt(p_->fd,SOL_SOCKET,SO_RCVBUF,reinterpret_cast<char*>(&p_->receiveBuffer),&len);
     }
+    int NativeUdpTransport::sendBufferBytes()const{return p_->sendBuffer;}
+    int NativeUdpTransport::receiveBufferBytes()const{return p_->receiveBuffer;}
+    int NativeUdpTransport::connResetError()const{return p_->resetError;}
     bool NativeUdpTransport::send(const std::uint8_t* bytes,std::size_t n) {
+        return submitDatagram(bytes,n,0)==SendDisposition::Complete;
+    }
+    SendDisposition NativeUdpTransport::submitDatagram(const std::uint8_t* bytes,std::size_t n,std::uint64_t) {
         if(n>MaxDatagram) {
             p_->error="datagram exceeds 1472";
-            return false;
+            return SendDisposition::Failed;
         }
         auto result=sendto(p_->fd,reinterpret_cast<const char*>(bytes),static_cast<int>(n),0,reinterpret_cast<const sockaddr*>(&p_->peer),sizeof(p_->peer));
+        if(result<0 && wouldBlock())return SendDisposition::Backpressure;
         if(result!=static_cast<decltype(result)>(n)) {
-            p_->error=socketError();
-            return false;
+            p_->error=result<0?socketError():"short UDP send";
+            return SendDisposition::Failed;
         }
-        return true;
+        return SendDisposition::Complete;
     }
     bool NativeUdpTransport::receive(IncomingDatagram& out) {
         std::array<std::uint8_t,MaxDatagram+1>b {

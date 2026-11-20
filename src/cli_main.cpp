@@ -3,6 +3,7 @@
 #include "support/V2CliOptions.h"
 #include "v2/Runner.h"
 #include "network/QtUdpTransport.h"
+#include "network/V2TransportSelection.h"
 #include <QCoreApplication>
 #include <QTimer>
 #include <QSaveFile>
@@ -37,7 +38,7 @@ int main(int argc,char**argv) {
 #ifdef SIGBREAK
             std::signal(SIGBREAK,signalHandler);
 #endif
-            const auto result=rt::v2::run(options.config,rt::makeV2QtUdpTransport,
+            const auto result=rt::v2::run(options.config,rt::v2::selectTransport(options.transport,rt::makeV2QtUdpTransport),
                                           []{return interrupted!=0;},options.handoffTriggerReport,options.fragmentTriggerReport);
             std::cout<<result.reportJson<<'\n';
             if(!options.report.empty()){

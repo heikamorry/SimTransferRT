@@ -8,6 +8,10 @@ namespace rt {
         ~NativeUdpTransport()override;
         void open(const StreamConfig&)override;
         bool send(const std::uint8_t*,std::size_t)override;
+        SendDisposition submitDatagram(const std::uint8_t*,std::size_t,std::uint64_t)override;
+        int sendBufferBytes()const override;
+        int receiveBufferBytes()const override;
+        int connResetError()const override;
         bool receive(IncomingDatagram&)override;
         ReceiveOutcome receiveFeedback(IncomingDatagram&)override;
         std::uint16_t localPort()const override;

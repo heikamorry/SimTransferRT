@@ -21,6 +21,8 @@ public:
     ~Session();
     Session(const Session&)=delete;
     Session& operator=(const Session&)=delete;
+    // Owner-thread operation; replacing the factory during a run is rejected.
+    void setTransportFactory(TransportFactory);
     void start(const Config&);
     void stop() noexcept;
     bool busy() const noexcept;

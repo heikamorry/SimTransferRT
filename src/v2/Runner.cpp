@@ -144,6 +144,27 @@ struct QueuedFrame {
 };
 struct SourceMailbox {
     std::mutex mutex;std::deque<QueuedFrame> queue;SourceStats stats;
+    // Only used by the opt-in untraced path. write is published after the
+    // immutable frame, read only after consumer releases that cell. At most
+    // four resident frames, exactly the same drop-new policy as the deque.
+    std::array<PreparedPtr,4> ring{};
+    alignas(64) std::atomic<unsigned> write{0};
+    alignas(64) std::atomic<unsigned> read{0};
+    unsigned push(PreparedPtr frame){
+        const auto w=write.load(std::memory_order_relaxed);
+        const auto used=w-read.load(std::memory_order_acquire);
+        if(used==ring.size())return 0;
+        ring[w%ring.size()]=std::move(frame);
+        write.store(w+1,std::memory_order_release);
+        return used+1;
+    }
+    PreparedPtr pop(){
+        const auto r=read.load(std::memory_order_relaxed);
+        if(r==write.load(std::memory_order_acquire))return {};
+        auto frame=std::move(ring[r%ring.size()]);
+        read.store(r+1,std::memory_order_release);
+        return frame;
+    }
     std::atomic<std::uint64_t> nextSample{0};std::atomic<bool> done{false};
 };
 struct State {
@@ -152,7 +173,9 @@ struct State {
     std::array<SourceStats,2> sources;EngineSnapshot engine;
     std::uint64_t startedUs=0,endedUs=0,elapsedUs=0;
     std::uint16_t localPort=0;bool df=false,finished=false;
-    std::string transport,sendApi,error,endedReason;
+    std::string transport,sendApi,boostVersion,error,endedReason;
+    int sendBuffer=0,receiveBuffer=0,resetError=0;
+    bool asynchronous=false;
     std::uint64_t feedbackPollCalls=0,feedbackEmptyPolls=0,feedbackReadErrors=0;
     std::string lastFeedbackReadError;
     std::uint64_t statusIngressAccepted=0,statusIngressRejected=0,statusIngressCancelled=0,statusIngressPending=0;
@@ -310,11 +333,15 @@ void writeFragmentTrace(std::ostream& o,const State& s) {
 }
 std::string report(const State& s){
     std::ostringstream o;o<<std::setprecision(12);
-    o<<"{\"kind\":\"v2_sender\",\"protocol_version\":2,\"report_schema_version\":1,\"architecture\":\"B: independent preparation workers and one UDP sender\",\"run_id\":"<<quote(s.config.runId)
+    o<<"{\"kind\":\"v2_sender\",\"protocol_version\":2,\"report_schema_version\":2,\"architecture\":\"B: independent preparation workers and one UDP sender\",\"run_id\":"<<quote(s.config.runId)
      <<",\"finished\":"<<(s.finished?"true":"false")<<",\"error\":"<<quote(s.error)<<",\"ended_reason\":"<<quote(s.endedReason)
      <<",\"elapsed_us\":"<<s.elapsedUs<<",\"started_host_us\":\""<<s.startedUs<<"\",\"ended_host_us\":\""<<s.endedUs<<"\",\"transport\":"<<quote(s.transport)
      <<",\"send_api\":"<<(s.sendApi.empty()?"null":quote(s.sendApi))<<",\"local_port\":"<<s.localPort<<",\"df_enabled\":"<<(s.df?"true":"false")
-     <<",\"config\":{\"network_profile\":"<<quote(networkProfileName(s.config.linkMbps))<<",\"selected_link_mbps\":"<<s.config.linkMbps<<",\"effective_link_mbps\":"<<s.engine.effectiveMbps
+     <<",\"boost_version\":"<<(s.boostVersion.empty()?"null":quote(s.boostVersion))
+     <<",\"build_type\":"<<quote(SIM_BUILD_TYPE)<<",\"source_revision_at_configure\":"<<quote(SIM_SOURCE_REV)<<",\"tracked_dirty_at_configure\":"<<quote(SIM_SOURCE_DIRTY)
+     <<",\"socket_send_buffer_bytes\":"<<s.sendBuffer<<",\"socket_receive_buffer_bytes\":"<<s.receiveBuffer<<",\"udp_reset_setup_error\":"<<s.resetError
+     <<",\"first_send_endpoint\":"<<quote(s.asynchronous?"completion_handler_observed":"local_synchronous_return")
+     <<",\"config\":{\"mailbox_fast_path\":"<<(s.config.mailboxFastPath?"true":"false")<<",\"network_profile\":"<<quote(networkProfileName(s.config.linkMbps))<<",\"selected_link_mbps\":"<<s.config.linkMbps<<",\"effective_link_mbps\":"<<s.engine.effectiveMbps
      <<",\"target_ip\":"<<quote(s.config.targetIp)<<",\"bind_ip\":"<<quote(s.config.bindIp)<<",\"target_port\":"<<s.config.targetPort<<",\"command_port\":"<<s.config.commandPort
      <<",\"configured_observed_limit_mbps\":"<<s.config.observedLinkMbps<<",\"path_limit_mbps\":"<<s.config.pathLimitMbps<<",\"ndi_tools\":"<<s.config.ndiTools<<",\"ep_bytes\":"<<s.config.epBytes
      <<",\"ndi_hz\":"<<s.config.ndiHz<<",\"ep_hz\":"<<s.config.epHz<<",\"ndi_enabled\":"<<(s.config.ndiEnabled?"true":"false")<<",\"ep_enabled\":"<<(s.config.epEnabled?"true":"false")
@@ -370,7 +397,7 @@ std::string report(const State& s){
     for(unsigned i=0;i<2;++i){const auto&a=s.sources[i];const auto&m=s.engine.modules[i];const bool enabled=i==0?s.config.ndiEnabled:s.config.epEnabled;const auto noData=!enabled||!a.sampled;const std::string name=i==0?"NDI":"EP";
         row("sampling_integrity",i+1,name+" source continuity","Original independent sample/query slots; no interpolation","0 skipped slots / queue loss / source error / unmapped device frame",std::to_string(a.skipped)+" skipped, "+std::to_string(a.queueDrops)+" queue drops, "+std::to_string(a.errors)+" errors, "+std::to_string(a.unmappedSourceFrames)+" unmapped",a.skipped||a.queueDrops||a.errors||a.unmappedSourceFrames?"fail":(noData?"not_tested":"pass"),"A source failure remains failed even before its first sample. Hardware sampling is separate.");
         row("sampling_jitter",i+1,name+" sampling deviation (retained engineering target)","Absolute actual production/query interval minus configured nominal period; all intervals","strictly < 1000 us",std::to_string(a.deviation.maxUs)+" us; "+std::to_string(a.deviation.overLimit)+" / "+std::to_string(a.deviation.count)+" violations",!a.deviation.count||a.kind=="device"?"not_tested":(a.deviation.maxUs>=1000?"fail":"pass"),"Device host query intervals cannot establish hardware sample jitter; the <1 ms engineering threshold is unchanged");
-        row("initial_submission",i+1,name+" complete initial transmission","Simulation/playback sample to last local send return; device input retains host-request proxy separately",i==0?"<= 15000 us":"<= 18000 us",std::to_string(m.initialDuration.maxUs)+" us; "+std::to_string(m.deadlineMisses)+" late; "+std::to_string(m.initialIncomplete)+" incomplete",!a.built||a.kind=="device"?"not_tested":(m.deadlineMisses||m.initialIncomplete||m.initialComplete!=a.built?"fail":"pass"),"Local submission only; device common timestamp does not independently establish source-to-host clock offset or physical egress");
+        row("initial_submission",i+1,name+" complete initial transmission",s.asynchronous?"Sample to observation of all successful local completion handlers (not NIC egress)":"Simulation/playback sample to last local send return; device input retains host-request proxy separately",i==0?"<= 15000 us":"<= 18000 us",std::to_string(m.initialDuration.maxUs)+" us; "+std::to_string(m.deadlineMisses)+" late; "+std::to_string(m.initialIncomplete)+" incomplete",!a.built||a.kind=="device"?"not_tested":(m.deadlineMisses||m.initialIncomplete||m.initialComplete!=a.built?"fail":"pass"),"Local submission only; device common timestamp does not independently establish source-to-host clock offset or physical egress");
         row("packet_gap_jitter",i+1,name+" packet interval deviation (engineering target)","Actual first-copy interval minus original global scheduling plan interval","strictly < 1000 us",std::to_string(m.packetGapDeviation.maxUs)+" us; "+std::to_string(m.packetGapDeviation.overLimit)+" / "+std::to_string(m.packetGapDeviation.count)+" violations",!m.packetGapDeviation.count?"not_tested":(m.packetGapDeviation.maxUs>=1000?"fail":"pass"),"Full-population counters; original due time is never replaced by catch-up due time");
         row("hardware_sampling",i+1,name+" new hardware sampling and common timestamp","Device frame counter, calibrated clock mapping and measured source rate",i==0?"V2 ~60 Hz and verified common microsecond clock":"V2 50 Hz and verified common microsecond clock","No physical device timing evidence","not_tested","Simulation/playback cannot verify real Aurora 40/66 Hz mode or EP sampling clock");
         row("receiver_delivery",i+1,name+" complete receive and consume","Compare paired receiver report and content/frame ledgers","All built frames accounted for","Requires paired receiver report","not_tested","UDP send success alone is not delivery evidence");
@@ -404,6 +431,7 @@ struct Session::Impl {
     mutable std::mutex mutex;
     std::shared_ptr<const State> state=std::make_shared<const State>();
     std::mutex statusMutex;std::deque<std::pair<Bytes,std::uint64_t>> statuses;
+    std::atomic<bool> hasStatus{false}; // hint only; payload ownership stays under statusMutex
     std::uint64_t acceptedStatuses=0,rejectedStatuses=0,cancelledStatuses=0;
     Impl(TransportFactory f,rt::aurora::NdiSourceFactory n,LinkObserver linkObserver)
         :factory(std::move(f)),ndiFactory(std::move(n)),observe(std::move(linkObserver)){}
@@ -438,10 +466,24 @@ void Session::Impl::source(Config c,unsigned id,std::uint64_t origin,SourceMailb
         if(id==EpModule)epTemplate.emplace(replay.empty()?std::move(ep):std::move(replay));
         const auto hz=id==1?c.ndiHz:c.epHz;const auto phase=id==1?c.ndiPhaseUs:c.epPhaseUs;
         ProducerWait sampleWait(producerStop,stats.wait,hz);
+        const bool ringPath=c.mailboxFastPath && !c.handoffTrace;
         std::uint64_t slot=0,previous=0;
         auto advance=[&](std::uint64_t now,PreparedPtr p={}){
             auto next=slot+1;const auto latest=(now-origin-phase)*hz/1000000ULL+1;
             if(latest>next){stats.skipped+=latest-next;next=latest;}slot=next;
+            if(ringPath){
+                mail.nextSample.store(origin+phase+(slot*1000000ULL)/hz,std::memory_order_release);
+                if(p){
+                    const auto depth=mail.push(std::move(p));
+                    if(!depth)++stats.queueDrops;
+                    stats.queueHighWater=std::max<std::uint64_t>(stats.queueHighWater,depth);
+                }
+                wake.notify();
+                // Snapshot data still have a mutex: no concurrent unsynchronised
+                // copy of strings or histogram storage. Final publish is unconditional.
+                publish();
+                return;
+            }
             stats.intervals=interval.summary();stats.deviation=deviation.summary();stats.lateness=late.summary();
             auto ticket=c.handoffTrace&&p?std::make_shared<TraceTicket>():nullptr;
             {
@@ -505,6 +547,7 @@ void Session::Impl::execute(Config c){
     if(c.handoffTrace || c.fragmentTrace)local.traceClock=captureTraceClock();
     sources[0].stats.nextId=c.initialNdiId;sources[1].stats.nextId=c.initialEpId;local.engine.nextStatusSequence=c.initialStatusSequence;
     std::unique_ptr<Engine> engineOwner;
+    std::unique_ptr<IUdpTransport> udp; // lives through cancellation and delivery of terminal completions
     std::thread observer;std::atomic<bool> observerStop{false};std::atomic<unsigned> observedRate{0};std::mutex observationMutex;LinkObservation latestObservation;
     auto publish=[&](const Engine* engine){
         {std::lock_guard<std::mutex> lock(observationMutex);if(latestObservation.observedAtUs)local.link=latestObservation;}
@@ -532,9 +575,11 @@ void Session::Impl::execute(Config c){
         auto fileBytes=[](const std::string& path){std::error_code error;if(path.empty())return std::size_t(0);const auto size=std::filesystem::file_size(std::filesystem::u8path(path),error);return error?std::size_t(0):static_cast<std::size_t>(size);};
         std::size_t knownNdiBytes=fileBytes(c.ndiReplayFile),knownEpBytes=fileBytes(c.epReplayFile);
         local.capacity=preflight(c,knownNdiBytes,knownEpBytes,local.link.mbps);if(!local.capacity.feasible&&!c.allowOversubscribed)throw std::runtime_error(local.capacity.reason);
-        auto udp=factory();if(!udp)throw std::runtime_error("Transport factory returned no socket");
+        udp=factory();if(!udp)throw std::runtime_error("Transport factory returned no socket");
         StreamConfig transportConfig;transportConfig.targetIp=c.targetIp;transportConfig.bindIp=c.bindIp;transportConfig.targetPort=c.targetPort;transportConfig.commandPort=c.commandPort;
         udp->open(transportConfig);local.localPort=udp->localPort();local.df=udp->dfEnabled();local.transport=udp->name();local.sendApi=udp->sendApi();
+        local.boostVersion=udp->libraryVersion();local.sendBuffer=udp->sendBufferBytes();local.receiveBuffer=udp->receiveBufferBytes();local.resetError=udp->connResetError();
+        local.asynchronous=local.sendApi.find("async_send_to")!=std::string::npos;
         engineOwner=std::make_unique<Engine>(c,local.link.mbps);auto& engine=*engineOwner;local.startedUs=rt::monotonicUs()+50000;
         for(unsigned i=0;i<2;++i)producers[i]=std::thread([&,i,initialNdi=knownNdiBytes,initialEp=knownEpBytes]{
             source(c,i+1,local.startedUs,sources[i],initialNdi,initialEp,observedRate);
@@ -552,6 +597,7 @@ void Session::Impl::execute(Config c){
         auto nextService=[&](std::uint64_t packetDue){
             return lastServiceUs+(packetDue==UINT64_MAX?500u:100u);
         };
+        const bool ringPath=c.mailboxFastPath && !c.handoffTrace;
         SenderWait lastWait;
         while(!stopRequested.load(std::memory_order_acquire)){
             auto now=rt::monotonicUs();
@@ -560,7 +606,10 @@ void Session::Impl::execute(Config c){
                 PreparedPtr p;
                 std::shared_ptr<TraceTicket> ticket;
                 std::uint64_t nextSample=0;
-                {
+                if(ringPath){
+                    p=sources[i].pop();
+                    nextSample=sources[i].nextSample.load(std::memory_order_acquire);
+                }else{
                     auto& sourceBox=sources[i];
                     std::lock_guard<std::mutex> lock(sourceBox.mutex);
                     if(!sourceBox.queue.empty()){
@@ -597,7 +646,14 @@ void Session::Impl::execute(Config c){
                 }engine.setNextSample(static_cast<std::uint8_t>(i+1),nextSample);
             }
             if(c.handoffTrace)lastWait={};
-            {std::lock_guard<std::mutex> lock(statusMutex);if(!statuses.empty()){auto item=std::move(statuses.front());statuses.pop_front();engine.submitStatus(std::move(item.first),item.second);}}
+            if(!c.mailboxFastPath || hasStatus.load(std::memory_order_acquire)){
+                std::lock_guard<std::mutex> lock(statusMutex);
+                if(!statuses.empty()){
+                    auto item=std::move(statuses.front());statuses.pop_front();
+                    engine.submitStatus(std::move(item.first),item.second);
+                }
+                hasStatus.store(!statuses.empty(),std::memory_order_release);
+            }
             if(c.durationUs&&now>=local.startedUs+c.durationUs)nextStatus=UINT64_MAX;
             if(now>=nextStatus){Bytes b(16);rt::writeLe32(b.data(),1);rt::writeLe32(b.data()+4,c.ndiEnabled?1:0);rt::writeLe32(b.data()+8,c.epEnabled?1:0);rt::writeLe32(b.data()+12,c.linkMbps);engine.submitStatus(std::move(b),now);nextStatus+=c.statusIntervalUs;if(nextStatus<=now)nextStatus=now+c.statusIntervalUs;}
             const auto currentObserved=observedRate.load();
@@ -610,7 +666,7 @@ void Session::Impl::execute(Config c){
             engine.setEffectiveMbps(budget,now);
             // Exactly one send per turn. Stop and producer queues are revisited at every packet boundary.
             const auto stepUs=now;
-            const bool sent=engine.step(stepUs,[&](const auto*p,std::size_t n){return udp->send(p,n);},rt::monotonicUs);
+            const bool sent=engine.stepTransport(stepUs,*udp,rt::monotonicUs);
             if(sent)++dispatchesSinceService;
             now=rt::monotonicUs();
             auto packetDue=engine.nextDueUs();
@@ -637,9 +693,12 @@ void Session::Impl::execute(Config c){
                 now=rt::monotonicUs();
                 if(now>=nextPublish){publish(&engine);nextPublish=now+100000;}
                 const bool done=sources[0].done&&sources[1].done&&(c.ndiEnabled||c.epEnabled||(c.durationUs&&now>=local.startedUs+c.durationUs));
-                if(done&&!engine.pendingInitial()){
+                if(done&&!engine.pendingInitial() && !udp->inFlight()){
                     bool empty=true;
-                    for(auto& sourceBox:sources){std::lock_guard<std::mutex> lock(sourceBox.mutex);empty=empty&&sourceBox.queue.empty();}
+                    for(auto& box:sources){
+                        if(ringPath)empty=empty && box.read.load()==box.write.load();
+                        else {std::lock_guard<std::mutex> lock(box.mutex);empty=empty && box.queue.empty();}
+                    }
                     if(empty){
                         if(!drainStart)drainStart=now;
                         if(now-drainStart>=100000){local.endedReason="sources_finished_and_retry_grace_elapsed";break;}
@@ -666,8 +725,9 @@ void Session::Impl::execute(Config c){
     }catch(const std::exception&e){local.error=e.what();local.endedReason="local_failure";}
     catch(...){local.error="Unknown worker error";local.endedReason="local_failure";}
     producerStop.request();for(auto& t:producers)if(t.joinable())t.join();observerStop=true;if(observer.joinable())observer.join();
-    for(auto& sourceBox:sources){std::lock_guard<std::mutex> lock(sourceBox.mutex);sourceBox.stats.queueDrops+=sourceBox.queue.size();sourceBox.queue.clear();}
+    for(auto& sourceBox:sources){std::lock_guard<std::mutex> lock(sourceBox.mutex);sourceBox.stats.queueDrops+=sourceBox.queue.size();sourceBox.queue.clear();while(sourceBox.pop())++sourceBox.stats.queueDrops;}
     {std::lock_guard<std::mutex> lock(statusMutex);cancelledStatuses+=statuses.size();statuses.clear();}
+    if(udp)udp->cancelOutstanding();
     if(engineOwner)engineOwner->stop();
     if(local.feedbackReadErrors && local.error.empty())
         local.error="UDP feedback read error: "+local.lastFeedbackReadError;
@@ -680,6 +740,12 @@ void Session::Impl::execute(Config c){
 Session::Session(TransportFactory f,rt::aurora::NdiSourceFactory n,LinkObserver observer)
     :p_(std::make_unique<Impl>(std::move(f),std::move(n),std::move(observer))){}
 Session::~Session(){stop();if(p_->worker.joinable())p_->worker.join();}
+void Session::setTransportFactory(TransportFactory factory){
+    if(busy())throw std::logic_error("Cannot switch transport during a V2 session");
+    if(!factory)throw std::invalid_argument("Missing V2 transport factory");
+    if(p_->worker.joinable())p_->worker.join();
+    p_->factory=std::move(factory);
+}
 void Session::start(const Config& config){
     if(busy())throw std::runtime_error("V2 session is already active or stopping");
     if(p_->worker.joinable())p_->worker.join();validateConfig(config);
@@ -692,7 +758,7 @@ void Session::start(const Config& config){
     initial->engine.nextStatusSequence=c.initialStatusSequence;
     initial->engine.effectiveMbps=effectiveMbps(c);
     p_->publishState(std::move(initial));
-    {std::lock_guard<std::mutex> lock(p_->statusMutex);p_->statuses.clear();p_->acceptedStatuses=0;p_->rejectedStatuses=0;p_->cancelledStatuses=0;}
+    {std::lock_guard<std::mutex> lock(p_->statusMutex);p_->statuses.clear();p_->hasStatus=false;p_->acceptedStatuses=0;p_->rejectedStatuses=0;p_->cancelledStatuses=0;}
     p_->producerStop.reset();p_->active=true;
     try{p_->worker=std::thread([this,c]{p_->execute(c);});}catch(...){p_->active=false;throw;}
 }
@@ -725,7 +791,7 @@ bool Session::postStatus(const Bytes& b,std::uint64_t when){
     {
         std::lock_guard<std::mutex> lock(p_->statusMutex);
         if(p_->stopRequested||p_->statuses.size()>=64){++p_->rejectedStatuses;return false;}
-        p_->statuses.emplace_back(b,when);++p_->acceptedStatuses;
+        p_->statuses.emplace_back(b,when);++p_->acceptedStatuses;p_->hasStatus.store(true,std::memory_order_release);
     }
     p_->wake.notify();
     return true;

@@ -23,6 +23,7 @@ received.bin
 *.p12
 
 # Local diagnostic evidence and source/build snapshots; never overwrite old runs.
+/artifacts/asio/
 /artifacts/udp-diagnostics/
 /artifacts/udp-diagnostics-*.zip
 /artifacts/udp-stability/

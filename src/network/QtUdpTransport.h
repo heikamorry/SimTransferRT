@@ -9,6 +9,7 @@ namespace rt {
         public:
         void open(const StreamConfig&)override;
         bool send(const std::uint8_t*,std::size_t)override;
+        SendDisposition submitDatagram(const std::uint8_t*,std::size_t,std::uint64_t)override;
         bool receive(IncomingDatagram&)override;
         ReceiveOutcome receiveFeedback(IncomingDatagram&)override;
         std::uint16_t localPort()const override {
@@ -29,10 +30,10 @@ namespace rt {
         QUdpSocket socket_;
         QHostAddress target_;
         std::string error_;
+        int sendBuffer_=0,receiveBuffer_=0,resetError_=0;
         private:
         quint16 port_=0;
         bool df_=false;
-        int sendBuffer_=0,receiveBuffer_=0,resetError_=0;
     };
     std::unique_ptr<IUdpTransport> makeV2QtUdpTransport();
 }

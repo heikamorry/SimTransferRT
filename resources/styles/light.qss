@@ -150,13 +150,31 @@ QLineEdit, QSpinBox, QComboBox {
     selection-background-color: #BFE3EE;
     selection-color: #0A3B4D;
 }
+/* One control height across the forms: 22px content + 8px padding + 2px border. */
+QLineEdit, QComboBox { min-height: 22px; }
+QSpinBox { min-height: 22px; max-height: 22px; }
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border-color: #2C8CA8; }
 QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
     color: #8FA6B2;
     background: #F2F7FA;
     border-color: #E1EAF0;
 }
-QComboBox::drop-down { border: none; width: 22px; }
+QComboBox { padding-right: 30px; }
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 26px;
+    border-left: 1px solid #D8E7EF;
+    border-top-right-radius: 5px;
+    border-bottom-right-radius: 5px;
+    background: #F7FBFD;
+}
+QComboBox::drop-down:hover { background: #EAF5F9; }
+QComboBox::down-arrow {
+    image: url(:/icons/chevron-down.png);
+    width: 9px;
+    height: 6px;
+}
 QComboBox QAbstractItemView {
     background: #FFFFFF;
     border: 1px solid #C6DBE6;
@@ -166,7 +184,33 @@ QComboBox QAbstractItemView {
     selection-color: #0A3B4D;
     outline: 0;
 }
-QSpinBox::up-button, QSpinBox::down-button { width: 16px; border: none; background: transparent; }
+QSpinBox { padding-right: 26px; }
+QSpinBox::up-button, QSpinBox::down-button {
+    subcontrol-origin: padding;
+    width: 19px;
+    border-left: 1px solid #D8E7EF;
+    background: #F4FAFC;
+}
+QSpinBox::up-button {
+    subcontrol-position: top right;
+    border-bottom: 1px solid #E3EEF4;
+    border-top-right-radius: 4px;
+}
+QSpinBox::down-button {
+    subcontrol-position: bottom right;
+    border-bottom-right-radius: 4px;
+}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #EAF5F9; }
+QSpinBox::up-arrow {
+    image: url(:/icons/spin-up.png);
+    width: 8px;
+    height: 5px;
+}
+QSpinBox::down-arrow {
+    image: url(:/icons/spin-down.png);
+    width: 8px;
+    height: 5px;
+}
 
 /* ---------- tabs ---------- */
 QTabWidget::pane { border: 0; background: transparent; }

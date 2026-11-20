@@ -134,7 +134,7 @@ python tests\model_network_comparison.py --gui dist\model-preview\bin\SimTransfe
 |---|---|
 | `CMakeLists.txt`、`src/CMakeLists.txt`、`src/model/{CMakeLists.txt,Dependencies.cmake,StageRuntime.cmake}` | 功能开关、依赖锁定、模型模块链接、Windows DLL/插件部署、安装规则。 |
 | `scripts/setup-model-deps.ps1`、`scripts/build-model-vtk.cmd` | 下载校验、解包 HDF5 并编译匹配配置的 VTK。 |
-| `src/main.cpp`、`src/ui/{V2Window,MainWindow}.cpp`、`src/ui/MedicalBackdrop.h`、`resources/{styles/light.qss,app.ico,app.rc,icons/app-*.png}`、`tools/make_app_icon.py`、`src/model/{PreviewPanel,Scene}.*` | Qt/VTK 初始化、医疗主题背景与阿斯克勒庇俄斯之杖水印、同款 EXE/窗口图标、Qt 分隔条、后台加载/转换、进度取消、三维场景和交互。 |
+| `src/main.cpp`、`src/ui/{V2Window,MainWindow}.cpp`、`src/ui/MedicalBackdrop.h`、`resources/{styles/light.qss,app.ico,app.rc,icons/app-*.png,icons/chevron-*.png,icons/spin-*.png}`、`tools/{make_app_icon.py,make_ui_arrows.py}`、`src/model/{PreviewPanel,Scene}.*` | Qt/VTK 初始化、医疗主题背景与阿斯克勒庇俄斯之杖水印、同款 EXE/窗口图标、Qt 分隔条、后台加载/转换、进度取消、三维场景和交互。 |
 | `src/model/{Model,Ply,Vtp,Legacy,Conversion,Archive}.*` | 类型化数据、拓扑约束、格式适配器、BX 协议桥接、能力检查、文件提交和 HDF5 校验。 |
 | `tests/CMakeLists.txt`、`tests/{model_fixtures.py,test_model.cpp,test_model_gui.cpp,test_gui_launch.py,model_network_comparison.py,verify_model_deployment.ps1}` | 自动生成夹具，注册格式与桌面测试、GUI 启动参数回归、独立交叉验证、性能与原网络对照、独立分发路径验证。 |
 | `README.md`、`docs/MODEL_*.md`、`docs/model-verification/*.png` | 使用入口、能力矩阵、HDF5 布局、实测结论与截图。 |

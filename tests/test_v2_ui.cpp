@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QDir>
+#include <QFile>
 #include <QIcon>
 #include <QJsonArray>
 #include <QLabel>
@@ -55,6 +56,16 @@ void iconIdentity() {
     // Decoded by QtGui's built-in PNG reader, so a deployment without the
     // optional ICO image plugin still gets a window icon.
     require(!QPixmap(":/icons/app-16.png").isNull(),"PNG icon rendition not compiled in");
+    // Styled combo/spin subcontrols do not fall back to native arrows, so the
+    // glyphs and the rules that reference them are part of the contract.
+    require(!QPixmap(":/icons/chevron-down.png").isNull(),"combo arrow glyph missing");
+    require(!QPixmap(":/icons/spin-up.png").isNull(),"spin arrow glyph missing");
+    require(!QPixmap(":/icons/spin-down.png").isNull(),"spin arrow glyph missing");
+    QFile style(":/styles/light.qss");
+    require(style.open(QIODevice::ReadOnly),"stylesheet missing");
+    const auto css=QString::fromUtf8(style.readAll());
+    for(const char* rule:{"QComboBox::down-arrow","QSpinBox::up-arrow","QSpinBox::down-arrow"})
+        require(css.contains(QString::fromLatin1(rule)),"arrow style rule missing");
     rt::V2Window w;
     require(!w.windowIcon().isNull(),"window icon not set");
     require(w.windowIcon().availableSizes().contains(QSize(16,16)),"window icon lost its small rendition");

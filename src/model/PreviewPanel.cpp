@@ -464,7 +464,8 @@ PreviewPanel::PreviewPanel(QWidget *parent) : QWidget(parent), p(std::make_uniqu
     p->pointSize->setObjectName("modelPointSize");
     p->pointSize->setRange(1, 20);
     p->pointSize->setValue(8);
-    p->pointSize->setFixedWidth(58);
+    p->pointSize->setFixedWidth(64);
+    p->pointSize->setMinimumHeight(32);
     p->pointSize->setToolTip("点云与点模式的显示大小；仅本地渲染设置，不写入 BX");
     view->addWidget(p->pointSize);
     p->details = new QPushButton("详情");

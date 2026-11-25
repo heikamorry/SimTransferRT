@@ -3,13 +3,17 @@
 #include <QWidget>
 #include <vtkPolyData.h>
 #include <vtkSmartPointer.h>
+
 namespace rt::model {
 struct Display {
     std::vector<vtkSmartPointer<vtkPolyData>> pieces;
     vtkSmartPointer<vtkPolyData> axes;
-    qint64 hiddenPoints = 0, invalidPoses = 0;
+    qint64 hiddenPoints = 0;
+    qint64 invalidPoses = 0;
 };
+
 Display makeDisplay(const Dataset &, const Task &);
+
 class Scene final : public QWidget {
   public:
     explicit Scene(QWidget *parent = nullptr);

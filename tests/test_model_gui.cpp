@@ -13,6 +13,7 @@
 #include <QLabel>
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
@@ -23,11 +24,21 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 #include <QTimer>
 #include <QVTKOpenGLNativeWidget.h>
+#include <vtkActor.h>
+#include <vtkDataSet.h>
+#include <vtkGenericOpenGLRenderWindow.h>
+#include <vtkMapper.h>
+#include <vtkPropCollection.h>
+#include <vtkRenderer.h>
+#include <vtkRendererCollection.h>
+#include <vtkWeakPointer.h>
 #include <algorithm>
 #include <iostream>
 #ifdef Q_OS_WIN
+#include "cycle_memory.h"
 #include <QLibrary>
 #include <dxgi1_4.h>
 #include <psapi.h>
@@ -38,10 +49,12 @@
 #include <unistd.h>
 #endif
 using namespace rt::model;
+
 void expect(bool ok, const QString &txt) {
     if (!ok)
         throw std::runtime_error(txt.toUtf8().constData());
 }
+
 qint64 memory(bool peak) {
 #ifdef Q_OS_WIN
     PROCESS_MEMORY_COUNTERS m{};
@@ -59,6 +72,7 @@ qint64 memory(bool peak) {
     return f.readAll().split(' ').value(1).toLongLong() * sysconf(_SC_PAGESIZE);
 #endif
 }
+
 QJsonArray gpuMemory() {
     QJsonArray adapters;
 #ifdef Q_OS_WIN
@@ -79,7 +93,8 @@ QJsonArray gpuMemory() {
         ComPtr<IDXGIAdapter3> adapter;
         if (FAILED(item.As(&adapter)))
             continue;
-        DXGI_QUERY_VIDEO_MEMORY_INFO local{}, shared{};
+        DXGI_QUERY_VIDEO_MEMORY_INFO local{};
+        DXGI_QUERY_VIDEO_MEMORY_INFO shared{};
         if (FAILED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local)) ||
             FAILED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &shared)))
             continue;
@@ -95,6 +110,7 @@ QJsonArray gpuMemory() {
 #endif
     return adapters;
 }
+
 int main(int argc, char **argv) {
     QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
     QApplication app(argc, argv);
@@ -104,6 +120,9 @@ int main(int argc, char **argv) {
     app.setOrganizationName("SimTransferRTTests");
     app.setApplicationName("ModelGui");
     try {
+        QFile style(":/styles/light.qss");
+        expect(style.open(QIODevice::ReadOnly), "application stylesheet is available");
+        app.setStyleSheet(QString::fromUtf8(style.readAll()));
         const auto args = app.arguments();
         QString fixturePath = args.value(1);
         if (fixturePath.isEmpty()) {
@@ -120,7 +139,7 @@ int main(int argc, char **argv) {
         if (fixturePath.isEmpty() || !QDir(fixturePath).exists("tools.bx")) {
             std::cerr << "Model test fixtures could not be found.\n"
                          "Usage: SimModelGuiTests [model-fixtures-directory [evidence-directory "
-                         "[large-model-file]]]\n";
+                         "[large-model-file [cycles]]]]\n";
             return 2;
         }
         QDir files(fixturePath);
@@ -155,7 +174,9 @@ int main(int argc, char **argv) {
         auto open = [&](QString path) {
             QSignalSpy spy(panel, &PreviewPanel::fileTaskFinished);
             panel->openFile(path);
-            until([&] { return !spy.isEmpty(); });
+            until([&] {
+                return !spy.isEmpty();
+            });
             expect(spy[0][0].toBool(), state->text());
         };
         auto saveShot = [&](QString name) {
@@ -186,7 +207,9 @@ int main(int argc, char **argv) {
         };
         expect(sendLiveFrame(), "send BX test datagram");
         QTimer liveTimer;
-        QObject::connect(&liveTimer, &QTimer::timeout, [&] { sendLiveFrame(); });
+        QObject::connect(&liveTimer, &QTimer::timeout, [&] {
+            sendLiveFrame();
+        });
         liveTimer.setTimerType(Qt::PreciseTimer);
         liveTimer.start(4);
         auto liveToolsIntact = [&] {
@@ -210,7 +233,9 @@ int main(int argc, char **argv) {
             reply.tools = {tool};
             return rt::aurora::encodeBx(reply);
         };
-        auto first = bxFrame(8, 1), second = bxFrame(16, 2), third = bxFrame(24, 3);
+        auto first = bxFrame(8, 1);
+        auto second = bxFrame(16, 2);
+        auto third = bxFrame(24, 3);
         rt::v2::Frame object;
         object.moduleId = 1;
         object.bytes = first;
@@ -220,13 +245,33 @@ int main(int argc, char **argv) {
         auto objectPacket = rt::v2::encodeData(object, 0);
         QSignalSpy bxObject(panel, &PreviewPanel::bxObjectFinished);
         expect(tx.send(objectPacket.bytes.data(), objectPacket.size), "send BX object");
+        until(
+            [&] {
+                // The live table and the asynchronous BX preview refresh independently.
+                return !bxObject.isEmpty() &&
+                       info->text().contains(QString("NDI 帧 #%1").arg(object.frameId)) &&
+                       state->text().contains("3 点") && live->rowCount() == 1 &&
+                       live->item(0, 0) && live->item(0, 0)->text() == "10";
+            },
+            5000);
+        // Pause event delivery while the receiver continues. Preview work must
+        // coalesce before entering Qt's event queue, not only inside the panel.
+        auto *log = w.findChild<QPlainTextEdit *>();
+        expect(log, "run log");
+        const auto submissionsBefore = log->toPlainText().count("提交 BX 解码");
+        for (int i = 0; i < 24; ++i) {
+            ++object.frameId;
+            const auto packet = rt::v2::encodeData(object, 0);
+            expect(tx.send(packet.bytes.data(), packet.size), "send preview burst");
+            QThread::msleep(8);
+        }
+        QThread::msleep(60);
         until([&] {
-                  return !bxObject.isEmpty() && info->text().contains("网络接收") &&
-                         state->text().contains("3 点");
-              },
-              5000);
-        expect(live->rowCount() == 1 && live->item(0, 0)->text() == "10",
-               "last reply drives the live table");
+            return info->text().contains(QString("NDI 帧 #%1").arg(object.frameId)) &&
+                   !panel->busy();
+        });
+        expect(log->toPlainText().count("提交 BX 解码") - submissionsBefore <= 2,
+               "preview burst queued unbounded GUI work");
         QFile objectFile(tmp.filePath("network-object.bx"));
         expect(objectFile.open(QIODevice::WriteOnly) &&
                    objectFile.write(reinterpret_cast<const char *>(object.bytes.data()),
@@ -235,9 +280,38 @@ int main(int argc, char **argv) {
                "write received object");
         objectFile.close();
         QTest::mouseClick(rx, Qt::LeftButton);
-        until([&] { return port->isEnabled(); });
+        until([&] {
+            return port->isEnabled();
+        });
+        const auto beforeCancel = info->text();
+        QSignalSpy cancelledObject(panel, &PreviewPanel::bxObjectFinished);
+        QSignalSpy unrelatedFileTask(panel, &PreviewPanel::fileTaskFinished);
+        const QByteArray objectBytes(reinterpret_cast<const char *>(object.bytes.data()),
+                                     qsizetype(object.bytes.size()));
+        panel->showBxObject(objectBytes, "cancelled-network-object");
+        // Let decoding finish without dispatching its queued presentation.
+        QThread::msleep(100);
+        panel->cancel();
+        until([&] {
+            return !cancelledObject.isEmpty();
+        });
+        expect(!cancelledObject[0][0].toBool() && info->text() == beforeCancel &&
+                   unrelatedFileTask.isEmpty(),
+               "cancelled network object committed or completed an unrelated file task");
+        QSignalSpy invalidObject(panel, &PreviewPanel::bxObjectFinished);
+        panel->showBxObject(QByteArray("invalid BX"), "invalid-network-object");
+        until([&] {
+            return !invalidObject.isEmpty();
+        });
+        expect(!invalidObject[0][0].toBool() && unrelatedFileTask.isEmpty() &&
+                   info->text() == beforeCancel,
+               "failed network decoding changed the view or completed a file task");
         open(files.filePath("tools.bx"));
-        until([&] { return !panel->busy(); }, 5000);
+        until(
+            [&] {
+                return !panel->busy();
+            },
+            5000);
         auto table = panel->findChild<QTableWidget *>("localBxTools");
         expect(!table->isVisible() && table->rowCount() == 0 && live->rowCount() == 1,
                "BX isolation");
@@ -253,21 +327,30 @@ int main(int argc, char **argv) {
         expect(viewport->grabFramebuffer() != smallPoints, "point size applied");
         sizeBox->setValue(8);
         saveShot("local-bx.png");
-        until([&] { return !panel->busy(); }, 5000);
+        until(
+            [&] {
+                return !panel->busy();
+            },
+            5000);
         QSignalSpy bxArchiveSaved(panel, &PreviewPanel::fileTaskFinished);
         panel->saveFile(tmp.filePath("tools-archive.h5"), tmp.path());
-        until([&] { return !bxArchiveSaved.isEmpty(); });
+        until([&] {
+            return !bxArchiveSaved.isEmpty();
+        });
         expect(bxArchiveSaved[0][0].toBool(), "BX archive write: " + state->text());
         QSignalSpy bxArchiveOpened(panel, &PreviewPanel::fileTaskFinished);
         panel->openFile(tmp.filePath("tools-archive.h5"));
-        until([&] { return !bxArchiveOpened.isEmpty(); });
-        expect(bxArchiveOpened[0][0].toBool() &&
-                   info->text().contains("tools-archive.h5") &&
+        until([&] {
+            return !bxArchiveOpened.isEmpty();
+        });
+        expect(bxArchiveOpened[0][0].toBool() && info->text().contains("tools-archive.h5") &&
                    info->text().contains("3 有效位置"),
                "BX archive readback: " + state->text());
         QSignalSpy objectOpen(panel, &PreviewPanel::fileTaskFinished);
         panel->openFile(objectFile.fileName());
-        until([&] { return !objectOpen.isEmpty(); });
+        until([&] {
+            return !objectOpen.isEmpty();
+        });
         expect(objectOpen[0][0].toBool() && info->text().contains("本地文件") &&
                    info->text().contains("3 有效位置") && state->text().contains("3 点"),
                "same BX bytes from a local file");
@@ -275,12 +358,15 @@ int main(int argc, char **argv) {
         panel->openFile(files.filePath("tools.bx"));
         panel->openFile(files.filePath("bad-index.ply"));
         panel->openFile(files.filePath("surface.ply"));
-        until([&] { return !panel->busy(); });
+        until([&] {
+            return !panel->busy();
+        });
         expect(info->text().contains("surface.ply") && info->text().contains("metres"),
                "latest generation");
         QTest::qWait(100);
         auto frame = viewport->grabFramebuffer();
-        int sky = 0, colored = 0;
+        int sky = 0;
+        int colored = 0;
         for (int y = 0; y < frame.height(); y += 3)
             for (int x = 0; x < frame.width(); x += 3) {
                 auto c = frame.pixelColor(x, y);
@@ -294,10 +380,12 @@ int main(int argc, char **argv) {
                QString("framebuffer sky=%1 color=%2").arg(sky).arg(colored));
         saveShot("local-surface.png");
         const auto selectors = panel->findChildren<QComboBox *>();
-        auto mode = std::find_if(selectors.begin(), selectors.end(),
-                                 [](auto combo) { return combo->findText("线框") >= 0; });
-        auto attribute = std::find_if(selectors.begin(), selectors.end(),
-                                      [](auto combo) { return combo->findText("原始颜色") >= 0; });
+        auto mode = std::find_if(selectors.begin(), selectors.end(), [](auto combo) {
+            return combo->findText("线框") >= 0;
+        });
+        auto attribute = std::find_if(selectors.begin(), selectors.end(), [](auto combo) {
+            return combo->findText("原始颜色") >= 0;
+        });
         expect(mode != selectors.end() && attribute != selectors.end(), "display selectors");
         (*mode)->setCurrentIndex((*mode)->findText("线框"));
         expect(viewport->grabFramebuffer() != frame, "wireframe");
@@ -327,27 +415,38 @@ int main(int argc, char **argv) {
         QTest::qWait(30);
         expect(panel->cameraDistance() != before, "zoom");
         auto buttons = panel->findChildren<QPushButton *>();
-        auto reset = std::find_if(buttons.begin(), buttons.end(),
-                                  [](auto button) { return button->text() == "重置视图"; });
+        auto reset = std::find_if(buttons.begin(), buttons.end(), [](auto button) {
+            return button->text() == "重置视图";
+        });
         expect(reset != buttons.end(), "reset button");
         QTest::mouseClick(*reset, Qt::LeftButton);
         expect(viewport->grabFramebuffer() == frame, "reset view");
         QSignalSpy failedOpen(panel, &PreviewPanel::fileTaskFinished);
         panel->openFile(files.filePath("bad-index.ply"));
-        until([&] { return !failedOpen.isEmpty(); });
+        until([&] {
+            return !failedOpen.isEmpty();
+        });
         expect(!failedOpen[0][0].toBool() && state->text().contains("失败") &&
                    info->text().contains("surface.ply"),
                "bad model error and previous view");
-        until([&] { return !panel->busy(); }, 5000);
+        until(
+            [&] {
+                return !panel->busy();
+            },
+            5000);
         QSignalSpy exported(panel, &PreviewPanel::fileTaskFinished);
         panel->saveFile(tmp.filePath("surface-export.bx"), tmp.path());
-        until([&] { return !exported.isEmpty(); });
+        until([&] {
+            return !exported.isEmpty();
+        });
         expect(exported[0][0].toBool() &&
                    QFileInfo(tmp.filePath("surface-export.bx")).size() == 4 * 53,
                "model to BX export");
         QSignalSpy exportedOpen(panel, &PreviewPanel::fileTaskFinished);
         panel->openFile(tmp.filePath("surface-export.bx"));
-        until([&] { return !exportedOpen.isEmpty(); });
+        until([&] {
+            return !exportedOpen.isEmpty();
+        });
         expect(exportedOpen[0][0].toBool() && info->text().contains("4 点") &&
                    state->text().contains("点云已显示"),
                "exported BX readback");
@@ -355,14 +454,18 @@ int main(int argc, char **argv) {
             QSignalSpy s(panel, &PreviewPanel::fileTaskFinished);
             panel->openFile(files.filePath("cloud.ply"));
             panel->cancel();
-            until([&] { return !s.isEmpty(); });
+            until([&] {
+                return !s.isEmpty();
+            });
             expect(!s[0][0].toBool(), "load cancellation");
         };
         cancel();
         QSignalSpy saved(panel, &PreviewPanel::fileTaskFinished);
         panel->saveFile(tmp.filePath("cancelled.vtp"), tmp.path());
         panel->cancel();
-        until([&] { return !saved.isEmpty(); });
+        until([&] {
+            return !saved.isEmpty();
+        });
         expect(!saved[0][0].toBool() && !QFileInfo::exists(tmp.filePath("cancelled.vtp")),
                "conversion cancellation");
         viewport->makeCurrent();
@@ -379,6 +482,10 @@ int main(int argc, char **argv) {
                            {"GLVendor", vendor}};
         if (args.size() > 3) {
             QString big = args[3];
+            bool validCount = true;
+            const int count = args.size() > 4 ? args[4].toInt(&validCount) : 3;
+            expect(validCount && count > 0 && count <= 100 && args.size() <= 5,
+                   "expected 1 to 100 large-model cycles");
             QElapsedTimer parse;
             parse.start();
             {
@@ -389,14 +496,18 @@ int main(int argc, char **argv) {
                 result["sourceSHA256"] = source->sourceHash;
             }
             QJsonArray cycles;
-            for (int i = 0; i < 3; ++i) {
+            for (int i = 0; i < count; ++i) {
                 panel->unload();
                 QTest::qWait(120);
                 qint64 idle = memory(false);
                 const auto gpuBefore = gpuMemory();
+#ifdef Q_OS_WIN
+                cycle_memory::Sampler sampler;
+#endif
                 QTimer beat;
                 beat.setInterval(20);
-                QElapsedTimer gap, elapsed;
+                QElapsedTimer gap;
+                QElapsedTimer elapsed;
                 gap.start();
                 elapsed.start();
                 qint64 maxGap = 0;
@@ -420,30 +531,93 @@ int main(int argc, char **argv) {
                 QTest::mousePress(viewport, Qt::LeftButton, {}, center);
                 QTest::mouseMove(viewport, center + QPoint(18, 8), 10);
                 QTest::mouseRelease(viewport, Qt::LeftButton, {}, center + QPoint(18, 8));
-                const auto dragged = viewport->grabFramebuffer();
+                auto dragged = viewport->grabFramebuffer();
                 auto dragMs = drag.elapsed();
                 expect(dragged != fb, "large model rotated");
-                QJsonObject row{{"beforeBytes", idle},        {"displayBytes", memory(false)},
-                                {"gpuBefore", gpuBefore},     {"gpuDisplay", gpuMemory()},
-                                {"openToRenderMs", drawn},    {"peakWorkingSetBytes", memory(true)},
-                                {"heartbeatEvents", beats},   {"maxHeartbeatGapMs", maxGap},
+                fb = {};
+                dragged = {};
+                QJsonObject row{{"cycle", i + 1},
+                                {"beforeBytes", idle},
+                                {"displayBytes", memory(false)},
+                                {"gpuBefore", gpuBefore},
+                                {"gpuDisplay", gpuMemory()},
+                                {"openToRenderMs", drawn},
+                                {"peakWorkingSetBytes", memory(true)},
+                                {"heartbeatEvents", beats},
+                                {"maxHeartbeatGapMs", maxGap},
                                 {"dragAndReadbackMs", dragMs}};
                 if (!i) {
                     for (int tick = 0; tick < 5; ++tick)
                         QApplication::sendEvent(viewport, &wheel);
                     saveShot("large-detail.png");
+                    QTest::mouseClick(*reset, Qt::LeftButton);
+                }
+                {
+                    QTemporaryDir outputs(tmp.filePath("cycle-XXXXXX"));
+                    expect(outputs.isValid(), "create temporary conversion directory");
                     QElapsedTimer convertTime;
                     convertTime.start();
                     QSignalSpy completed(panel, &PreviewPanel::fileTaskFinished);
-                    panel->saveFile(tmp.filePath("gate.vtp"), tmp.path());
-                    until([&] { return !completed.isEmpty(); }, 420000);
+                    panel->saveFile(outputs.filePath("gate.vtp"), outputs.path());
+                    until(
+                        [&] {
+                            return !completed.isEmpty();
+                        },
+                        420000);
                     expect(completed[0][0].toBool(), state->text());
+                    expect(QFileInfo(outputs.filePath("gate.vtp")).size() > 0 &&
+                               QDir(outputs.path()).entryList({"*.h5"}, QDir::Files).size() == 1,
+                           "conversion produced a VTP and one verified HDF5 archive");
                     row["convertVerifyArchiveMs"] = convertTime.elapsed();
                     row["peakAfterConvertBytes"] = memory(true);
                 }
+                // Observe the displayed mesh without extending its lifetime.
+                vtkWeakPointer<vtkActor> meshActor;
+                vtkWeakPointer<vtkMapper> meshMapper;
+                vtkWeakPointer<vtkDataSet> meshData;
+                auto *nativeView = qobject_cast<QVTKOpenGLNativeWidget *>(viewport);
+                expect(nativeView != nullptr, "native VTK viewport");
+                auto *renderers = nativeView->renderWindow()->GetRenderers();
+                vtkCollectionSimpleIterator rendererIt;
+                renderers->InitTraversal(rendererIt);
+                while (auto *sceneRenderer = renderers->GetNextRenderer(rendererIt)) {
+                    auto *props = sceneRenderer->GetViewProps();
+                    vtkCollectionSimpleIterator propIt;
+                    props->InitTraversal(propIt);
+                    while (auto *prop = props->GetNextProp(propIt)) {
+                        auto *actor = vtkActor::SafeDownCast(prop);
+                        if (!actor || !actor->GetMapper())
+                            continue;
+                        auto *mapper = actor->GetMapper();
+                        auto *data = mapper->GetInput();
+                        if (data && data->GetNumberOfPoints() == result["vertices"].toInteger()) {
+                            meshActor = actor;
+                            meshMapper = mapper;
+                            meshData = data;
+                            break;
+                        }
+                    }
+                    if (meshActor)
+                        break;
+                }
+                expect(meshData != nullptr, "found the displayed large mesh");
                 panel->unload();
-                QTest::qWait(200);
+                QTest::qWait(1500);
+                row["actorReleased"] = !meshActor;
+                row["mapperReleased"] = !meshMapper;
+                row["dataReleased"] = !meshData;
+                row["meshObjectsReleased"] = !meshActor && !meshMapper && !meshData;
                 row["afterUnloadBytes"] = memory(false);
+#ifdef Q_OS_WIN
+                const auto after = cycle_memory::readCurrent();
+                row["afterUnloadBytes"] = after.workingSetBytes;
+                row["afterUnloadPrivateBytes"] = after.privateBytes;
+                const auto peak = sampler.finish();
+                row["cyclePeakWorkingSetBytes"] = peak.workingSetBytes;
+                row["cyclePeakPrivateBytes"] = peak.privateBytes;
+                row["samples"] = static_cast<qint64>(peak.samples);
+                row["sampleIntervalMs"] = peak.intervalMs;
+#endif
                 row["gpuAfterUnload"] = gpuMemory();
                 cycles.append(row);
                 std::cout << QJsonDocument(row).toJson(QJsonDocument::Compact).constData()
@@ -451,6 +625,8 @@ int main(int argc, char **argv) {
             }
             result["largeModel"] = QFileInfo(big).fileName();
             result["sourceBytes"] = QFileInfo(big).size();
+            result["processId"] = QApplication::applicationPid();
+            result["settleAfterUnloadMs"] = 1500;
             result["cycles"] = cycles;
         }
         QDir output(evidence);

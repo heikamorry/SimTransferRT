@@ -1,0 +1,1361 @@
+{
+    "GLRenderer": "Intel(R) Graphics",
+    "GLVendor": "Intel",
+    "cells": 7017756,
+    "coloredSamples": 4844,
+    "cycles": [
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 974880768,
+            "afterUnloadPrivateBytes": 892837888,
+            "beforeBytes": 879947776,
+            "convertVerifyArchiveMs": 9523,
+            "cycle": 1,
+            "cyclePeakPrivateBytes": 2678607872,
+            "cyclePeakWorkingSetBytes": 2520162304,
+            "dataReleased": true,
+            "displayBytes": 1867190272,
+            "dragAndReadbackMs": 45,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555192320,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555192320,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555192320,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 567193600,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 567193600,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 567193600,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 711659520,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 711659520,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 711659520,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 116,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 415,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2999,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 1951592448,
+            "sampleIntervalMs": 20,
+            "samples": 481
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 879542272,
+            "afterUnloadPrivateBytes": 797138944,
+            "beforeBytes": 954990592,
+            "convertVerifyArchiveMs": 9470,
+            "cycle": 2,
+            "cyclePeakPrivateBytes": 2665267200,
+            "cyclePeakWorkingSetBytes": 2493165568,
+            "dataReleased": true,
+            "displayBytes": 1822625792,
+            "dragAndReadbackMs": 42,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555241472,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555241472,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555241472,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555192320,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555192320,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555192320,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 614801408,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 614801408,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 614801408,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 112,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 322,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2766,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 490
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 879960064,
+            "afterUnloadPrivateBytes": 797491200,
+            "beforeBytes": 859648000,
+            "convertVerifyArchiveMs": 9481,
+            "cycle": 3,
+            "cyclePeakPrivateBytes": 2591477760,
+            "cyclePeakWorkingSetBytes": 2424164352,
+            "dataReleased": true,
+            "displayBytes": 1748963328,
+            "dragAndReadbackMs": 32,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555266048,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555266048,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555266048,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555241472,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555241472,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555241472,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 614838272,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 614838272,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 614838272,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 119,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 309,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2781,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 459
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 862695424,
+            "afterUnloadPrivateBytes": 780103680,
+            "beforeBytes": 860065792,
+            "convertVerifyArchiveMs": 9591,
+            "cycle": 4,
+            "cyclePeakPrivateBytes": 2573168640,
+            "cyclePeakWorkingSetBytes": 2399428608,
+            "dataReleased": true,
+            "displayBytes": 1730723840,
+            "dragAndReadbackMs": 31,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 471064576,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 471064576,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 471064576,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555266048,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555266048,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555266048,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 597102592,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 597102592,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 597102592,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 113,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 331,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2815,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 453
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 876699648,
+            "afterUnloadPrivateBytes": 793952256,
+            "beforeBytes": 842801152,
+            "convertVerifyArchiveMs": 9420,
+            "cycle": 5,
+            "cyclePeakPrivateBytes": 2637131776,
+            "cyclePeakWorkingSetBytes": 2459811840,
+            "dataReleased": true,
+            "displayBytes": 1794662400,
+            "dragAndReadbackMs": 45,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555290624,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555290624,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555290624,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 471064576,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 471064576,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 471064576,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 614875136,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 614875136,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 614875136,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 112,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 340,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2811,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 432
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 880447488,
+            "afterUnloadPrivateBytes": 798285824,
+            "beforeBytes": 856805376,
+            "convertVerifyArchiveMs": 9357,
+            "cycle": 6,
+            "cyclePeakPrivateBytes": 2568884224,
+            "cyclePeakWorkingSetBytes": 2402455552,
+            "dataReleased": true,
+            "displayBytes": 1726455808,
+            "dragAndReadbackMs": 57,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555290624,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555290624,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555290624,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555290624,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555290624,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555290624,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 614887424,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 614887424,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 614887424,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 118,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 358,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2867,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 456
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 880148480,
+            "afterUnloadPrivateBytes": 797401088,
+            "beforeBytes": 860553216,
+            "convertVerifyArchiveMs": 9474,
+            "cycle": 7,
+            "cyclePeakPrivateBytes": 2569351168,
+            "cyclePeakWorkingSetBytes": 2395516928,
+            "dataReleased": true,
+            "displayBytes": 1726681088,
+            "dragAndReadbackMs": 47,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555290624,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555290624,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555290624,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555290624,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555290624,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555290624,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 614887424,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 614887424,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 614887424,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 112,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 337,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2868,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 454
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 880676864,
+            "afterUnloadPrivateBytes": 797933568,
+            "beforeBytes": 860254208,
+            "convertVerifyArchiveMs": 9271,
+            "cycle": 8,
+            "cyclePeakPrivateBytes": 2570874880,
+            "cyclePeakWorkingSetBytes": 2382835712,
+            "dataReleased": true,
+            "displayBytes": 1728749568,
+            "dragAndReadbackMs": 44,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555302912,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555302912,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555302912,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555290624,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555290624,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555290624,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 614887424,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 614887424,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 614887424,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 112,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 343,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2894,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 486
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 876752896,
+            "afterUnloadPrivateBytes": 794144768,
+            "beforeBytes": 860782592,
+            "convertVerifyArchiveMs": 9415,
+            "cycle": 9,
+            "cyclePeakPrivateBytes": 2570055680,
+            "cyclePeakWorkingSetBytes": 2404773888,
+            "dataReleased": true,
+            "displayBytes": 1727893504,
+            "dragAndReadbackMs": 40,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555302912,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555302912,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555302912,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555302912,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555302912,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555302912,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 614899712,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 614899712,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 614899712,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 114,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 342,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2804,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 446
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 881467392,
+            "afterUnloadPrivateBytes": 798793728,
+            "beforeBytes": 856866816,
+            "convertVerifyArchiveMs": 9583,
+            "cycle": 10,
+            "cyclePeakPrivateBytes": 2570092544,
+            "cyclePeakWorkingSetBytes": 2391920640,
+            "dataReleased": true,
+            "displayBytes": 1727635456,
+            "dragAndReadbackMs": 38,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555302912,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555302912,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555302912,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555302912,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555302912,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555302912,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 614899712,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 614899712,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 614899712,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 115,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 324,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2896,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 451
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 864923648,
+            "afterUnloadPrivateBytes": 799338496,
+            "beforeBytes": 861573120,
+            "convertVerifyArchiveMs": 9392,
+            "cycle": 11,
+            "cyclePeakPrivateBytes": 2571436032,
+            "cyclePeakWorkingSetBytes": 2410885120,
+            "dataReleased": true,
+            "displayBytes": 1729204224,
+            "dragAndReadbackMs": 40,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555315200,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555315200,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555315200,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555302912,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555302912,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555302912,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 614899712,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 614899712,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 614899712,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 115,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 338,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2849,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 439
+        },
+        {
+            "actorReleased": true,
+            "afterUnloadBytes": 863948800,
+            "afterUnloadPrivateBytes": 798294016,
+            "beforeBytes": 845029376,
+            "convertVerifyArchiveMs": 9510,
+            "cycle": 12,
+            "cyclePeakPrivateBytes": 2566623232,
+            "cyclePeakWorkingSetBytes": 2367283200,
+            "dataReleased": true,
+            "displayBytes": 1712668672,
+            "dragAndReadbackMs": 41,
+            "gpuAfterUnload": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555315200,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555315200,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555315200,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuBefore": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 555315200,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 555315200,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 555315200,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "gpuDisplay": [
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 0,
+                    "localBytes": 614256640,
+                    "luid": "00000000:000134b4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU",
+                    "index": 1,
+                    "localBytes": 0,
+                    "luid": "00000000:000139a4",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 2,
+                    "localBytes": 614256640,
+                    "luid": "00000000:00031349",
+                    "nonLocalBytes": 0
+                },
+                {
+                    "adapter": "Intel(R) Graphics",
+                    "index": 3,
+                    "localBytes": 614256640,
+                    "luid": "00000000:0001fa7c",
+                    "nonLocalBytes": 0
+                }
+            ],
+            "heartbeatEvents": 112,
+            "mapperReleased": true,
+            "maxHeartbeatGapMs": 324,
+            "meshObjectsReleased": true,
+            "openToRenderMs": 2849,
+            "peakAfterConvertBytes": 2527379456,
+            "peakWorkingSetBytes": 2527379456,
+            "sampleIntervalMs": 20,
+            "samples": 460
+        }
+    ],
+    "largeModel": "Tiananmen_Gate_Detailed.ply",
+    "parseAndVerifyMs": 2343,
+    "platform": "windows",
+    "processId": 14892,
+    "settleAfterUnloadMs": 1500,
+    "skySamples": 89363,
+    "sourceBytes": 212485676,
+    "sourceSHA256": "f66ca4ce9076516ab5314bd942db084c958700ad20e3cf7b942b167f74bdab6c",
+    "vertices": 4490824
+}

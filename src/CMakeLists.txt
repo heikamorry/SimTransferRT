@@ -12,9 +12,11 @@ set_target_properties(sim_rt_core PROPERTIES AUTOMOC OFF AUTORCC OFF)
 
 add_library(sim_rt_v2 STATIC
     protocol/V2PacketCodec.cpp sources/AuroraCodec.cpp sources/AuroraSource.cpp sources/NdiSource.cpp
-    v2/Config.cpp v2/Engine.cpp v2/ProducerWait.cpp v2/Runner.cpp v2/Receiver.cpp support/V2CliOptions.cpp
+    v2/Config.cpp v2/Engine.cpp v2/ProducerWait.cpp
+    v2/Runner.cpp v2/RunnerReport.cpp v2/Receiver.cpp support/V2CliOptions.cpp
 )
 target_link_libraries(sim_rt_v2 PUBLIC sim_rt_core)
+target_compile_definitions(sim_rt_v2 PUBLIC SIM_PRODUCT_VERSION="${PROJECT_VERSION}")
 target_compile_definitions(sim_rt_v2 PRIVATE SIM_BUILD_TYPE="$<CONFIG>" SIM_SOURCE_REV="${SIM_GIT_REV}" SIM_SOURCE_DIRTY="${SIM_GIT_DIRTY}")
 set_target_properties(sim_rt_v2 PROPERTIES AUTOMOC OFF AUTORCC OFF)
 if(WIN32)
@@ -38,7 +40,7 @@ if(SIM_WITH_ASIO)
     endif()
 endif()
 
-add_executable(SimRtProbe native_cli.cpp)
+add_executable(SimRtProbe native_cli.cpp support/V2Cli.cpp)
 target_link_libraries(SimRtProbe PRIVATE sim_rt_native sim_rt_v2)
 if(SIM_WITH_ASIO)
     target_link_libraries(SimRtProbe PRIVATE sim_rt_asio)
@@ -62,7 +64,7 @@ if(SIM_WITH_QT)
     endif()
     set_target_properties(SimTransfer PROPERTIES WIN32_EXECUTABLE TRUE)
 
-    qt_add_executable(SimTransferCli cli_main.cpp)
+    qt_add_executable(SimTransferCli cli_main.cpp support/V2Cli.cpp)
     target_link_libraries(SimTransferCli PRIVATE sim_rt_v2 sim_rt_native sim_rt_asio Qt6::Core)
     if(WIN32)
         target_sources(SimTransferCli PRIVATE ../resources/app.rc)
@@ -70,7 +72,7 @@ if(SIM_WITH_QT)
     endif()
     set_target_properties(SimTransferCli PROPERTIES AUTOMOC OFF AUTORCC OFF)
 
-    install(TARGETS SimTransfer SimTransferCli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS SimTransfer SimTransferCli SimRtProbe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(WIN32 AND SIM_DEPLOY_QT)
         qt_generate_deploy_app_script(TARGET SimTransfer OUTPUT_SCRIPT deploy_script NO_UNSUPPORTED_PLATFORM_ERROR)
         install(SCRIPT ${deploy_script})

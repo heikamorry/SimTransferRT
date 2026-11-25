@@ -1,0 +1,129 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <UI Id="SimulatorUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Microsoft YaHei UI" Size="9" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Microsoft YaHei UI" Size="10" Bold="yes" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Microsoft YaHei UI" Size="12" />
+      <TextStyle Id="SimHeading" FaceName="Microsoft YaHei UI" Size="14" Bold="yes" Red="16" Green="99" Blue="95" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="UserExit" />
+      <DialogRef Id="DiskCostDlg" />
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="InstallDirDlg" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath_X64" Order="3" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4" Condition="WIXUI_INSTALLDIR_VALID &lt;&gt; &quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="SimWelcome" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="INSTALLFOLDER" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath_X64" Order="2" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3" Condition="WIXUI_INSTALLDIR_VALID &lt;&gt; &quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="InspectNewLocation" Order="4" Condition="WIXUI_INSTALLDIR_VALID = &quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SpawnDialog" Value="SimDirectoryError" Order="5" Condition="SimLocationError" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="ReadFeatureChoices" Order="6" Condition="NOT SimLocationError AND WIXUI_INSTALLDIR_VALID = &quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="SimFeatures" Order="7" Condition="NOT SimLocationError AND WIXUI_INSTALLDIR_VALID = &quot;1&quot;" />
+
+      <Dialog Id="SimWelcome" Width="370" Height="240" Title="[ProductName] 安装">
+        <Control Id="Logo" Type="Icon" X="18" Y="16" Width="34" Height="34" FixedSize="yes" Text="BrandIcon" />
+        <Control Id="Title" Type="Text" X="62" Y="19" Width="286" Height="28" Text="{\SimHeading}安装 [ProductName]" />
+        <Control Id="Intro" Type="Text" X="23" Y="65" Width="324" Height="45" Text="安装网络收发模拟器、三维模型预览和转换工具。下一步可选择安装位置和快捷方式。" HideCondition="WIX_UPGRADE_DETECTED" />
+        <Control Id="Upgrade" Type="Text" X="23" Y="65" Width="324" Height="58" Text="已检测到旧版本。继续将升级到 [ProductVersion]，沿用原位置和已选组件。原有报告、模型和设置将保留。" Hidden="yes" ShowCondition="WIX_UPGRADE_DETECTED" />
+        <Control Id="Version" Type="Text" X="23" Y="135" Width="320" Height="26" Text="版本 [ProductVersion]    ·    Windows x64" />
+        <Control Id="Line" Type="Line" X="0" Y="202" Width="370" Height="0" />
+        <Control Id="Next" Type="PushButton" X="225" Y="211" Width="68" Height="19" Default="yes" Text="下一步(&amp;N)">
+          <Publish Property="SimMode" Value="Install" />
+          <Publish Event="DoAction" Value="ReadFeatureChoices" Order="2" Condition="WIX_UPGRADE_DETECTED" />
+          <Publish Event="NewDialog" Value="SimFeatures" Order="3" Condition="WIX_UPGRADE_DETECTED" />
+          <Publish Event="NewDialog" Value="InstallDirDlg" Order="4" Condition="NOT WIX_UPGRADE_DETECTED" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="300" Y="211" Width="55" Height="19" Cancel="yes" Text="取消"><Publish Event="SpawnDialog" Value="CancelDlg" /></Control>
+      </Dialog>
+
+      <Dialog Id="SimMaintenance" Width="370" Height="270" Title="[ProductName] 维护">
+        <Control Id="Logo" Type="Icon" X="16" Y="12" Width="32" Height="32" FixedSize="yes" Text="BrandIcon" />
+        <Control Id="Title" Type="Text" X="57" Y="16" Width="290" Height="25" Text="{\SimHeading}修改、修复或卸载" />
+        <Control Id="Where" Type="Text" X="20" Y="48" Width="330" Height="36" NoPrefix="yes" Text="[ProductName] [ProductVersion]   [INSTALLFOLDER]" />
+        <Control Id="Modify" Type="PushButton" X="20" Y="92" Width="77" Height="25" Text="修改(&amp;M)">
+          <Publish Property="SimMode" Value="Change" />
+          <Publish Event="DoAction" Value="ReadFeatureChoices" Order="2" />
+          <Publish Event="NewDialog" Value="SimFeatures" Order="3" />
+        </Control>
+        <Control Id="ModifyText" Type="Text" X="110" Y="98" Width="238" Height="28" Text="增减命令行工具，更改快捷方式。" />
+        <Control Id="Repair" Type="PushButton" X="20" Y="135" Width="77" Height="25" Text="修复(&amp;R)">
+          <Publish Property="SimMode" Value="Repair" />
+          <Publish Event="NewDialog" Value="SimConfirm" Order="2" />
+        </Control>
+        <Control Id="RepairText" Type="Text" X="110" Y="141" Width="238" Height="30" Text="恢复缺失或损坏的程序、插件和已选快捷方式。" />
+        <Control Id="Remove" Type="PushButton" X="20" Y="180" Width="77" Height="25" Text="卸载(&amp;U)">
+          <Publish Property="SimMode" Value="Remove" />
+          <Publish Event="NewDialog" Value="SimConfirm" Order="2" />
+        </Control>
+        <Control Id="RemoveText" Type="Text" X="110" Y="185" Width="238" Height="38" Text="移除程序和安装入口，保留模型、报告和个人设置。" />
+        <Control Id="Line" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Cancel" Type="PushButton" X="294" Y="242" Width="62" Height="19" Cancel="yes" Text="取消"><Publish Event="SpawnDialog" Value="CancelDlg" /></Control>
+      </Dialog>
+
+      <Dialog Id="SimFeatures" Width="370" Height="253" Title="[ProductName] 安装选项">
+        <Control Id="Title" Type="Text" X="20" Y="15" Width="327" Height="28" Text="{\SimHeading}组件和快捷方式" />
+        <Control Id="Core" Type="Text" X="22" Y="51" Width="325" Height="28" Text="主程序、三维预览和开始菜单入口随程序安装。" />
+        <Control Id="Cli" Type="CheckBox" X="22" Y="84" Width="324" Height="20" Property="SIMCLI" CheckBoxValue="1" Text="安装命令行工具和专用命令行入口(&amp;C)" />
+        <Control Id="Desktop" Type="CheckBox" X="22" Y="113" Width="324" Height="20" Property="SIMDESKTOP" CheckBoxValue="1" Text="创建桌面快捷方式(&amp;D)" />
+        <Control Id="Legacy" Type="CheckBox" X="22" Y="142" Width="324" Height="20" Property="SIMQUICK" CheckBoxValue="1" Text="创建当前用户的传统快速启动图标(&amp;Q)" Hidden="yes" ShowCondition="SIMQUICKAVAILABLE" />
+        <Control Id="PinHint" Type="Text" X="22" Y="150" Width="324" Height="42" Text="要在任务栏保留入口，可在程序打开时右键图标，选择“固定到任务栏”。" HideCondition="SIMQUICKAVAILABLE" />
+        <Control Id="Line" Type="Line" X="0" Y="214" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="153" Y="225" Width="64" Height="18" Text="上一步(&amp;B)">
+          <Publish Event="NewDialog" Value="SimMaintenance" Condition="Installed" />
+          <Publish Event="NewDialog" Value="SimWelcome" Order="2" Condition="NOT Installed AND WIX_UPGRADE_DETECTED" />
+          <Publish Event="NewDialog" Value="InstallDirDlg" Order="3" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="223" Y="225" Width="66" Height="18" Default="yes" Text="下一步(&amp;N)">
+          <Publish Event="AddLocal" Value="CommandLine" Order="1" Condition="SIMCLI" />
+          <Publish Event="Remove" Value="CommandLine" Order="2" Condition="NOT SIMCLI" />
+          <Publish Event="AddLocal" Value="Desktop" Order="3" Condition="SIMDESKTOP" />
+          <Publish Event="Remove" Value="Desktop" Order="4" Condition="NOT SIMDESKTOP" />
+          <Publish Event="AddLocal" Value="QuickLaunch" Order="5" Condition="SIMQUICK AND SIMQUICKAVAILABLE" />
+          <Publish Event="Remove" Value="QuickLaunch" Order="6" Condition="NOT SIMQUICK AND SIMQUICKAVAILABLE" />
+          <Publish Event="NewDialog" Value="SimConfirm" Order="7" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="296" Y="225" Width="60" Height="18" Cancel="yes" Text="取消"><Publish Event="SpawnDialog" Value="CancelDlg" /></Control>
+      </Dialog>
+
+      <Dialog Id="SimConfirm" Width="370" Height="242" Title="[ProductName] 确认操作">
+        <Control Id="Title" Type="Text" X="20" Y="15" Width="326" Height="26" Text="{\SimHeading}确认操作" />
+        <Control Id="Location" Type="Text" X="22" Y="53" Width="328" Height="42" NoPrefix="yes" Text="安装位置：[INSTALLFOLDER]" />
+        <Control Id="Space" Type="Text" X="22" Y="105" Width="323" Height="43" Text="程序文件约 $(CoreMiB) MiB，含命令行工具约 $(FullMiB) MiB。系统另行保留离线修复所需的安装源。" HideCondition="SimMode = &quot;Remove&quot; OR SimMode = &quot;Repair&quot;" />
+        <Control Id="RepairText" Type="Text" X="22" Y="105" Width="323" Height="43" Hidden="yes" ShowCondition="SimMode = &quot;Repair&quot;" Text="即将按本版本重新写入已安装的程序、插件和快捷方式，保留用户设置和档案。" />
+        <Control Id="RemoveText" Type="Text" X="22" Y="105" Width="323" Height="50" Hidden="yes" ShowCondition="SimMode = &quot;Remove&quot;" Text="确认卸载 [ProductName]？程序和安装器创建的入口将移除，模型、收发报告、转换档案和个人设置将保留。" />
+        <Control Id="Line" Type="Line" X="0" Y="201" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="153" Y="212" Width="64" Height="19" Text="上一步(&amp;B)">
+          <Publish Event="NewDialog" Value="SimMaintenance" Condition="SimMode = &quot;Remove&quot; OR SimMode = &quot;Repair&quot;" />
+          <Publish Event="NewDialog" Value="SimFeatures" Order="2" Condition="SimMode = &quot;Install&quot; OR SimMode = &quot;Change&quot;" />
+        </Control>
+        <Control Id="Apply" Type="PushButton" X="223" Y="212" Width="66" Height="19" Default="yes" Text="确认(&amp;Y)">
+          <Publish Event="SpawnDialog" Value="OutOfDiskDlg" Order="1" Condition="OutOfDiskSpace = 1 AND SimMode &lt;&gt; &quot;Remove&quot;" />
+          <Publish Event="ReinstallMode" Value="amus" Order="2" Condition="SimMode = &quot;Repair&quot;" />
+          <Publish Event="Reinstall" Value="All" Order="3" Condition="SimMode = &quot;Repair&quot;" />
+          <Publish Event="Remove" Value="All" Order="4" Condition="SimMode = &quot;Remove&quot;" />
+          <Publish Event="EndDialog" Value="Return" Order="5" Condition="OutOfDiskSpace &lt;&gt; 1 OR SimMode = &quot;Remove&quot;" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="296" Y="212" Width="60" Height="19" Cancel="yes" Text="取消"><Publish Event="SpawnDialog" Value="CancelDlg" /></Control>
+      </Dialog>
+      <Dialog Id="SimDirectoryError" Width="270" Height="112" Title="选择其他安装目录">
+        <Control Id="Reason" Type="Text" X="12" Y="15" Width="245" Height="52" NoPrefix="yes" Text="[SimLocationError]" />
+        <Control Id="OK" Type="PushButton" X="103" Y="80" Width="60" Height="18" Default="yes" Cancel="yes" Text="确定"><Publish Event="EndDialog" Value="Return" /></Control>
+      </Dialog>
+      <InstallUISequence>
+        <Show Dialog="SimMaintenance" Before="SimWelcome" Condition="Installed" />
+        <Show Dialog="SimWelcome" Before="ProgressDlg" Condition="NOT Installed" />
+      </InstallUISequence>
+    </UI>
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
+</Wix>

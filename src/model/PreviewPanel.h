@@ -1,6 +1,7 @@
 #pragma once
 #include <QWidget>
 #include <memory>
+
 namespace rt::model {
 class PreviewPanel final : public QWidget {
     Q_OBJECT

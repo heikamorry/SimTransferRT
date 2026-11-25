@@ -9,6 +9,7 @@ namespace {
 const QStringList names{"char",  "unsigned_char", "short",        "unsigned_short",
                         "int",   "unsigned_int",  "vtktypeint64", "vtktypeuint64",
                         "float", "double"};
+
 Type legacyType(QByteArray s) {
     auto n = names.indexOf(QString::fromLatin1(s.toLower()));
     if (n >= 0)
@@ -21,6 +22,7 @@ Type legacyType(QByteArray s) {
         return alias.value(s.toLower());
     fail("legacy VTK 尚未实现或宽度不明确的类型 " + QString::fromLatin1(s));
 }
+
 qint64 number(QByteArray s, qint64 cap = maxTuples) {
     bool ok;
     auto n = s.toLongLong(&ok);
@@ -28,17 +30,21 @@ qint64 number(QByteArray s, qint64 cap = maxTuples) {
         fail("legacy VTK 数量无效 " + QString::fromLatin1(s));
     return n;
 }
+
 const QMap<QByteArray, QString> kinds{{"VERTICES", "Verts"},
                                       {"LINES", "Lines"},
                                       {"POLYGONS", "Polys"},
                                       {"TRIANGLE_STRIPS", "Strips"}};
 constexpr auto marker = "SimTransferRT_schema_v1";
+
 QString nameOf(const QByteArray &b) {
     return QUrl::fromPercentEncoding(b);
 }
+
 QByteArray safeName(const QString &n) {
     return n.isEmpty() ? QByteArray("unnamed") : QUrl::toPercentEncoding(n);
 }
+
 QByteArray readData(Cursor &c, Type type, qint64 values, bool ascii, const Task &t) {
     int w = width(type);
     auto size = checked(values, w);
@@ -60,6 +66,7 @@ QByteArray readData(Cursor &c, Type type, qint64 values, bool ascii, const Task 
     }
     return data;
 }
+
 void writeData(QIODevice &out, Type type, const QByteArray &data, bool ascii, const Task &t) {
     int w = width(type);
     QByteArray buffer;
@@ -84,6 +91,7 @@ void writeData(QIODevice &out, Type type, const QByteArray &data, bool ascii, co
     writeAll(out, buffer);
 }
 } // namespace
+
 Dataset readLegacy(const QByteArray &bytes, const Task &t) {
     Cursor c(bytes);
     auto magic = c.line().trimmed();
@@ -121,7 +129,8 @@ Dataset readLegacy(const QByteArray &bytes, const Task &t) {
                     {"units", ""},
                     {"frame", ""}};
     QString association = "FieldData";
-    qint64 tuples = 0, used = 0;
+    qint64 tuples = 0;
+    qint64 used = 0;
     QJsonObject extension;
     auto add = [&](Field f) {
         used += f.data.size() + qint64(f.ends.size()) * 8;
@@ -176,7 +185,8 @@ Dataset readLegacy(const QByteArray &bytes, const Task &t) {
             f.role = "connectivity";
             f.list = true;
             f.type = Type::I64;
-            auto n = number(w[1]), size = number(w[2], budget / 4);
+            auto n = number(w[1]);
+            auto size = number(w[2], budget / 4);
             if (version >= 5.1) {
                 auto h = words();
                 if (h.size() != 2 || h[0] != "OFFSETS" || !n)
@@ -301,6 +311,7 @@ Dataset readLegacy(const QByteArray &bytes, const Task &t) {
     }
     return d;
 }
+
 void writeLegacy(QIODevice &out, const Dataset &d, const Task &t) {
     bool ascii = false;
     for (const auto &f : d.fields)
@@ -328,12 +339,14 @@ void writeLegacy(QIODevice &out, const Dataset &d, const Task &t) {
         bool announced = false;
         for (const auto &f : d.fields)
             if (f.section == section) {
-                auto name = safeName(f.name), type = names[int(f.type)].toLatin1(),
-                     components = QByteArray::number(f.components);
+                auto name = safeName(f.name);
+                auto type = names[int(f.type)].toLatin1();
+                auto components = QByteArray::number(f.components);
                 if (section == "Points")
                     writeAll(out, "POINTS " + QByteArray::number(f.tuples()) + " " + type + "\n");
                 else if (topology(section)) {
-                    auto valueType = topologyValueType(f), offsetType = topologyOffsetType(f);
+                    auto valueType = topologyValueType(f);
+                    auto offsetType = topologyOffsetType(f);
                     if (valueType != offsetType ||
                         (valueType != Type::I32 && valueType != Type::I64))
                         fail("legacy VTK 5.1 要求相同的 Int32 或 Int64 偏移与连接 " + section);

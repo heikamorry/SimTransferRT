@@ -1,0 +1,101 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="$(Brand)" Manufacturer="SimTransferLab" Version="$(Version)"
+           Language="2052" Codepage="936" Scope="$(Scope)" UpgradeCode="$(MsiFamily)" ProductCode="$(ProductCode)"
+           InstallerVersion="500" Compressed="yes">
+    <SummaryInformation Description="$(Brand) 模拟器" Manufacturer="SimTransferLab" Codepage="936" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <MajorUpgrade Schedule="afterInstallInitialize" MigrateFeatures="yes"
+                  DowngradeErrorMessage="本机已安装较新版本的 [ProductName]。请使用已安装的版本。" />
+    <Icon Id="AppIcon" SourceFile="$(IconFile)" />
+    <Binary Id="BrandIcon" SourceFile="$(IconFile)" />
+    <Binary Id="SetupActions" SourceFile="$(Actions)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="从开始菜单打开 $(Brand)。需要固定到任务栏时，右键单击正在运行的程序图标，选择“固定到任务栏”。" />
+    <Property Id="SAVEDINSTALLDIR" Secure="yes">
+      <RegistrySearch Id="LastInstallFolder" Root="$(RegistryRoot)" Key="$(RegistryKey)" Name="InstallFolder" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="SAVEDQUICKDIR" Secure="yes">
+      <RegistrySearch Id="LastQuickFolder" Root="$(RegistryRoot)" Key="$(RegistryKey)" Name="QuickFolder" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="SAVEDQUICKOWNER" Secure="yes">
+      <RegistrySearch Id="LastQuickOwner" Root="$(RegistryRoot)" Key="$(RegistryKey)" Name="QuickOwner" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="SIMQUICKOWNER" Secure="yes" />
+    <Property Id="SIMQUICKDIR" Secure="yes" />
+    <Property Id="SIMQUICKAVAILABLE" Secure="yes" />
+    <SetProperty Id="INSTALLFOLDER" Value="[SAVEDINSTALLDIR]" Before="CostFinalize"
+                 Sequence="both" Condition="SAVEDINSTALLDIR AND (Installed OR WIX_UPGRADE_DETECTED)" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
+    <SetProperty Id="REINSTALLMODE" Value="amus" Before="CostInitialize" Sequence="execute" Condition="Installed AND REINSTALL" />
+    <CustomAction Id="LocateQuickLaunch" BinaryRef="SetupActions" DllEntry="LocateQuickLaunch" Execute="immediate" Return="check" />
+    <CustomAction Id="ReadFeatureChoices" BinaryRef="SetupActions" DllEntry="ReadFeatureChoices" Execute="immediate" Return="check" />
+    <CustomAction Id="CheckNewLocation" BinaryRef="SetupActions" DllEntry="CheckNewLocation" Execute="immediate" Return="check" />
+    <CustomAction Id="InspectNewLocation" BinaryRef="SetupActions" DllEntry="InspectNewLocation" Execute="immediate" Return="check" />
+    <InstallUISequence>
+      <Custom Action="LocateQuickLaunch" After="AppSearch" />
+    </InstallUISequence>
+    <InstallExecuteSequence>
+      <Custom Action="LocateQuickLaunch" After="AppSearch" />
+      <Custom Action="CheckNewLocation" After="CostFinalize" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+      <?ifdef Validation ?>
+      <Custom Action="VerifyRollback" After="InstallFiles" Condition="SIM_TEST_ROLLBACK = 1" />
+      <?endif?>
+    </InstallExecuteSequence>
+    <?ifdef Validation ?>
+    <CustomAction Id="VerifyRollback" Error="安装事务回滚验证。" />
+    <?endif?>
+    <StandardDirectory Id="$(InstallParent)">
+      <Directory Id="INSTALLFOLDER" Name="$(Brand)" />
+    </StandardDirectory>
+    <StandardDirectory Id="PersonalFolder" />
+    <StandardDirectory Id="AppDataFolder">
+      <Directory Id="SIMQUICKDIR" Name="Quick Launch" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenu" Name="$(Brand)" />
+    </StandardDirectory>
+    <DirectoryRef Id="AppMenu">
+      <Component Id="AppEntry" Guid="*">
+        <RegistryValue Root="$(RegistryRoot)" Key="$(RegistryKey)" Name="InstallFolder" Value="[INSTALLFOLDER]" Type="string" KeyPath="yes" />
+        <Shortcut Id="MainShortcut" Name="$(Brand)" Target="[INSTALLFOLDER]bin\SimTransfer.exe" WorkingDirectory="PersonalFolder" Icon="AppIcon" />
+        <RemoveFolder Id="EmptyAppMenu" On="uninstall" />
+      </Component>
+      <Component Id="ShellEntry" Guid="*">
+        <RegistryValue Root="$(RegistryRoot)" Key="$(RegistryKey)" Name="CommandLine" Type="integer" Value="1" KeyPath="yes" />
+        <Shortcut Id="ShellShortcut" Name="$(Brand) 命令行" Target="[SystemFolder]cmd.exe"
+            Arguments="/D /K &quot;&quot;[INSTALLFOLDER]bin\SimTransferShell.cmd&quot;&quot;" WorkingDirectory="PersonalFolder" Icon="AppIcon" />
+      </Component>
+    </DirectoryRef>
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopEntry" Guid="*">
+        <RegistryValue Root="$(RegistryRoot)" Key="$(RegistryKey)" Name="Desktop" Type="integer" Value="1" KeyPath="yes" />
+        <Shortcut Id="DesktopShortcut" Name="$(Brand)" Target="[INSTALLFOLDER]bin\SimTransfer.exe" WorkingDirectory="PersonalFolder" Icon="AppIcon" />
+      </Component>
+    </StandardDirectory>
+    <DirectoryRef Id="SIMQUICKDIR">
+      <Component Id="LegacyEntry" Guid="*" Condition="SIMQUICKAVAILABLE OR SAVEDQUICKDIR">
+        <RegistryValue Root="$(RegistryRoot)" Key="$(RegistryKey)" Name="QuickFolder" Type="string" Value="[SIMQUICKDIR]" KeyPath="yes" />
+        <RegistryValue Root="$(RegistryRoot)" Key="$(RegistryKey)" Name="QuickOwner" Type="string" Value="[SIMQUICKOWNER]" />
+        <Shortcut Id="LegacyShortcut" Name="$(Brand)" Target="[INSTALLFOLDER]bin\SimTransfer.exe" WorkingDirectory="PersonalFolder" Icon="AppIcon" />
+      </Component>
+    </DirectoryRef>
+    <Feature Id="Core" Title="主程序和三维预览" Level="1" AllowAbsent="no" AllowAdvertise="no">
+      <ComponentGroupRef Id="CorePayload" />
+      <ComponentRef Id="AppEntry" />
+    </Feature>
+    <Feature Id="CommandLine" Title="命令行工具" Level="200" AllowAdvertise="no">
+      <ComponentGroupRef Id="CliPayload" />
+      <ComponentRef Id="ShellEntry" />
+    </Feature>
+    <Feature Id="Desktop" Title="桌面快捷方式" Level="200" AllowAdvertise="no">
+      <ComponentRef Id="DesktopEntry" />
+    </Feature>
+    <Feature Id="QuickLaunch" Title="传统快速启动快捷方式" Level="200" AllowAdvertise="no">
+      <Level Value="0" Condition="NOT SIMQUICKAVAILABLE AND NOT SAVEDQUICKDIR" />
+      <ComponentRef Id="LegacyEntry" />
+    </Feature>
+    <UIRef Id="SimulatorUI" />
+  </Package>
+</Wix>

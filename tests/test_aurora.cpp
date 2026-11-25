@@ -6,38 +6,369 @@
 #include <limits>
 #include <sstream>
 #include <iomanip>
+
 namespace {
-void require(bool v,const char*m){if(!v)throw std::runtime_error(m);}
-template<class F>void rejects(F f){bool bad=false;try{f();}catch(const rt::ProtocolError&){bad=true;}require(bad,"expected Aurora rejection");}
-rt::Bytes ascii(const std::string&s){std::ostringstream out;out<<s<<std::hex<<std::uppercase<<std::setfill('0')<<std::setw(4)<<rt::aurora::crc16(reinterpret_cast<const std::uint8_t*>(s.data()),s.size())<<'\r';auto x=out.str();return rt::Bytes(x.begin(),x.end());}
-void bodyCrc(rt::Bytes&b){rt::writeLe16(b.data()+b.size()-2,rt::aurora::crc16(b.data()+6,b.size()-8));}
+void require(bool v, const char *m) {
+    if (!v)
+        throw std::runtime_error(m);
 }
-int main(){using namespace rt::aurora;try{
-    const std::string okay="OKAY",vector="123456789";require(crc16(reinterpret_cast<const std::uint8_t*>(okay.data()),okay.size())==0xa896,"vendor ASCII CRC golden");require(crc16(reinterpret_cast<const std::uint8_t*>(vector.data()),vector.size())==0xbb3d,"independent CRC16 check");
-    Reply mixed;Tool valid;valid.handle=10;valid.status=HandleStatus::Valid;valid.quaternion={1,0,0,0};valid.positionMm={-1,2,3};valid.portStatus=0x80000231;valid.frameNumber=0xfffffff8;valid.quality=0;Tool missing;missing.handle=11;missing.status=HandleStatus::Missing;missing.portStatus=64;missing.frameNumber=16;Tool disabled;disabled.handle=12;mixed.tools={valid,missing,disabled};mixed.systemStatus=0x8020;
-    auto b=encodeBx(mixed);require(b.size()==65&&b[0]==0xc4&&b[1]==0xa5&&rt::readLe16(b.data()+2)==57,"BX LE and mixed geometry");auto r=decodeBx(b);require(r.tools.size()==3&&r.tools[0].positionMm[0]==-1&&r.tools[0].quaternion[0]==1&&r.tools[0].quality==0&&r.tools[0].portStatus==valid.portStatus&&r.systemStatus==mixed.systemStatus,"BX semantic preservation");require(r.tools[0].transformUsable()&&!r.tools[1].transformUsable()&&!r.tools[2].transformUsable(),"validity independent of reserved bits/5DOF zero metric");for(auto bit:{6,7,8,10,11,12}){auto t=valid;t.portStatus|=1u<<bit;require(!t.transformUsable(),"fault marked usable");}
-    require(generateSample(40,8).size()==1691&&generateSample(255,8).size()==10721,"true BX size not buffer padding");rejects([&]{generateSample(256,0);});
-    for(auto i:{0,2,4,10,64}){auto x=b;x[i]^=1;rejects([&]{decodeBx(x);});}auto x=b;x[8]=3;bodyCrc(x);rejects([&]{decodeBx(x);});x=b;x[49]=10;bodyCrc(x);rejects([&]{decodeBx(x);});x=b;x.pop_back();rejects([&]{decodeBx(x);});
-    valid.quality=(std::numeric_limits<float>::quiet_NaN)();mixed.tools={valid};rejects([&]{encodeBx(mixed);});
-    StreamDecoder stream;auto sample=generateSample(40,13);for(std::size_t i=0;i<sample.size();++i)stream.feed(sample.data()+i,1);StreamEvent event;require(stream.pop(event)&&event.kind==EventKind::Bx&&event.reply.tools[0].frameNumber==13&&!stream.pop(event),"split binary with CR payload");
-    StreamDecoder chunked;auto first=generateSample(1,8),second=generateSample(1,16);rt::Bytes joined=first;joined.insert(joined.end(),second.begin(),second.end());
-    for(std::size_t i=0;i<joined.size();i+=7)chunked.feed(joined.data()+i,std::min<std::size_t>(7,joined.size()-i));
-    require(chunked.pop(event)&&event.reply.tools[0].frameNumber==8,"chunked first frame");require(chunked.pop(event)&&event.reply.tools[0].frameNumber==16,"chunked second frame");require(!chunked.pop(event)&&chunked.buffered()==0,"chunked sequence complete");
-    auto error=ascii("ERROR0C"),reset=ascii("RESET");rt::Bytes glued=error;glued.insert(glued.end(),reset.begin(),reset.end());glued.insert(glued.end(),b.begin(),b.end());stream.feed(glued.data(),glued.size());require(stream.pop(event)&&event.kind==EventKind::Error&&event.text=="ERROR0C","ASCII error");require(stream.pop(event)&&event.kind==EventKind::Reset,"ASCII reset");require(stream.pop(event)&&event.kind==EventKind::Bx,"glued binary");
-    rt::Bytes noise(20000,'!');stream.feed(noise.data(),noise.size());stream.feed(b.data(),b.size());require(stream.pop(event)&&event.kind==EventKind::Bx&&stream.buffered()==0&&stream.rejected()>0,"bounded noise resynchronization");
-    CounterTracker counter;auto c=counter.observe(0xfffffff8);c=counter.observe(0);require(c.unwrapped==0x100000000ull&&!c.reset&&!c.duplicate&&c.missingSamples==0,"counter wrap +8");require(counter.observe(0).duplicate,"same source not new sample");require(counter.observe(24).missingSamples==2,"source gap based on increment 8");require(counter.observe(4).reset,"source reset");
-    ClockMapping mapping;require(!mapping.map(1),"unverified clock must not invent source timestamp");rejects([&]{mapping.setVerifiedAnchor(0,0,320,1,"");});mapping.setVerifiedAnchor(0,100000,320,20,"fixture shared clock anchor");require(mapping.map(8)->timestampUs==125000&&mapping.map(8)->errorBoundUs==20,"verified 40Hz mapping");
-    auto maximum=(std::numeric_limits<std::uint64_t>::max)();mapping.setVerifiedAnchor(16,maximum,320,1,"uint64 edge");require(mapping.map(16)->timestampUs==maximum&&!mapping.map(24)&&mapping.map(8)->timestampUs==maximum-25000,"uint64 anchor and overflow safety");
-    SampleTracker tracker;auto a=tracker.observe(generateSample(2,8),99);require(a.newSourceFrame&&!a.sourceTime&&a.hostReadyUs==99,"host ready isn't source sample");a=tracker.observe(generateSample(2,8),100);require(!a.newSourceFrame&&!a.semanticChange,"duplicate source sample");auto altered=decodeBx(a.bytes);altered.tools[0].status=HandleStatus::Missing;a=tracker.observe(encodeBx(altered),101);require(!a.newSourceFrame&&a.semanticChange,"status change preserved on duplicate frame");tracker.clockMapping().setVerifiedAnchor(8,100000,320,10,"test shared anchor");altered.tools[0].frameNumber=16;a=tracker.observe(encodeBx(altered),102);require(!a.sourceTime&&a.toolTimes[0].sourceTime&&a.toolTimes[1].sourceTime,"mixed per-tool counters cannot share one timestamp");
-    ReplaySource replay({generateSample(1,8),generateSample(1,16)});require(replay.next(1)->reply.tools[0].frameNumber==8&&replay.next(2)->reply.tools[0].frameNumber==16&&!replay.next(3),"replay preserves source counts/end");replay.rewind();require(!replay.tracker().clockMapping().verified()&&replay.next(4).has_value(),"replay rewind invalidates mapping");
-    std::atomic<bool> cancel{false};std::vector<std::string> commands;bool initialized=false,enabled=false,bxError=false;DeviceSource device([&](const std::string&cmd,std::uint32_t timeout,const std::atomic<bool>&stop){require(timeout>0&&!stop,"bounded exchange contract");commands.push_back(cmd);if(cmd.rfind("BX:0001",0)==0)return bxError?ascii("ERROR0C"):generateSample(1,8);if(cmd.rfind("PHSR:02",0)==0)return ascii(initialized?"00":"010A001");if(cmd.rfind("PHSR:03",0)==0)return ascii(enabled?"00":"010A011");if(cmd.rfind("PHSR:04",0)==0)return ascii("010A031");if(cmd.rfind("PHSR:",0)==0)return ascii("00");if(cmd.rfind("PINIT:",0)==0)initialized=true;if(cmd.rfind("PENA:",0)==0)enabled=true;if(cmd.rfind("APIREV:",0)==0)return ascii("D.001.008");if(cmd.rfind("VER:",0)==0)return ascii("Aurora test");if(cmd.rfind("GET:Param.Tracking.Track Frequency",0)==0)return ascii("Param.Tracking.Track Frequency=40");if(cmd.rfind("GET:Param.Tracking.Frame Frequency",0)==0)return ascii("Param.Tracking.Frame Frequency=320");if(cmd.rfind("GET:",0)==0)return ascii("Device.Type.0=SCU");return ascii("OKAY");});
-    device.connect(cancel);require(device.state()==SourceState::Tracking&&initialized&&enabled&&device.trackingFrequencyHz()==40&&device.counterFrequencyHz()==320,"device initialization lifecycle");auto acquired=device.acquire([]{return std::uint64_t(500);},cancel);require(acquired.hostReadyUs==500&&!acquired.sourceTime,"acquisition ready clock after reply, source unverified");device.refreshTools(cancel);bxError=true;rejects([&]{device.acquire([]{return std::uint64_t(600);},cancel);});require(device.state()==SourceState::Fault&&!device.tracker().clockMapping().verified(),"CRC-valid device error invalidates tracking/clock");device.stop(cancel);require(device.state()==SourceState::Setup,"stop/reconnect lifecycle");for(const auto&cmd:commands)require(cmd.rfind("TSTART:40",0)!=0&&cmd.rfind("BX:0801",0)!=0,"must not auto enable fast/out-of-volume");device.disconnect();cancel=true;rejects([&]{device.connect(cancel);});require(device.state()==SourceState::Fault,"cancelled connection");
-    cancel=false;
-    auto sim=simulationSourceFactory(2,60)();sim->start(cancel);auto simOne=sim->read([]{return std::uint64_t(800);},cancel);auto simTwo=sim->read([]{return std::uint64_t(900);},cancel);require(sim->kind()=="simulation"&&sim->actualHz()==60&&sim->counterHz()==480&&simOne.reply.tools[0].frameNumber==0&&simTwo.reply.tools[0].frameNumber==8&&simTwo.newSourceFrame&&!simTwo.sourceTime,"simulation source uses common BX/sample model without fake hardware time");sim->shutdown();rejects([&]{sim->read([]{return std::uint64_t(999);},cancel);});
-    auto loop=replaySourceFactory(generateSample(1,32),60)();loop->start(cancel);auto loopOne=loop->read([]{return std::uint64_t(1000);},cancel);auto loopTwo=loop->read([]{return std::uint64_t(1100);},cancel);require(loop->kind()=="replay"&&loop->actualHz()==0&&loop->counterHz()==0&&loopOne.newSourceFrame&&!loopTwo.newSourceFrame&&!loopTwo.semanticChange&&loopTwo.reply.tools[0].frameNumber==32,"static reply queries must not masquerade as new 60Hz hardware samples");loop->shutdown();
-    unsigned stopCommands=0;Exchange hardware=[&](const std::string&cmd,std::uint32_t timeout,const std::atomic<bool>&token){require(!token&&timeout>0,"device factory bounded exchange");if(cmd.rfind("APIREV:",0)==0)return ascii("D.001.008");if(cmd.rfind("GET:Param.Tracking.Track Frequency",0)==0)return ascii("40");if(cmd.rfind("GET:Param.Tracking.Frame Frequency",0)==0)return ascii("320");if(cmd.rfind("GET:",0)==0)return ascii("Device.Type.0=SCU");if(cmd.rfind("VER:",0)==0)return ascii("mock firmware");if(cmd.rfind("PHSR:",0)==0)return ascii("00");if(cmd.rfind("BX:",0)==0)return generateSample(1,8);if(cmd.rfind("TSTOP:",0)==0)++stopCommands;return ascii("OKAY");};
-    auto real=deviceSourceFactory(hardware)();real->start(cancel);auto unmapped=real->read([]{return std::uint64_t(1200);},cancel);require(real->kind()=="device"&&real->actualHz()==40&&real->counterHz()==320&&!unmapped.sourceTime,"real factory does not fabricate a shared hardware timestamp");cancel=true;real->shutdown();require(stopCommands==1,"shutdown sends bounded TSTOP after acquisition cancellation");cancel=false;
-    auto mapped=deviceSourceFactory(hardware,[](DeviceSource&source){source.tracker().clockMapping().setVerifiedAnchor(0,100000,320,25,"test external common-clock anchor, distinct from host QPC");})();mapped->start(cancel);auto mappedSample=mapped->read([]{return std::uint64_t(1300);},cancel);require(mappedSample.sourceTime&&mappedSample.sourceTime->timestampUs==125000&&mappedSample.hostReadyUs==1300&&mappedSample.sourceTime->errorBoundUs==25,"common clock and host clock remain distinct");mapped->shutdown();require(stopCommands==2,"device factory explicit shutdown idempotence");
-    auto badReply=generateSample(1,0);badReply.back()^=1;auto badReplay=replaySourceFactory(std::move(badReply))();rejects([&]{badReplay->start(cancel);});rejects([&]{simulationSourceFactory(256,60);});
-    std::cout<<"Aurora codec/CRC/stream/clock/lifecycle/factory tests passed\n";return 0;
-}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+
+template <class F> void rejects(F f) {
+    bool bad = false;
+    try {
+        f();
+    } catch (const rt::ProtocolError &) {
+        bad = true;
+    }
+    require(bad, "expected Aurora rejection");
+}
+
+rt::Bytes ascii(const std::string &s) {
+    std::ostringstream out;
+    out << s << std::hex << std::uppercase << std::setfill('0') << std::setw(4)
+        << rt::aurora::crc16(reinterpret_cast<const std::uint8_t *>(s.data()), s.size()) << '\r';
+    auto x = out.str();
+    return rt::Bytes(x.begin(), x.end());
+}
+
+void bodyCrc(rt::Bytes &b) {
+    rt::writeLe16(b.data() + b.size() - 2, rt::aurora::crc16(b.data() + 6, b.size() - 8));
+}
+} // namespace
+
+int main() {
+    using namespace rt::aurora;
+    try {
+        const std::string okay = "OKAY";
+        const std::string vector = "123456789";
+        require(crc16(reinterpret_cast<const std::uint8_t *>(okay.data()), okay.size()) == 0xa896,
+                "vendor ASCII CRC golden");
+        require(crc16(reinterpret_cast<const std::uint8_t *>(vector.data()), vector.size()) ==
+                    0xbb3d,
+                "independent CRC16 check");
+        Reply mixed;
+        Tool valid;
+        valid.handle = 10;
+        valid.status = HandleStatus::Valid;
+        valid.quaternion = {1, 0, 0, 0};
+        valid.positionMm = {-1, 2, 3};
+        valid.portStatus = 0x80000231;
+        valid.frameNumber = 0xfffffff8;
+        valid.quality = 0;
+        Tool missing;
+        missing.handle = 11;
+        missing.status = HandleStatus::Missing;
+        missing.portStatus = 64;
+        missing.frameNumber = 16;
+        Tool disabled;
+        disabled.handle = 12;
+        mixed.tools = {valid, missing, disabled};
+        mixed.systemStatus = 0x8020;
+        auto b = encodeBx(mixed);
+        require(b.size() == 65 && b[0] == 0xc4 && b[1] == 0xa5 && rt::readLe16(b.data() + 2) == 57,
+                "BX LE and mixed geometry");
+        auto r = decodeBx(b);
+        require(r.tools.size() == 3 && r.tools[0].positionMm[0] == -1 &&
+                    r.tools[0].quaternion[0] == 1 && r.tools[0].quality == 0 &&
+                    r.tools[0].portStatus == valid.portStatus &&
+                    r.systemStatus == mixed.systemStatus,
+                "BX semantic preservation");
+        require(r.tools[0].transformUsable() && !r.tools[1].transformUsable() &&
+                    !r.tools[2].transformUsable(),
+                "validity independent of reserved bits/5DOF zero metric");
+        for (auto bit : {6, 7, 8, 10, 11, 12}) {
+            auto t = valid;
+            t.portStatus |= 1u << bit;
+            require(!t.transformUsable(), "fault marked usable");
+        }
+        require(generateSample(40, 8).size() == 1691 && generateSample(255, 8).size() == 10721,
+                "true BX size not buffer padding");
+        rejects([&] {
+            generateSample(256, 0);
+        });
+        for (auto i : {0, 2, 4, 10, 64}) {
+            auto x = b;
+            x[i] ^= 1;
+            rejects([&] {
+                decodeBx(x);
+            });
+        }
+        auto x = b;
+        x[8] = 3;
+        bodyCrc(x);
+        rejects([&] {
+            decodeBx(x);
+        });
+        x = b;
+        x[49] = 10;
+        bodyCrc(x);
+        rejects([&] {
+            decodeBx(x);
+        });
+        x = b;
+        x.pop_back();
+        rejects([&] {
+            decodeBx(x);
+        });
+        valid.quality = (std::numeric_limits<float>::quiet_NaN)();
+        mixed.tools = {valid};
+        rejects([&] {
+            encodeBx(mixed);
+        });
+        StreamDecoder stream;
+        auto sample = generateSample(40, 13);
+        for (std::size_t i = 0; i < sample.size(); ++i)
+            stream.feed(sample.data() + i, 1);
+        StreamEvent event;
+        require(stream.pop(event) && event.kind == EventKind::Bx &&
+                    event.reply.tools[0].frameNumber == 13 && !stream.pop(event),
+                "split binary with CR payload");
+        StreamDecoder chunked;
+        auto first = generateSample(1, 8);
+        auto second = generateSample(1, 16);
+        rt::Bytes joined = first;
+        joined.insert(joined.end(), second.begin(), second.end());
+        for (std::size_t i = 0; i < joined.size(); i += 7)
+            chunked.feed(joined.data() + i, std::min<std::size_t>(7, joined.size() - i));
+        require(chunked.pop(event) && event.reply.tools[0].frameNumber == 8, "chunked first frame");
+        require(chunked.pop(event) && event.reply.tools[0].frameNumber == 16,
+                "chunked second frame");
+        require(!chunked.pop(event) && chunked.buffered() == 0, "chunked sequence complete");
+        auto error = ascii("ERROR0C");
+        auto reset = ascii("RESET");
+        rt::Bytes glued = error;
+        glued.insert(glued.end(), reset.begin(), reset.end());
+        glued.insert(glued.end(), b.begin(), b.end());
+        stream.feed(glued.data(), glued.size());
+        require(stream.pop(event) && event.kind == EventKind::Error && event.text == "ERROR0C",
+                "ASCII error");
+        require(stream.pop(event) && event.kind == EventKind::Reset, "ASCII reset");
+        require(stream.pop(event) && event.kind == EventKind::Bx, "glued binary");
+        rt::Bytes noise(20000, '!');
+        stream.feed(noise.data(), noise.size());
+        stream.feed(b.data(), b.size());
+        require(stream.pop(event) && event.kind == EventKind::Bx && stream.buffered() == 0 &&
+                    stream.rejected() > 0,
+                "bounded noise resynchronization");
+        CounterTracker counter;
+        auto c = counter.observe(0xfffffff8);
+        c = counter.observe(0);
+        require(c.unwrapped == 0x100000000ull && !c.reset && !c.duplicate && c.missingSamples == 0,
+                "counter wrap +8");
+        require(counter.observe(0).duplicate, "same source not new sample");
+        require(counter.observe(24).missingSamples == 2, "source gap based on increment 8");
+        require(counter.observe(4).reset, "source reset");
+        ClockMapping mapping;
+        require(!mapping.map(1), "unverified clock must not invent source timestamp");
+        rejects([&] {
+            mapping.setVerifiedAnchor(0, 0, 320, 1, "");
+        });
+        mapping.setVerifiedAnchor(0, 100000, 320, 20, "fixture shared clock anchor");
+        require(mapping.map(8)->timestampUs == 125000 && mapping.map(8)->errorBoundUs == 20,
+                "verified 40Hz mapping");
+        auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+        mapping.setVerifiedAnchor(16, maximum, 320, 1, "uint64 edge");
+        require(mapping.map(16)->timestampUs == maximum && !mapping.map(24) &&
+                    mapping.map(8)->timestampUs == maximum - 25000,
+                "uint64 anchor and overflow safety");
+        SampleTracker tracker;
+        auto a = tracker.observe(generateSample(2, 8), 99);
+        require(a.newSourceFrame && !a.sourceTime && a.hostReadyUs == 99,
+                "host ready isn't source sample");
+        a = tracker.observe(generateSample(2, 8), 100);
+        require(!a.newSourceFrame && !a.semanticChange, "duplicate source sample");
+        auto altered = decodeBx(a.bytes);
+        altered.tools[0].status = HandleStatus::Missing;
+        a = tracker.observe(encodeBx(altered), 101);
+        require(!a.newSourceFrame && a.semanticChange,
+                "status change preserved on duplicate frame");
+        tracker.clockMapping().setVerifiedAnchor(8, 100000, 320, 10, "test shared anchor");
+        altered.tools[0].frameNumber = 16;
+        a = tracker.observe(encodeBx(altered), 102);
+        require(!a.sourceTime && a.toolTimes[0].sourceTime && a.toolTimes[1].sourceTime,
+                "mixed per-tool counters cannot share one timestamp");
+        ReplaySource replay({generateSample(1, 8), generateSample(1, 16)});
+        require(replay.next(1)->reply.tools[0].frameNumber == 8 &&
+                    replay.next(2)->reply.tools[0].frameNumber == 16 && !replay.next(3),
+                "replay preserves source counts/end");
+        replay.rewind();
+        require(!replay.tracker().clockMapping().verified() && replay.next(4).has_value(),
+                "replay rewind invalidates mapping");
+        std::atomic<bool> cancel{false};
+        std::vector<std::string> commands;
+        bool initialized = false;
+        bool enabled = false;
+        bool bxError = false;
+        DeviceSource device(
+            [&](const std::string &cmd, std::uint32_t timeout, const std::atomic<bool> &stop) {
+                require(timeout > 0 && !stop, "bounded exchange contract");
+                commands.push_back(cmd);
+                if (cmd.rfind("BX:0001", 0) == 0)
+                    return bxError ? ascii("ERROR0C") : generateSample(1, 8);
+                if (cmd.rfind("PHSR:02", 0) == 0)
+                    return ascii(initialized ? "00" : "010A001");
+                if (cmd.rfind("PHSR:03", 0) == 0)
+                    return ascii(enabled ? "00" : "010A011");
+                if (cmd.rfind("PHSR:04", 0) == 0)
+                    return ascii("010A031");
+                if (cmd.rfind("PHSR:", 0) == 0)
+                    return ascii("00");
+                if (cmd.rfind("PINIT:", 0) == 0)
+                    initialized = true;
+                if (cmd.rfind("PENA:", 0) == 0)
+                    enabled = true;
+                if (cmd.rfind("APIREV:", 0) == 0)
+                    return ascii("D.001.008");
+                if (cmd.rfind("VER:", 0) == 0)
+                    return ascii("Aurora test");
+                if (cmd.rfind("GET:Param.Tracking.Track Frequency", 0) == 0)
+                    return ascii("Param.Tracking.Track Frequency=40");
+                if (cmd.rfind("GET:Param.Tracking.Frame Frequency", 0) == 0)
+                    return ascii("Param.Tracking.Frame Frequency=320");
+                if (cmd.rfind("GET:", 0) == 0)
+                    return ascii("Device.Type.0=SCU");
+                return ascii("OKAY");
+            });
+        device.connect(cancel);
+        require(device.state() == SourceState::Tracking && initialized && enabled &&
+                    device.trackingFrequencyHz() == 40 && device.counterFrequencyHz() == 320,
+                "device initialization lifecycle");
+        auto acquired = device.acquire(
+            [] {
+                return std::uint64_t(500);
+            },
+            cancel);
+        require(acquired.hostReadyUs == 500 && !acquired.sourceTime,
+                "acquisition ready clock after reply, source unverified");
+        device.refreshTools(cancel);
+        bxError = true;
+        rejects([&] {
+            device.acquire(
+                [] {
+                    return std::uint64_t(600);
+                },
+                cancel);
+        });
+        require(device.state() == SourceState::Fault && !device.tracker().clockMapping().verified(),
+                "CRC-valid device error invalidates tracking/clock");
+        device.stop(cancel);
+        require(device.state() == SourceState::Setup, "stop/reconnect lifecycle");
+        for (const auto &cmd : commands)
+            require(cmd.rfind("TSTART:40", 0) != 0 && cmd.rfind("BX:0801", 0) != 0,
+                    "must not auto enable fast/out-of-volume");
+        device.disconnect();
+        cancel = true;
+        rejects([&] {
+            device.connect(cancel);
+        });
+        require(device.state() == SourceState::Fault, "cancelled connection");
+        cancel = false;
+        auto sim = simulationSourceFactory(2, 60)();
+        sim->start(cancel);
+        auto simOne = sim->read(
+            [] {
+                return std::uint64_t(800);
+            },
+            cancel);
+        auto simTwo = sim->read(
+            [] {
+                return std::uint64_t(900);
+            },
+            cancel);
+        require(sim->kind() == "simulation" && sim->actualHz() == 60 && sim->counterHz() == 480 &&
+                    simOne.reply.tools[0].frameNumber == 0 &&
+                    simTwo.reply.tools[0].frameNumber == 8 && simTwo.newSourceFrame &&
+                    !simTwo.sourceTime,
+                "simulation source uses common BX/sample model without fake hardware time");
+        sim->shutdown();
+        rejects([&] {
+            sim->read(
+                [] {
+                    return std::uint64_t(999);
+                },
+                cancel);
+        });
+        auto loop = replaySourceFactory(generateSample(1, 32), 60)();
+        loop->start(cancel);
+        auto loopOne = loop->read(
+            [] {
+                return std::uint64_t(1000);
+            },
+            cancel);
+        auto loopTwo = loop->read(
+            [] {
+                return std::uint64_t(1100);
+            },
+            cancel);
+        require(loop->kind() == "replay" && loop->actualHz() == 0 && loop->counterHz() == 0 &&
+                    loopOne.newSourceFrame && !loopTwo.newSourceFrame && !loopTwo.semanticChange &&
+                    loopTwo.reply.tools[0].frameNumber == 32,
+                "static reply queries must not masquerade as new 60Hz hardware samples");
+        loop->shutdown();
+        unsigned stopCommands = 0;
+        Exchange hardware = [&](const std::string &cmd, std::uint32_t timeout,
+                                const std::atomic<bool> &token) {
+            require(!token && timeout > 0, "device factory bounded exchange");
+            if (cmd.rfind("APIREV:", 0) == 0)
+                return ascii("D.001.008");
+            if (cmd.rfind("GET:Param.Tracking.Track Frequency", 0) == 0)
+                return ascii("40");
+            if (cmd.rfind("GET:Param.Tracking.Frame Frequency", 0) == 0)
+                return ascii("320");
+            if (cmd.rfind("GET:", 0) == 0)
+                return ascii("Device.Type.0=SCU");
+            if (cmd.rfind("VER:", 0) == 0)
+                return ascii("mock firmware");
+            if (cmd.rfind("PHSR:", 0) == 0)
+                return ascii("00");
+            if (cmd.rfind("BX:", 0) == 0)
+                return generateSample(1, 8);
+            if (cmd.rfind("TSTOP:", 0) == 0)
+                ++stopCommands;
+            return ascii("OKAY");
+        };
+        auto real = deviceSourceFactory(hardware)();
+        real->start(cancel);
+        auto unmapped = real->read(
+            [] {
+                return std::uint64_t(1200);
+            },
+            cancel);
+        require(real->kind() == "device" && real->actualHz() == 40 && real->counterHz() == 320 &&
+                    !unmapped.sourceTime,
+                "real factory does not fabricate a shared hardware timestamp");
+        cancel = true;
+        real->shutdown();
+        require(stopCommands == 1, "shutdown sends bounded TSTOP after acquisition cancellation");
+        cancel = false;
+        auto mapped = deviceSourceFactory(hardware, [](DeviceSource &source) {
+            source.tracker().clockMapping().setVerifiedAnchor(
+                0, 100000, 320, 25, "test external common-clock anchor, distinct from host QPC");
+        })();
+        mapped->start(cancel);
+        auto mappedSample = mapped->read(
+            [] {
+                return std::uint64_t(1300);
+            },
+            cancel);
+        require(mappedSample.sourceTime && mappedSample.sourceTime->timestampUs == 125000 &&
+                    mappedSample.hostReadyUs == 1300 && mappedSample.sourceTime->errorBoundUs == 25,
+                "common clock and host clock remain distinct");
+        mapped->shutdown();
+        require(stopCommands == 2, "device factory explicit shutdown idempotence");
+        auto badReply = generateSample(1, 0);
+        badReply.back() ^= 1;
+        auto badReplay = replaySourceFactory(std::move(badReply))();
+        rejects([&] {
+            badReplay->start(cancel);
+        });
+        rejects([&] {
+            simulationSourceFactory(256, 60);
+        });
+        std::cout << "Aurora codec/CRC/stream/clock/lifecycle/factory tests passed\n";
+        return 0;
+    } catch (const std::exception &e) {
+        std::cerr << e.what() << '\n';
+        return 1;
+    }
+}

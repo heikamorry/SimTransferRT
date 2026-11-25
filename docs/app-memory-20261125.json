@@ -1,0 +1,1777 @@
+{
+  "recordedDate": "2026-11-25",
+  "timezone": "Asia/Singapore",
+  "environment": {
+    "platform": "Windows 11 x64 build 26300",
+    "physicalMemoryBytes": 33840197632,
+    "qt": "6.12.0",
+    "vtk": "9.4.2",
+    "buildType": "Release",
+    "gitHeadBase": "10dee85",
+    "workTreeHadUncommittedChanges": true,
+    "measuredSimTransferExeSha256": "d01ebc5ca1a2dfe9126720de70ef7999fac5b1a36a1473685ecb01f017dfdffa"
+  },
+  "measurement": {
+    "units": "bytes",
+    "workingSet": "GetProcessMemoryInfo WorkingSetSize",
+    "private": "GetProcessMemoryInfo PrivateUsage",
+    "networkDriver": "SimAppMemoryTests.exe, native Qt windows platform, production V2Window and real UDP",
+    "networkLoad": {
+      "epBytes": 204800,
+      "epHz": 50,
+      "linkMbps": 1000,
+      "ndiHz": 60,
+      "ndiTools": 4
+    },
+    "route": "127.0.0.1",
+    "cycleActiveMs": 4000,
+    "stoppedSettleMs": 2500,
+    "postStopIdleIntervalMs": 10000,
+    "unloadSettleMs": 3000,
+    "destroyedWindowSettleMs": 1500,
+    "networkPeakTargetSampleIntervalMs": 20,
+    "independentReceiverActiveWindowSeconds": 20,
+    "independentSenderActiveWindowSeconds": 25
+  },
+  "startup": {
+    "executable": "SimTransfer.exe",
+    "launches": [
+      {
+        "pid": 29508,
+        "samples": 444,
+        "settledSamples": 356,
+        "idleWorkingSetBytes": {
+          "min": 375758848,
+          "median": 375767040.0,
+          "max": 391938048
+        },
+        "idlePrivateBytes": {
+          "min": 302473216,
+          "median": 302473216.0,
+          "max": 318717952
+        },
+        "idleHandles": {
+          "min": 1161,
+          "median": 1161.0,
+          "max": 1161
+        },
+        "idleThreads": {
+          "min": 22,
+          "median": 22.0,
+          "max": 22
+        },
+        "sampledPeakWorkingSetBytes": 391938048,
+        "sampledPeakPrivateBytes": 318726144,
+        "osPeakWorkingSetBytes": 391938048,
+        "osPeakPagefileBytes": 318742528,
+        "closeRequested": true,
+        "exitCode": 0
+      },
+      {
+        "pid": 13828,
+        "samples": 444,
+        "settledSamples": 356,
+        "idleWorkingSetBytes": {
+          "min": 380751872,
+          "median": 380760064.0,
+          "max": 396886016
+        },
+        "idlePrivateBytes": {
+          "min": 303984640,
+          "median": 303984640.0,
+          "max": 320184320
+        },
+        "idleHandles": {
+          "min": 1161,
+          "median": 1161.0,
+          "max": 1161
+        },
+        "idleThreads": {
+          "min": 22,
+          "median": 22.0,
+          "max": 22
+        },
+        "sampledPeakWorkingSetBytes": 396886016,
+        "sampledPeakPrivateBytes": 320184320,
+        "osPeakWorkingSetBytes": 396886016,
+        "osPeakPagefileBytes": 320217088,
+        "closeRequested": true,
+        "exitCode": 0
+      },
+      {
+        "pid": 31960,
+        "samples": 446,
+        "settledSamples": 358,
+        "idleWorkingSetBytes": {
+          "min": 380915712,
+          "median": 380923904.0,
+          "max": 397094912
+        },
+        "idlePrivateBytes": {
+          "min": 303808512,
+          "median": 303808512.0,
+          "max": 320053248
+        },
+        "idleHandles": {
+          "min": 1157,
+          "median": 1157.0,
+          "max": 1157
+        },
+        "idleThreads": {
+          "min": 21,
+          "median": 21.0,
+          "max": 21
+        },
+        "sampledPeakWorkingSetBytes": 397094912,
+        "sampledPeakPrivateBytes": 320061440,
+        "osPeakWorkingSetBytes": 397094912,
+        "osPeakPagefileBytes": 320126976,
+        "closeRequested": true,
+        "exitCode": 0
+      }
+    ],
+    "timeToSampleSeconds": 25,
+    "settledFromSeconds": 5,
+    "targetSampleIntervalMs": 50
+  },
+  "pairedSender": {
+    "active": [
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 34,
+          "handles": 1192,
+          "privateBytes": 325505024,
+          "userObjects": 55,
+          "workingSetBytes": 399994880
+        },
+        "peak": {
+          "privateBytes": 335581184,
+          "samples": 164,
+          "workingSetBytes": 410030080
+        }
+      },
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 34,
+          "handles": 1192,
+          "privateBytes": 325668864,
+          "userObjects": 55,
+          "workingSetBytes": 400171008
+        },
+        "peak": {
+          "privateBytes": 325701632,
+          "samples": 164,
+          "workingSetBytes": 400191488
+        }
+      },
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 34,
+          "handles": 1192,
+          "privateBytes": 325672960,
+          "userObjects": 55,
+          "workingSetBytes": 400183296
+        },
+        "peak": {
+          "privateBytes": 325705728,
+          "samples": 164,
+          "workingSetBytes": 400203776
+        }
+      },
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 34,
+          "handles": 1192,
+          "privateBytes": 325677056,
+          "userObjects": 55,
+          "workingSetBytes": 400187392
+        },
+        "peak": {
+          "privateBytes": 325709824,
+          "samples": 163,
+          "workingSetBytes": 400207872
+        }
+      },
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 34,
+          "handles": 1192,
+          "privateBytes": 325705728,
+          "userObjects": 55,
+          "workingSetBytes": 400216064
+        },
+        "peak": {
+          "privateBytes": 325738496,
+          "samples": 164,
+          "workingSetBytes": 400236544
+        }
+      }
+    ],
+    "activeIntervalMs": 5000,
+    "firstStop": {
+      "afterStop": {
+        "gdiObjects": 34,
+        "handles": 1184,
+        "privateBytes": 334843904,
+        "userObjects": 55,
+        "workingSetBytes": 409346048
+      },
+      "sent": {
+        "ep": 1252,
+        "ndi": 1502
+      }
+    },
+    "home": {
+      "gdiObjects": 34,
+      "handles": 1175,
+      "privateBytes": 316674048,
+      "userObjects": 52,
+      "workingSetBytes": 389902336
+    },
+    "pid": 13328,
+    "platform": "windows",
+    "port": 63523,
+    "qt": "6.12.0",
+    "role": "sender",
+    "startedUtc": "2026-11-25T04:43:31.740Z",
+    "targetSampleIntervalMs": 20
+  },
+  "pairedReceiver": {
+    "active": [
+      {
+        "bxPreviews": 43,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1210,
+          "privateBytes": 705789952,
+          "userObjects": 62,
+          "workingSetBytes": 780292096
+        },
+        "peak": {
+          "privateBytes": 705822720,
+          "samples": 164,
+          "workingSetBytes": 780312576
+        }
+      },
+      {
+        "bxPreviews": 43,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1210,
+          "privateBytes": 696672256,
+          "userObjects": 62,
+          "workingSetBytes": 771428352
+        },
+        "peak": {
+          "privateBytes": 710483968,
+          "samples": 165,
+          "workingSetBytes": 785133568
+        }
+      },
+      {
+        "bxPreviews": 43,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1210,
+          "privateBytes": 697376768,
+          "userObjects": 62,
+          "workingSetBytes": 772104192
+        },
+        "peak": {
+          "privateBytes": 697409536,
+          "samples": 163,
+          "workingSetBytes": 772104192
+        }
+      },
+      {
+        "bxPreviews": 43,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1212,
+          "privateBytes": 702496768,
+          "userObjects": 62,
+          "workingSetBytes": 777199616
+        },
+        "peak": {
+          "privateBytes": 702529536,
+          "samples": 164,
+          "workingSetBytes": 777220096
+        }
+      }
+    ],
+    "activeIntervalMs": 5000,
+    "firstStop": {
+      "afterStop": {
+        "gdiObjects": 41,
+        "handles": 1207,
+        "privateBytes": 701079552,
+        "userObjects": 61,
+        "workingSetBytes": 775802880
+      },
+      "received": {
+        "ep": 1252,
+        "ndi": 1502
+      }
+    },
+    "home": {
+      "gdiObjects": 34,
+      "handles": 1175,
+      "privateBytes": 314564608,
+      "userObjects": 52,
+      "workingSetBytes": 387436544
+    },
+    "listening": [
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1201,
+          "privateBytes": 430874624,
+          "userObjects": 57,
+          "workingSetBytes": 504733696
+        },
+        "peak": {
+          "privateBytes": 431157248,
+          "samples": 98,
+          "workingSetBytes": 504963072
+        }
+      }
+    ],
+    "pid": 25156,
+    "platform": "windows",
+    "port": 63523,
+    "qt": "6.12.0",
+    "role": "receiver",
+    "startedUtc": "2026-11-25T04:43:24.800Z",
+    "targetSampleIntervalMs": 20
+  },
+  "joint": {
+    "active": [
+      {
+        "bxPreviews": 85,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1228,
+          "privateBytes": 738844672,
+          "userObjects": 62,
+          "workingSetBytes": 822853632
+        },
+        "peak": {
+          "privateBytes": 746803200,
+          "samples": 324,
+          "workingSetBytes": 830787584
+        }
+      },
+      {
+        "bxPreviews": 86,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1228,
+          "privateBytes": 726417408,
+          "userObjects": 62,
+          "workingSetBytes": 809914368
+        },
+        "peak": {
+          "privateBytes": 739086336,
+          "samples": 324,
+          "workingSetBytes": 823083008
+        }
+      },
+      {
+        "bxPreviews": 84,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1230,
+          "privateBytes": 742510592,
+          "userObjects": 62,
+          "workingSetBytes": 826376192
+        },
+        "peak": {
+          "privateBytes": 746938368,
+          "samples": 324,
+          "workingSetBytes": 830787584
+        }
+      },
+      {
+        "bxPreviews": 83,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1230,
+          "privateBytes": 742719488,
+          "userObjects": 62,
+          "workingSetBytes": 826552320
+        },
+        "peak": {
+          "privateBytes": 742752256,
+          "samples": 325,
+          "workingSetBytes": 826564608
+        }
+      },
+      {
+        "bxPreviews": 84,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1230,
+          "privateBytes": 743317504,
+          "userObjects": 62,
+          "workingSetBytes": 826720256
+        },
+        "peak": {
+          "privateBytes": 743350272,
+          "samples": 324,
+          "workingSetBytes": 826740736
+        }
+      },
+      {
+        "bxPreviews": 83,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1223,
+          "privateBytes": 733847552,
+          "userObjects": 62,
+          "workingSetBytes": 817336320
+        },
+        "peak": {
+          "privateBytes": 743350272,
+          "samples": 324,
+          "workingSetBytes": 826740736
+        }
+      },
+      {
+        "bxPreviews": 83,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1223,
+          "privateBytes": 733847552,
+          "userObjects": 62,
+          "workingSetBytes": 817336320
+        },
+        "peak": {
+          "privateBytes": 733880320,
+          "samples": 324,
+          "workingSetBytes": 817356800
+        }
+      },
+      {
+        "bxPreviews": 85,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1223,
+          "privateBytes": 738054144,
+          "userObjects": 62,
+          "workingSetBytes": 821628928
+        },
+        "peak": {
+          "privateBytes": 738086912,
+          "samples": 324,
+          "workingSetBytes": 821649408
+        }
+      },
+      {
+        "bxPreviews": 84,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1223,
+          "privateBytes": 738054144,
+          "userObjects": 62,
+          "workingSetBytes": 821633024
+        },
+        "peak": {
+          "privateBytes": 738086912,
+          "samples": 325,
+          "workingSetBytes": 821653504
+        }
+      },
+      {
+        "bxPreviews": 83,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1223,
+          "privateBytes": 738054144,
+          "userObjects": 62,
+          "workingSetBytes": 821936128
+        },
+        "peak": {
+          "privateBytes": 738086912,
+          "samples": 324,
+          "workingSetBytes": 821956608
+        }
+      },
+      {
+        "bxPreviews": 85,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1223,
+          "privateBytes": 738263040,
+          "userObjects": 62,
+          "workingSetBytes": 822239232
+        },
+        "peak": {
+          "privateBytes": 738295808,
+          "samples": 325,
+          "workingSetBytes": 822259712
+        }
+      },
+      {
+        "bxPreviews": 83,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1221,
+          "privateBytes": 738230272,
+          "userObjects": 62,
+          "workingSetBytes": 822218752
+        },
+        "peak": {
+          "privateBytes": 738295808,
+          "samples": 325,
+          "workingSetBytes": 822259712
+        }
+      }
+    ],
+    "activeIntervalMs": 10000,
+    "cycles": [
+      {
+        "active": {
+          "bxPreviews": 33,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 735371264,
+            "userObjects": 62,
+            "workingSetBytes": 819441664
+          },
+          "peak": {
+            "privateBytes": 743698432,
+            "samples": 130,
+            "workingSetBytes": 827715584
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 735440896,
+          "userObjects": 61,
+          "workingSetBytes": 819310592
+        },
+        "cycle": 1,
+        "cyclePeak": {
+          "privateBytes": 743698432,
+          "samples": 216,
+          "workingSetBytes": 827715584
+        },
+        "received": {
+          "ep": 199,
+          "ndi": 238
+        },
+        "sent": {
+          "ep": 199,
+          "ndi": 238
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 33,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 735592448,
+            "userObjects": 62,
+            "workingSetBytes": 819597312
+          },
+          "peak": {
+            "privateBytes": 743497728,
+            "samples": 132,
+            "workingSetBytes": 827478016
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 735977472,
+          "userObjects": 61,
+          "workingSetBytes": 819453952
+        },
+        "cycle": 2,
+        "cyclePeak": {
+          "privateBytes": 743497728,
+          "samples": 220,
+          "workingSetBytes": 827478016
+        },
+        "received": {
+          "ep": 201,
+          "ndi": 241
+        },
+        "sent": {
+          "ep": 201,
+          "ndi": 241
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 33,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 743751680,
+            "userObjects": 62,
+            "workingSetBytes": 827346944
+          },
+          "peak": {
+            "privateBytes": 743784448,
+            "samples": 131,
+            "workingSetBytes": 827367424
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 739143680,
+          "userObjects": 61,
+          "workingSetBytes": 822812672
+        },
+        "cycle": 3,
+        "cyclePeak": {
+          "privateBytes": 743784448,
+          "samples": 219,
+          "workingSetBytes": 827367424
+        },
+        "received": {
+          "ep": 199,
+          "ndi": 239
+        },
+        "sent": {
+          "ep": 199,
+          "ndi": 239
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 34,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 735092736,
+            "userObjects": 62,
+            "workingSetBytes": 818704384
+          },
+          "peak": {
+            "privateBytes": 739397632,
+            "samples": 133,
+            "workingSetBytes": 822988800
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 734871552,
+          "userObjects": 61,
+          "workingSetBytes": 818552832
+        },
+        "cycle": 4,
+        "cyclePeak": {
+          "privateBytes": 739397632,
+          "samples": 220,
+          "workingSetBytes": 822988800
+        },
+        "received": {
+          "ep": 201,
+          "ndi": 241
+        },
+        "sent": {
+          "ep": 201,
+          "ndi": 241
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 34,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 735940608,
+            "userObjects": 62,
+            "workingSetBytes": 819552256
+          },
+          "peak": {
+            "privateBytes": 739778560,
+            "samples": 131,
+            "workingSetBytes": 823373824
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 735723520,
+          "userObjects": 61,
+          "workingSetBytes": 819404800
+        },
+        "cycle": 5,
+        "cyclePeak": {
+          "privateBytes": 739778560,
+          "samples": 220,
+          "workingSetBytes": 823373824
+        },
+        "received": {
+          "ep": 200,
+          "ndi": 240
+        },
+        "sent": {
+          "ep": 200,
+          "ndi": 240
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 34,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 745934848,
+            "userObjects": 62,
+            "workingSetBytes": 829730816
+          },
+          "peak": {
+            "privateBytes": 749121536,
+            "samples": 131,
+            "workingSetBytes": 832692224
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 745709568,
+          "userObjects": 61,
+          "workingSetBytes": 829575168
+        },
+        "cycle": 6,
+        "cyclePeak": {
+          "privateBytes": 749121536,
+          "samples": 220,
+          "workingSetBytes": 832692224
+        },
+        "received": {
+          "ep": 199,
+          "ndi": 239
+        },
+        "sent": {
+          "ep": 199,
+          "ndi": 239
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 34,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 735944704,
+            "userObjects": 62,
+            "workingSetBytes": 819793920
+          },
+          "peak": {
+            "privateBytes": 745959424,
+            "samples": 131,
+            "workingSetBytes": 829743104
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 735727616,
+          "userObjects": 61,
+          "workingSetBytes": 819646464
+        },
+        "cycle": 7,
+        "cyclePeak": {
+          "privateBytes": 745959424,
+          "samples": 220,
+          "workingSetBytes": 829743104
+        },
+        "received": {
+          "ep": 200,
+          "ndi": 240
+        },
+        "sent": {
+          "ep": 200,
+          "ndi": 240
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 34,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 740605952,
+            "userObjects": 62,
+            "workingSetBytes": 824537088
+          },
+          "peak": {
+            "privateBytes": 740638720,
+            "samples": 132,
+            "workingSetBytes": 824557568
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 740388864,
+          "userObjects": 61,
+          "workingSetBytes": 824389632
+        },
+        "cycle": 8,
+        "cyclePeak": {
+          "privateBytes": 740638720,
+          "samples": 221,
+          "workingSetBytes": 824557568
+        },
+        "received": {
+          "ep": 200,
+          "ndi": 241
+        },
+        "sent": {
+          "ep": 200,
+          "ndi": 241
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 33,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 739098624,
+            "userObjects": 62,
+            "workingSetBytes": 823029760
+          },
+          "peak": {
+            "privateBytes": 740638720,
+            "samples": 131,
+            "workingSetBytes": 824557568
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 738881536,
+          "userObjects": 61,
+          "workingSetBytes": 822882304
+        },
+        "cycle": 9,
+        "cyclePeak": {
+          "privateBytes": 740638720,
+          "samples": 221,
+          "workingSetBytes": 824557568
+        },
+        "received": {
+          "ep": 200,
+          "ndi": 240
+        },
+        "sent": {
+          "ep": 200,
+          "ndi": 240
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 34,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 735965184,
+            "userObjects": 62,
+            "workingSetBytes": 820056064
+          },
+          "peak": {
+            "privateBytes": 739143680,
+            "samples": 132,
+            "workingSetBytes": 823222272
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 735739904,
+          "userObjects": 61,
+          "workingSetBytes": 819900416
+        },
+        "cycle": 10,
+        "cyclePeak": {
+          "privateBytes": 739143680,
+          "samples": 218,
+          "workingSetBytes": 823222272
+        },
+        "received": {
+          "ep": 201,
+          "ndi": 241
+        },
+        "sent": {
+          "ep": 201,
+          "ndi": 241
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 34,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 736153600,
+            "userObjects": 62,
+            "workingSetBytes": 820248576
+          },
+          "peak": {
+            "privateBytes": 736186368,
+            "samples": 130,
+            "workingSetBytes": 820269056
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 735924224,
+          "userObjects": 61,
+          "workingSetBytes": 820088832
+        },
+        "cycle": 11,
+        "cyclePeak": {
+          "privateBytes": 736186368,
+          "samples": 219,
+          "workingSetBytes": 820269056
+        },
+        "received": {
+          "ep": 199,
+          "ndi": 239
+        },
+        "sent": {
+          "ep": 199,
+          "ndi": 239
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 34,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1218,
+            "privateBytes": 736137216,
+            "userObjects": 62,
+            "workingSetBytes": 820240384
+          },
+          "peak": {
+            "privateBytes": 739319808,
+            "samples": 131,
+            "workingSetBytes": 823406592
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1203,
+          "privateBytes": 735916032,
+          "userObjects": 61,
+          "workingSetBytes": 820088832
+        },
+        "cycle": 12,
+        "cyclePeak": {
+          "privateBytes": 739319808,
+          "samples": 220,
+          "workingSetBytes": 823406592
+        },
+        "received": {
+          "ep": 199,
+          "ndi": 239
+        },
+        "sent": {
+          "ep": 199,
+          "ndi": 239
+        }
+      }
+    ],
+    "firstStop": {
+      "afterStop": {
+        "gdiObjects": 41,
+        "handles": 1206,
+        "privateBytes": 738000896,
+        "userObjects": 61,
+        "workingSetBytes": 822079488
+      },
+      "received": {
+        "ep": 6009,
+        "ndi": 7211
+      },
+      "sent": {
+        "ep": 6009,
+        "ndi": 7211
+      }
+    },
+    "home": {
+      "gdiObjects": 34,
+      "handles": 1183,
+      "privateBytes": 316698624,
+      "userObjects": 52,
+      "workingSetBytes": 397701120
+    },
+    "listening": [
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1209,
+          "privateBytes": 433618944,
+          "userObjects": 57,
+          "workingSetBytes": 516792320
+        },
+        "peak": {
+          "privateBytes": 433901568,
+          "samples": 98,
+          "workingSetBytes": 517021696
+        }
+      }
+    ],
+    "pid": 18172,
+    "platform": "windows",
+    "port": 52786,
+    "postStopIdle": [
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1202,
+          "privateBytes": 670638080,
+          "userObjects": 61,
+          "workingSetBytes": 754925568
+        },
+        "peak": {
+          "privateBytes": 735916032,
+          "samples": 326,
+          "workingSetBytes": 820088832
+        }
+      },
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1202,
+          "privateBytes": 670638080,
+          "userObjects": 61,
+          "workingSetBytes": 754925568
+        },
+        "peak": {
+          "privateBytes": 670670848,
+          "samples": 325,
+          "workingSetBytes": 754946048
+        }
+      },
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1178,
+          "privateBytes": 670289920,
+          "userObjects": 45,
+          "workingSetBytes": 754696192
+        },
+        "peak": {
+          "privateBytes": 670670848,
+          "samples": 324,
+          "workingSetBytes": 754946048
+        }
+      }
+    ],
+    "qt": "6.12.0",
+    "role": "joint",
+    "startedUtc": "2026-11-25T04:39:22.864Z",
+    "targetSampleIntervalMs": 20
+  },
+  "teardownRepeat": {
+    "active": [
+      {
+        "bxPreviews": 84,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1220,
+          "privateBytes": 696786944,
+          "userObjects": 62,
+          "workingSetBytes": 772820992
+        },
+        "peak": {
+          "privateBytes": 709767168,
+          "samples": 324,
+          "workingSetBytes": 785682432
+        }
+      },
+      {
+        "bxPreviews": 84,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1220,
+          "privateBytes": 706818048,
+          "userObjects": 62,
+          "workingSetBytes": 782827520
+        },
+        "peak": {
+          "privateBytes": 706850816,
+          "samples": 324,
+          "workingSetBytes": 782848000
+        }
+      },
+      {
+        "bxPreviews": 85,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1222,
+          "privateBytes": 711688192,
+          "userObjects": 62,
+          "workingSetBytes": 787693568
+        },
+        "peak": {
+          "privateBytes": 711720960,
+          "samples": 324,
+          "workingSetBytes": 787714048
+        }
+      }
+    ],
+    "activeIntervalMs": 10000,
+    "afterPreviewUnload": {
+      "bxPreviews": 0,
+      "end": {
+        "gdiObjects": 41,
+        "handles": 1200,
+        "privateBytes": 705986560,
+        "userObjects": 61,
+        "workingSetBytes": 782295040
+      },
+      "peak": {
+        "privateBytes": 706019328,
+        "samples": 99,
+        "workingSetBytes": 782315520
+      }
+    },
+    "afterWindowDestruction": {
+      "memory": {
+        "gdiObjects": 17,
+        "handles": 1151,
+        "privateBytes": 366223360,
+        "userObjects": 42,
+        "workingSetBytes": 444022784
+      },
+      "qtViewportReleased": true,
+      "vtkRenderWindowReleased": true
+    },
+    "cycles": [
+      {
+        "active": {
+          "bxPreviews": 33,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1223,
+            "privateBytes": 729698304,
+            "userObjects": 62,
+            "workingSetBytes": 805662720
+          },
+          "peak": {
+            "privateBytes": 745058304,
+            "samples": 132,
+            "workingSetBytes": 821010432
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1208,
+          "privateBytes": 729473024,
+          "userObjects": 61,
+          "workingSetBytes": 805507072
+        },
+        "cycle": 1,
+        "cyclePeak": {
+          "privateBytes": 745058304,
+          "samples": 221,
+          "workingSetBytes": 821010432
+        },
+        "received": {
+          "ep": 201,
+          "ndi": 241
+        },
+        "sent": {
+          "ep": 201,
+          "ndi": 241
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 33,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1223,
+            "privateBytes": 744480768,
+            "userObjects": 62,
+            "workingSetBytes": 820322304
+          },
+          "peak": {
+            "privateBytes": 744513536,
+            "samples": 131,
+            "workingSetBytes": 820342784
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1208,
+          "privateBytes": 744263680,
+          "userObjects": 61,
+          "workingSetBytes": 820174848
+        },
+        "cycle": 2,
+        "cyclePeak": {
+          "privateBytes": 744513536,
+          "samples": 220,
+          "workingSetBytes": 820342784
+        },
+        "received": {
+          "ep": 199,
+          "ndi": 239
+        },
+        "sent": {
+          "ep": 199,
+          "ndi": 239
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 34,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1223,
+            "privateBytes": 733732864,
+            "userObjects": 62,
+            "workingSetBytes": 809684992
+          },
+          "peak": {
+            "privateBytes": 744857600,
+            "samples": 131,
+            "workingSetBytes": 820768768
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1202,
+          "privateBytes": 734601216,
+          "userObjects": 61,
+          "workingSetBytes": 810692608
+        },
+        "cycle": 3,
+        "cyclePeak": {
+          "privateBytes": 744857600,
+          "samples": 219,
+          "workingSetBytes": 820768768
+        },
+        "received": {
+          "ep": 200,
+          "ndi": 239
+        },
+        "sent": {
+          "ep": 200,
+          "ndi": 239
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 33,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1216,
+            "privateBytes": 731676672,
+            "userObjects": 62,
+            "workingSetBytes": 807706624
+          },
+          "peak": {
+            "privateBytes": 734863360,
+            "samples": 132,
+            "workingSetBytes": 810872832
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1201,
+          "privateBytes": 731451392,
+          "userObjects": 61,
+          "workingSetBytes": 807550976
+        },
+        "cycle": 4,
+        "cyclePeak": {
+          "privateBytes": 734863360,
+          "samples": 219,
+          "workingSetBytes": 810872832
+        },
+        "received": {
+          "ep": 201,
+          "ndi": 241
+        },
+        "sent": {
+          "ep": 201,
+          "ndi": 241
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 33,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1216,
+            "privateBytes": 738234368,
+            "userObjects": 62,
+            "workingSetBytes": 814256128
+          },
+          "peak": {
+            "privateBytes": 739516416,
+            "samples": 132,
+            "workingSetBytes": 815521792
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1201,
+          "privateBytes": 738013184,
+          "userObjects": 61,
+          "workingSetBytes": 814104576
+        },
+        "cycle": 5,
+        "cyclePeak": {
+          "privateBytes": 739516416,
+          "samples": 222,
+          "workingSetBytes": 815521792
+        },
+        "received": {
+          "ep": 199,
+          "ndi": 239
+        },
+        "sent": {
+          "ep": 199,
+          "ndi": 239
+        }
+      },
+      {
+        "active": {
+          "bxPreviews": 34,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1216,
+            "privateBytes": 735293440,
+            "userObjects": 62,
+            "workingSetBytes": 811319296
+          },
+          "peak": {
+            "privateBytes": 738480128,
+            "samples": 132,
+            "workingSetBytes": 814485504
+          }
+        },
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1201,
+          "privateBytes": 735072256,
+          "userObjects": 61,
+          "workingSetBytes": 811167744
+        },
+        "cycle": 6,
+        "cyclePeak": {
+          "privateBytes": 738480128,
+          "samples": 219,
+          "workingSetBytes": 814485504
+        },
+        "received": {
+          "ep": 201,
+          "ndi": 241
+        },
+        "sent": {
+          "ep": 201,
+          "ndi": 241
+        }
+      }
+    ],
+    "firstStop": {
+      "afterStop": {
+        "gdiObjects": 41,
+        "handles": 1207,
+        "privateBytes": 711458816,
+        "userObjects": 61,
+        "workingSetBytes": 787558400
+      },
+      "received": {
+        "ep": 1500,
+        "ndi": 1800
+      },
+      "sent": {
+        "ep": 1500,
+        "ndi": 1800
+      }
+    },
+    "home": {
+      "gdiObjects": 34,
+      "handles": 1175,
+      "privateBytes": 315412480,
+      "userObjects": 52,
+      "workingSetBytes": 389480448
+    },
+    "listening": [
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1201,
+          "privateBytes": 431939584,
+          "userObjects": 57,
+          "workingSetBytes": 506875904
+        },
+        "peak": {
+          "privateBytes": 432222208,
+          "samples": 99,
+          "workingSetBytes": 507105280
+        }
+      }
+    ],
+    "load": {
+      "epBytes": 204800,
+      "epHz": 50,
+      "linkMbps": 1000,
+      "ndiHz": 60,
+      "ndiTools": 4
+    },
+    "pid": 26424,
+    "platform": "windows",
+    "port": 52672,
+    "postStopIdle": [
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1200,
+          "privateBytes": 674447360,
+          "userObjects": 61,
+          "workingSetBytes": 750657536
+        },
+        "peak": {
+          "privateBytes": 735072256,
+          "samples": 325,
+          "workingSetBytes": 811167744
+        }
+      },
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1200,
+          "privateBytes": 674447360,
+          "userObjects": 61,
+          "workingSetBytes": 750657536
+        },
+        "peak": {
+          "privateBytes": 674480128,
+          "samples": 324,
+          "workingSetBytes": 750678016
+        }
+      },
+      {
+        "bxPreviews": 0,
+        "end": {
+          "gdiObjects": 41,
+          "handles": 1200,
+          "privateBytes": 694038528,
+          "userObjects": 61,
+          "workingSetBytes": 770367488
+        },
+        "peak": {
+          "privateBytes": 694116352,
+          "samples": 370,
+          "workingSetBytes": 770387968
+        }
+      }
+    ],
+    "qt": "6.12.0",
+    "role": "joint",
+    "startedUtc": "2026-11-25T04:45:44.503Z",
+    "targetSampleIntervalMs": 20
+  },
+  "productionModelFirstFrame": {
+    "executable": "SimTransfer.exe",
+    "pid": 23212,
+    "file": "Tiananmen_Gate_Detailed.ply",
+    "sourceBytes": 212485676,
+    "sha256": "f66ca4ce9076516ab5314bd942db084c958700ad20e3cf7b942b167f74bdab6c",
+    "targetSampleIntervalMs": 20,
+    "samples": 198,
+    "elapsedSeconds": 4.078091800009133,
+    "sampledPeakWorkingSetBytes": 1536454656,
+    "sampledPeakPrivateBytes": 1627652096,
+    "screenshotBytes": 242978,
+    "exitCode": 0
+  },
+  "separateModelLoadConvertUnloadStudy": {
+    "data": "model-verification/memory-soak-20261125.json",
+    "sha256": "feb309718e630994b3435d750a009868d364965b50b2237eabea86eb5ce7318b",
+    "cycles": 12
+  },
+  "pairedTeardownRepeat": {
+    "sender": {
+      "active": [
+        {
+          "bxPreviews": 0,
+          "end": {
+            "gdiObjects": 34,
+            "handles": 1192,
+            "privateBytes": 327323648,
+            "userObjects": 55,
+            "workingSetBytes": 405483520
+          },
+          "peak": {
+            "privateBytes": 337371136,
+            "samples": 164,
+            "workingSetBytes": 415502336
+          }
+        },
+        {
+          "bxPreviews": 0,
+          "end": {
+            "gdiObjects": 34,
+            "handles": 1192,
+            "privateBytes": 327491584,
+            "userObjects": 55,
+            "workingSetBytes": 405655552
+          },
+          "peak": {
+            "privateBytes": 327524352,
+            "samples": 164,
+            "workingSetBytes": 405676032
+          }
+        },
+        {
+          "bxPreviews": 0,
+          "end": {
+            "gdiObjects": 34,
+            "handles": 1192,
+            "privateBytes": 327491584,
+            "userObjects": 55,
+            "workingSetBytes": 405663744
+          },
+          "peak": {
+            "privateBytes": 327524352,
+            "samples": 163,
+            "workingSetBytes": 405684224
+          }
+        },
+        {
+          "bxPreviews": 0,
+          "end": {
+            "gdiObjects": 34,
+            "handles": 1192,
+            "privateBytes": 327495680,
+            "userObjects": 55,
+            "workingSetBytes": 405667840
+          },
+          "peak": {
+            "privateBytes": 327528448,
+            "samples": 163,
+            "workingSetBytes": 405688320
+          }
+        },
+        {
+          "bxPreviews": 0,
+          "end": {
+            "gdiObjects": 34,
+            "handles": 1192,
+            "privateBytes": 327495680,
+            "userObjects": 55,
+            "workingSetBytes": 405688320
+          },
+          "peak": {
+            "privateBytes": 327528448,
+            "samples": 164,
+            "workingSetBytes": 405708800
+          }
+        }
+      ],
+      "activeIntervalMs": 5000,
+      "afterWindowDestruction": {
+        "memory": {
+          "gdiObjects": 17,
+          "handles": 1158,
+          "privateBytes": 295247872,
+          "userObjects": 42,
+          "workingSetBytes": 373518336
+        },
+        "qtViewportReleased": true,
+        "vtkRenderWindowReleased": true
+      },
+      "firstStop": {
+        "afterStop": {
+          "gdiObjects": 34,
+          "handles": 1184,
+          "privateBytes": 348344320,
+          "userObjects": 55,
+          "workingSetBytes": 426450944
+        },
+        "sent": {
+          "ep": 1251,
+          "ndi": 1501
+        }
+      },
+      "home": {
+        "gdiObjects": 34,
+        "handles": 1179,
+        "privateBytes": 319127552,
+        "userObjects": 54,
+        "workingSetBytes": 395653120
+      },
+      "load": {
+        "epBytes": 204800,
+        "epHz": 50,
+        "linkMbps": 1000,
+        "ndiHz": 60,
+        "ndiTools": 4
+      },
+      "pid": 26244,
+      "platform": "windows",
+      "port": 58328,
+      "qt": "6.12.0",
+      "role": "sender",
+      "startedUtc": "2026-11-25T04:49:59.835Z",
+      "targetSampleIntervalMs": 20
+    },
+    "receiver": {
+      "active": [
+        {
+          "bxPreviews": 42,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1210,
+            "privateBytes": 714371072,
+            "userObjects": 62,
+            "workingSetBytes": 793198592
+          },
+          "peak": {
+            "privateBytes": 714403840,
+            "samples": 164,
+            "workingSetBytes": 793219072
+          }
+        },
+        {
+          "bxPreviews": 43,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1210,
+            "privateBytes": 711405568,
+            "userObjects": 62,
+            "workingSetBytes": 790401024
+          },
+          "peak": {
+            "privateBytes": 724389888,
+            "samples": 164,
+            "workingSetBytes": 803201024
+          }
+        },
+        {
+          "bxPreviews": 43,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1210,
+            "privateBytes": 711864320,
+            "userObjects": 62,
+            "workingSetBytes": 791068672
+          },
+          "peak": {
+            "privateBytes": 711897088,
+            "samples": 164,
+            "workingSetBytes": 791089152
+          }
+        },
+        {
+          "bxPreviews": 44,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1212,
+            "privateBytes": 721444864,
+            "userObjects": 62,
+            "workingSetBytes": 800219136
+          },
+          "peak": {
+            "privateBytes": 721477632,
+            "samples": 164,
+            "workingSetBytes": 800239616
+          }
+        }
+      ],
+      "activeIntervalMs": 5000,
+      "afterWindowDestruction": {
+        "memory": {
+          "gdiObjects": 17,
+          "handles": 1159,
+          "privateBytes": 594759680,
+          "userObjects": 42,
+          "workingSetBytes": 674156544
+        },
+        "qtViewportReleased": true,
+        "vtkRenderWindowReleased": true
+      },
+      "firstStop": {
+        "afterStop": {
+          "gdiObjects": 41,
+          "handles": 1207,
+          "privateBytes": 668905472,
+          "userObjects": 61,
+          "workingSetBytes": 747872256
+        },
+        "received": {
+          "ep": 1251,
+          "ndi": 1501
+        }
+      },
+      "home": {
+        "gdiObjects": 34,
+        "handles": 1175,
+        "privateBytes": 318750720,
+        "userObjects": 52,
+        "workingSetBytes": 396279808
+      },
+      "listening": [
+        {
+          "bxPreviews": 0,
+          "end": {
+            "gdiObjects": 41,
+            "handles": 1201,
+            "privateBytes": 435761152,
+            "userObjects": 57,
+            "workingSetBytes": 514121728
+          },
+          "peak": {
+            "privateBytes": 436043776,
+            "samples": 99,
+            "workingSetBytes": 514351104
+          }
+        }
+      ],
+      "load": {
+        "epBytes": 204800,
+        "epHz": 50,
+        "linkMbps": 1000,
+        "ndiHz": 60,
+        "ndiTools": 4
+      },
+      "pid": 24804,
+      "platform": "windows",
+      "port": 58328,
+      "qt": "6.12.0",
+      "role": "receiver",
+      "startedUtc": "2026-11-25T04:49:52.880Z",
+      "targetSampleIntervalMs": 20
+    }
+  },
+  "validation": {
+    "releaseCtestPassed": 11,
+    "releaseCtestTotal": 11,
+    "releaseCtestElapsedSeconds": 19.61
+  }
+}

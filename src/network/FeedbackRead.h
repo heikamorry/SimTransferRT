@@ -19,7 +19,8 @@ using FeedbackSocket = SOCKET;
 #else
 using FeedbackSocket = int;
 #endif
-inline ReceiveOutcome readUdpFeedback(FeedbackSocket socket, IncomingDatagram& out, std::string& error) {
+inline ReceiveOutcome readUdpFeedback(FeedbackSocket socket, IncomingDatagram &out,
+                                      std::string &error) {
     std::array<char, MaxDatagram + 1> buffer;
     sockaddr_in source{};
 #ifdef _WIN32
@@ -28,11 +29,12 @@ inline ReceiveOutcome readUdpFeedback(FeedbackSocket socket, IncomingDatagram& o
     socklen_t addressSize = sizeof(source);
 #endif
     auto size = recvfrom(socket, buffer.data(), static_cast<int>(buffer.size()), 0,
-                         reinterpret_cast<sockaddr*>(&source), &addressSize);
+                         reinterpret_cast<sockaddr *>(&source), &addressSize);
     if (size < 0) {
 #ifdef _WIN32
         const int code = WSAGetLastError();
-        if (code == WSAEWOULDBLOCK || code == WSAEINTR) return ReceiveOutcome::Empty;
+        if (code == WSAEWOULDBLOCK || code == WSAEINTR)
+            return ReceiveOutcome::Empty;
         if (code != WSAEMSGSIZE) {
             error = "Winsock feedback receive error " + std::to_string(code);
             return ReceiveOutcome::Error;
@@ -41,7 +43,8 @@ inline ReceiveOutcome readUdpFeedback(FeedbackSocket socket, IncomingDatagram& o
         // The extra byte preserves the oversized length for protocol rejection.
         size = static_cast<int>(buffer.size());
 #else
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return ReceiveOutcome::Empty;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            return ReceiveOutcome::Empty;
         error = std::strerror(errno);
         return ReceiveOutcome::Error;
 #endif
@@ -56,4 +59,4 @@ inline ReceiveOutcome readUdpFeedback(FeedbackSocket socket, IncomingDatagram& o
     out.sourcePort = ntohs(source.sin_port);
     return ReceiveOutcome::Received;
 }
-}
+} // namespace rt

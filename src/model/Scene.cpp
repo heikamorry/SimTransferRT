@@ -16,6 +16,7 @@
 #include <vtkGenericOpenGLRenderWindow.h>
 #include <vtkInteractorStyleTrackballCamera.h>
 #include <vtkLookupTable.h>
+#include <vtkObjectFactory.h>
 #include <vtkOrientationMarkerWidget.h>
 #include <vtkPointData.h>
 #include <vtkPoints.h>
@@ -26,6 +27,24 @@
 
 namespace rt::model {
 namespace {
+// VTK 9.4 checks the OpenGL error state before it asks Qt to make the context
+// current. Both UI commands and the camera interactor can render outside paintGL.
+class QtRenderWindow final : public vtkGenericOpenGLRenderWindow {
+  public:
+    static QtRenderWindow *New();
+    vtkTypeMacro(QtRenderWindow, vtkGenericOpenGLRenderWindow);
+
+    void Render() override {
+        if (this->GetReadyForRendering()) {
+            this->MakeCurrent();
+            if (this->IsCurrent())
+                this->Superclass::Render();
+        }
+    }
+};
+
+vtkStandardNewMacro(QtRenderWindow);
+
 int vtkType(Type t) {
     static const int types[]{
         VTK_SIGNED_CHAR, VTK_UNSIGNED_CHAR, VTK_SHORT,     VTK_UNSIGNED_SHORT,
@@ -33,9 +52,11 @@ int vtkType(Type t) {
         VTK_FLOAT,       VTK_DOUBLE};
     return types[int(t)];
 }
+
 QByteArray id(size_t n) {
     return "field_" + QByteArray::number(qulonglong(n));
 }
+
 vtkSmartPointer<vtkDataArray> copyArray(const Field &f, const std::vector<vtkIdType> &selected,
                                         const Task &t) {
     auto a = vtkSmartPointer<vtkDataArray>::Take(vtkDataArray::CreateDataArray(vtkType(f.type)));
@@ -50,11 +71,14 @@ vtkSmartPointer<vtkDataArray> copyArray(const Field &f, const std::vector<vtkIdT
     }
     return a;
 }
+
 void makeTracking(const Dataset &d, Display &display) {
-    vtkNew<vtkPoints> points, ends;
+    vtkNew<vtkPoints> points;
+    vtkNew<vtkPoints> ends;
     points->SetDataTypeToDouble();
     ends->SetDataTypeToDouble();
-    vtkNew<vtkCellArray> verts, lines;
+    vtkNew<vtkCellArray> verts;
+    vtkNew<vtkCellArray> lines;
     vtkNew<vtkUnsignedCharArray> colors;
     colors->SetNumberOfComponents(3);
     const unsigned char rgb[3][3]{{216, 52, 51}, {29, 147, 80}, {48, 94, 204}};
@@ -73,7 +97,10 @@ void makeTracking(const Dataset &d, Display &display) {
             continue;
         }
         norm = std::sqrt(norm);
-        double w = q[0] / norm, x = q[1] / norm, y = q[2] / norm, z = q[3] / norm;
+        double w = q[0] / norm;
+        double x = q[1] / norm;
+        double y = q[2] / norm;
+        double z = q[3] / norm;
         double basis[3][3]{{1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y)},
                            {2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x)},
                            {2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)}};
@@ -96,6 +123,7 @@ void makeTracking(const Dataset &d, Display &display) {
     display.axes->GetCellData()->SetScalars(colors);
 }
 } // namespace
+
 Display makeDisplay(const Dataset &d, const Task &t) {
     Display result;
     if (d.tracking) {
@@ -126,7 +154,9 @@ Display makeDisplay(const Dataset &d, const Task &t) {
         }
         if (!coords)
             continue;
-        std::vector<vtkIdType> keep, cellOrder, remap(coords->size(), -1);
+        std::vector<vtkIdType> keep;
+        std::vector<vtkIdType> cellOrder;
+        std::vector<vtkIdType> remap(coords->size(), -1);
         keep.reserve(coords->size());
         for (qint64 i = 0; i < coords->size(); ++i) {
             if (!(i & 65535))
@@ -218,9 +248,10 @@ Display makeDisplay(const Dataset &d, const Task &t) {
     }
     return result;
 }
+
 struct Scene::Impl {
     QVTKOpenGLNativeWidget *widget = nullptr;
-    vtkNew<vtkGenericOpenGLRenderWindow> window;
+    vtkNew<QtRenderWindow> window;
     vtkNew<vtkRenderer> renderer;
     vtkNew<vtkAxesActor> direction;
     vtkNew<vtkOrientationMarkerWidget> marker;
@@ -228,6 +259,7 @@ struct Scene::Impl {
     Snapshot source;
     int pointSize = 8;
 };
+
 Scene::Scene(QWidget *parent) : QWidget(parent), p(std::make_unique<Impl>()) {
     // The OpenGL surface is translucent on some drivers. Paint the same colour
     // underneath so the window watermark cannot bleed into the 3D view.
@@ -261,6 +293,7 @@ Scene::Scene(QWidget *parent) : QWidget(parent), p(std::make_unique<Impl>()) {
     p->marker->SetEnabled(true);
     p->marker->InteractiveOff();
 }
+
 Scene::~Scene() {
     if (!p->widget)
         return;
@@ -272,13 +305,16 @@ Scene::~Scene() {
     p->widget->setRenderWindow(static_cast<vtkGenericOpenGLRenderWindow *>(nullptr));
     p->widget->doneCurrent();
 }
+
 void Scene::render() {
     if (p->widget && p->widget->isValid() && isVisible())
         p->window->Render();
 }
+
 double Scene::cameraDistance() const {
     return p->renderer->GetActiveCamera()->GetDistance();
 }
+
 void Scene::showData(const Display &display, Snapshot source) {
     if (p->widget && p->widget->isValid() && !p->actors.empty()) {
         p->widget->makeCurrent();
@@ -300,8 +336,9 @@ void Scene::showData(const Display &display, Snapshot source) {
             actor->GetProperty()->SetColor(0.05, 0.43, 0.53);
         else
             actor->GetProperty()->SetColor(.29, .38, .47);
-        actor->GetProperty()->SetPointSize(
-            p->source && p->source->tracking ? 9 : cloud ? p->pointSize : 3);
+        actor->GetProperty()->SetPointSize(p->source && p->source->tracking ? 9
+                                           : cloud                          ? p->pointSize
+                                                                            : 3);
         p->renderer->AddActor(actor);
         p->actors.push_back(actor);
     }
@@ -322,12 +359,14 @@ void Scene::showData(const Display &display, Snapshot source) {
     camera->Zoom(0.9); // keep a margin so extreme points are not on the edge
     p->renderer->ResetCameraClippingRange();
 }
+
 void Scene::setPointSize(int size) {
     p->pointSize = std::clamp(size, 1, 20);
     for (auto &actor : p->actors)
         actor->GetProperty()->SetPointSize(p->pointSize);
     render();
 }
+
 void Scene::reset() {
     auto cam = p->renderer->GetActiveCamera();
     cam->SetPosition(0, -1, .55);
@@ -338,6 +377,7 @@ void Scene::reset() {
     p->renderer->ResetCameraClippingRange();
     render();
 }
+
 void Scene::select(int field, int rep) {
     for (size_t i = 0; i < p->actors.size(); ++i) {
         auto &a = p->actors[i];

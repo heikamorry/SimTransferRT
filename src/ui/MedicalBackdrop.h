@@ -12,63 +12,55 @@
 #include <QRadialGradient>
 #include <QWidget>
 #include <algorithm>
-#include <cmath>
 
 namespace rt::ui {
 namespace detail {
-constexpr qreal pi = 3.14159265358979323846;
-inline qreal coilPhase(qreal t) {
-    return t * 3.25 * 2 * pi + 0.35;
-}
-// Staff first, then the front half of the serpent: the crossings read as a coil.
+// Draw in a square coordinate system so the icon and watermark scale together.
 inline void paintAsclepius(QPainter &p, const QRectF &box, const QColor &color) {
-    if (box.width() <= 1 || box.height() <= 1)
+    const qreal side = std::min(box.width(), box.height());
+    if (side <= 1)
         return;
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
-    const qreal s = std::min(box.width(), box.height());
-    const qreal cx = box.center().x();
-    const qreal top = box.center().y() - s * 0.44, bottom = box.center().y() + s * 0.46;
-    const qreal amplitude = s * 0.118;
-    const qreal snakeWidth = std::max<qreal>(1.0, s * 0.032);
-    const qreal staffWidth = std::max<qreal>(0.8, s * 0.020);
-    auto xAt = [&](qreal t) { return cx + std::sin(coilPhase(t)) * amplitude; };
-    auto yAt = [&](qreal t) { return top + (bottom - top) * t; };
-    QPainterPath back, front;
-    bool backOpen = false, frontOpen = false, lastNear = false;
-    const int steps = 240;
-    for (int i = 0; i <= steps; ++i) {
-        const qreal t = qreal(i) / steps;
-        const QPointF point(xAt(t), yAt(t));
-        const bool near = std::sin(coilPhase(t)) >= 0;
-        if (i && near != lastNear)
-            backOpen = frontOpen = false; // never bridge the hidden half
-        lastNear = near;
-        QPainterPath &run = near ? front : back;
-        bool &open = near ? frontOpen : backOpen;
-        if (!open) {
-            run.moveTo(point);
-            open = true;
-        } else {
-            run.lineTo(point);
-        }
-    }
+    p.translate(box.center().x() - side / 2, box.center().y() - side / 2);
+    p.scale(side / 100, side / 100);
+
+    QPainterPath staff;
+    staff.moveTo(46, 8);
+    staff.cubicTo(46, 4, 52, 4, 52, 8);
+    staff.lineTo(50, 94);
+    staff.quadTo(49, 98, 48, 94);
+    staff.closeSubpath();
+    p.fillPath(staff, color);
+
+    // Gaps where the serpent passes behind the staff separate the two coils.
+    QPainterPath coils;
+    coils.moveTo(63, 16);
+    coils.cubicTo(79, 21, 66, 29, 49, 33);
+    coils.cubicTo(27, 39, 25, 45, 43, 50);
+    coils.moveTo(55, 53);
+    coils.cubicTo(73, 59, 64, 64, 47, 68);
+    coils.cubicTo(33, 72, 34, 77, 45, 80);
     p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(color, snakeWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    p.drawPath(back);
-    p.setPen(QPen(color, staffWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    p.drawLine(QPointF(cx, top - s * 0.02), QPointF(cx, bottom));
-    p.setPen(QPen(color, snakeWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    p.setBrush(Qt::NoBrush);
-    p.drawPath(front);
-    // A single head at the top of the coil; the staff ends in a rounded cap so
-    // the two shapes never merge into a blob.
-    p.setPen(Qt::NoPen);
-    p.setBrush(color);
-    p.drawEllipse(QPointF(xAt(0) + snakeWidth * 0.55, yAt(0) - snakeWidth * 0.55),
-                  snakeWidth * 0.62, snakeWidth * 0.42);
+    p.setPen(QPen(color, 4.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.drawPath(coils);
+
+    QPainterPath tail;
+    tail.moveTo(53, 80);
+    tail.cubicTo(65, 83, 61, 89, 53, 91);
+    tail.cubicTo(57, 87, 58, 85, 53, 84);
+    tail.closeSubpath();
+    p.fillPath(tail, color);
+
+    QPainterPath head;
+    head.moveTo(66, 18);
+    head.cubicTo(62, 20, 55, 18, 54, 14);
+    head.quadTo(57, 10, 64, 11);
+    head.cubicTo(69, 11, 71, 16, 66, 18);
+    p.fillPath(head, color);
     p.restore();
 }
+
 inline QPixmap medicalMark(int logical) {
     const int ratio = 2;
     QPixmap pm(logical * ratio, logical * ratio);
@@ -82,12 +74,14 @@ inline QPixmap medicalMark(int logical) {
     p.setPen(Qt::NoPen);
     p.setBrush(g);
     p.drawRoundedRect(QRectF(0, 0, logical, logical), logical * 0.28, logical * 0.28);
-    detail::paintAsclepius(p, QRectF(logical * 0.17, logical * 0.10, logical * 0.66, logical * 0.80),
+    detail::paintAsclepius(p,
+                           QRectF(logical * 0.17, logical * 0.10, logical * 0.66, logical * 0.80),
                            QColor(240, 252, 255, 236));
     p.end();
     return pm;
 }
 } // namespace detail
+
 using detail::medicalMark;
 
 // Window and taskbar icon. The PNG renditions are decoded by QtGui's built-in
@@ -113,6 +107,32 @@ inline QIcon appIcon() {
     }
     return icon;
 }
+
+// A reserved stretch area in the header keeps the decorative mark visible
+// without painting over the title or the usage badge. Vector painting follows
+// the screen's device pixel ratio, including when moving between monitors.
+class MedicalWatermark final : public QWidget {
+  public:
+    explicit MedicalWatermark(QWidget *parent = nullptr) : QWidget(parent) {
+        setObjectName("headerWatermark");
+        setMinimumSize(60, 48);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    }
+
+    QSize sizeHint() const override {
+        return QSize(84, 48);
+    }
+
+  protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        const qreal side = std::min<qreal>(72, height() - 4);
+        const QRectF mark(width() - side - 4, (height() - side) / 2, side, side);
+        detail::paintAsclepius(painter, mark, QColor(14, 116, 144, 78));
+    }
+};
+
 class MedicalBackdrop final : public QWidget {
   public:
     explicit MedicalBackdrop(QWidget *parent = nullptr) : QWidget(parent) {
@@ -139,7 +159,8 @@ class MedicalBackdrop final : public QWidget {
                                QColor(12, 92, 118, 16));
         // ECG baseline: a quiet monitor trace behind the lower band.
         QPainterPath ecg;
-        const qreal base = height() * 0.90, unit = std::max<qreal>(26, width() / 26);
+        const qreal base = height() * 0.90;
+        const qreal unit = std::max<qreal>(26, width() / 26);
         ecg.moveTo(-unit, base);
         for (qreal x = -unit; x < width() + unit; x += unit) {
             ecg.lineTo(x + unit * 0.30, base);

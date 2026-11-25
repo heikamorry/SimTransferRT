@@ -22,6 +22,7 @@ QJsonObject attributes(QDomElement e) {
     }
     return j;
 }
+
 qint64 count(QString text, QString label, qint64 limit = budget) {
     bool ok;
     auto v = text.toLongLong(&ok);
@@ -29,6 +30,7 @@ qint64 count(QString text, QString label, qint64 limit = budget) {
         fail("无效的 VTP " + label + " " + text);
     return v;
 }
+
 QByteArray b64(QByteArrayView input) {
     QByteArray clean;
     clean.reserve(input.size());
@@ -52,13 +54,16 @@ QByteArray b64(QByteArrayView input) {
     }
     return out;
 }
+
 struct Encoding {
     QByteArrayView appended;
-    bool base64 = false, big = false;
+    bool base64 = false;
+    bool big = false;
     int headerWidth = 4;
     QString compressor;
     std::set<qint64> offsets;
 };
+
 QByteArray block(QByteArrayView bytes, const Encoding &enc, const Task &t) {
     qint64 pos = 0;
     auto number = [&]() {
@@ -90,7 +95,9 @@ QByteArray block(QByteArrayView bytes, const Encoding &enc, const Task &t) {
         codec = vtkSmartPointer<vtkLZMADataCompressor>::New();
     else
         fail("不支持的 VTP 压缩器 " + enc.compressor);
-    auto n = number(), chunk = number(), last = number();
+    auto n = number();
+    auto chunk = number();
+    auto last = number();
     if (n > 1048576 || last > chunk || chunk > budget || (n && !chunk))
         fail("无效的 VTP 压缩块头");
     // VTK writes last=0 when every block has full size.
@@ -121,6 +128,7 @@ QByteArray block(QByteArrayView bytes, const Encoding &enc, const Task &t) {
     }
     return result;
 }
+
 Field values(QDomElement a, const Encoding &enc, const Task &t) {
     if (a.tagName() != "DataArray")
         fail("VTP 尚未实现数组 " + a.tagName() + " / " + a.attribute("type"));
@@ -198,6 +206,7 @@ Field values(QDomElement a, const Encoding &enc, const Task &t) {
         fail("VTP 数组形状不符 " + f.name);
     return f;
 }
+
 QString roleFor(const QJsonObject &attrs, const Field &f) {
     for (const auto &name :
          QStringList{"Normals", "TCoords", "Vectors", "Tensors", "GlobalIds", "PedigreeIds"})
@@ -212,19 +221,23 @@ QString roleFor(const QJsonObject &attrs, const Field &f) {
         return "Scalars";
     return {};
 }
+
 QByteArray encoded64(const std::vector<qint64> &ends) {
     return QByteArray::fromRawData(reinterpret_cast<const char *>(ends.data()),
                                    qint64(ends.size()) * 8);
 }
+
 struct Part {
     QByteArray bytes;
 };
+
 void extraAttributes(QXmlStreamWriter &writer, const QJsonObject &attrs,
                      const QStringList &handled = {}) {
     for (auto it = attrs.begin(); it != attrs.end(); ++it)
         if (!handled.contains(it.key()))
             writer.writeAttribute(it.key(), it.value().toString());
 }
+
 QJsonObject sectionAttributes(const Dataset &d, int piece, const QString &section) {
     const auto schema = d.descriptor.value("pieceSchema").toArray();
     if (piece < schema.size())
@@ -241,6 +254,7 @@ QJsonObject sectionAttributes(const Dataset &d, int piece, const QString &sectio
     }
     return active;
 }
+
 void informationKeys(QXmlStreamWriter &writer, const QString &xml) {
     if (xml.isEmpty())
         return;
@@ -263,6 +277,7 @@ void informationKeys(QXmlStreamWriter &writer, const QString &xml) {
         fail("VTP InformationKey 描述无效 " + reader.errorString());
 }
 } // namespace
+
 Dataset readVtp(const QByteArray &bytes, const Task &t) {
     Encoding enc;
     QByteArray xmlBytes;
@@ -343,9 +358,12 @@ Dataset readVtp(const QByteArray &bytes, const Task &t) {
     auto readSection = [&](QDomElement s, int p) {
         const auto sec = s.tagName();
         auto active = attributes(s);
-        Field links, ends;
-        int linkId = -1, endId = -1;
-        bool haveLinks = false, haveEnds = false;
+        Field links;
+        Field ends;
+        int linkId = -1;
+        int endId = -1;
+        bool haveLinks = false;
+        bool haveEnds = false;
         for (auto a = s.firstChildElement(); !a.isNull(); a = a.nextSiblingElement()) {
             t.check();
             auto f = values(a, enc, t);
@@ -475,6 +493,7 @@ Dataset readVtp(const QByteArray &bytes, const Task &t) {
     }
     return d;
 }
+
 void writeVtp(QIODevice &out, const Dataset &d, const Task &t) {
     QByteArray header;
     QXmlStreamWriter x(&header);
@@ -519,7 +538,8 @@ void writeVtp(QIODevice &out, const Dataset &d, const Task &t) {
             if (f.section != sec || f.piece != p)
                 continue;
             if (topology(sec)) {
-                auto valueType = topologyValueType(f), offsetType = topologyOffsetType(f);
+                auto valueType = topologyValueType(f);
+                auto offsetType = topologyOffsetType(f);
                 array(f.declaration.value("connectivity").toObject(), int(i), "connectivity",
                       valueType, 1, encodeIndices(f.data, valueType, t));
                 array(f.declaration.value("offsets").toObject(), int(i), "offsets", offsetType, 1,

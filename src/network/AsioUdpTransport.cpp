@@ -40,12 +40,12 @@ struct Slot {
     std::array<std::uint8_t, MaxDatagram> bytes{};
     std::size_t size = 0;
     std::uint64_t token = 0;
-    bool active = false;   // buffer owned by an outstanding operation
+    bool active = false;     // buffer owned by an outstanding operation
     bool unobserved = false; // completed but not yet reaped by the engine
 };
 
 class AsioUdpTransport final : public IUdpTransport {
-public:
+  public:
     explicit AsioUdpTransport(bool async) : async_(async) {}
 
     ~AsioUdpTransport() override {
@@ -59,33 +59,40 @@ public:
         socket_.close(ignored);
     }
 
-    void open(const StreamConfig& c) override {
-        try { target_ = boost::asio::ip::make_address_v4(c.targetIp); }
-        catch (const std::exception&) { throw std::invalid_argument("target must be numeric IPv4 unicast and nonzero port"); }
+    void open(const StreamConfig &c) override {
+        try {
+            target_ = boost::asio::ip::make_address_v4(c.targetIp);
+        } catch (const std::exception &) {
+            throw std::invalid_argument("target must be numeric IPv4 unicast and nonzero port");
+        }
         if (c.targetIp.empty() || target_.is_unspecified() || target_.is_multicast() ||
             target_.to_uint() == 0xFFFFFFFFu || !c.targetPort)
             throw std::invalid_argument("target must be numeric IPv4 unicast and nonzero port");
         address_v4 local;
-        try { local = boost::asio::ip::make_address_v4(c.bindIp); }
-        catch (const std::exception&) { throw std::invalid_argument("bind must be numeric IPv4"); }
+        try {
+            local = boost::asio::ip::make_address_v4(c.bindIp);
+        } catch (const std::exception &) {
+            throw std::invalid_argument("bind must be numeric IPv4");
+        }
 
         boost::system::error_code ec;
         socket_.open(udp::v4(), ec);
-        if (ec) throw std::runtime_error("Asio UDP open: " + ec.message());
+        if (ec)
+            throw std::runtime_error("Asio UDP open: " + ec.message());
 #ifdef _WIN32
         const auto fd = socket_.native_handle();
         const BOOL exclusive = TRUE;
         if (setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
-                       reinterpret_cast<const char*>(&exclusive), sizeof(exclusive)))
+                       reinterpret_cast<const char *>(&exclusive), sizeof(exclusive)))
             throw std::runtime_error("SO_EXCLUSIVEADDRUSE: " + std::to_string(WSAGetLastError()));
         DWORD df = 1;
-        if (setsockopt(fd, IPPROTO_IP, IP_DONTFRAGMENT,
-                       reinterpret_cast<const char*>(&df), sizeof(df)))
+        if (setsockopt(fd, IPPROTO_IP, IP_DONTFRAGMENT, reinterpret_cast<const char *>(&df),
+                       sizeof(df)))
             throw std::runtime_error("IP_DONTFRAGMENT: " + std::to_string(WSAGetLastError()));
         BOOL reset = FALSE;
         DWORD ignored = 0;
-        if (WSAIoctl(fd, SIO_UDP_CONNRESET, &reset, sizeof(reset), nullptr, 0,
-                     &ignored, nullptr, nullptr))
+        if (WSAIoctl(fd, SIO_UDP_CONNRESET, &reset, sizeof(reset), nullptr, 0, &ignored, nullptr,
+                     nullptr))
             resetError_ = WSAGetLastError();
 #else
         const auto fd = socket_.native_handle();
@@ -101,7 +108,8 @@ public:
         socket_.set_option(udp::socket::send_buffer_size(4 * 1024 * 1024), ec);
         socket_.set_option(udp::socket::receive_buffer_size(4 * 1024 * 1024), ec);
         socket_.bind(udp::endpoint(local, c.commandPort), ec);
-        if (ec) throw std::runtime_error("Asio UDP bind: " + ec.message());
+        if (ec)
+            throw std::runtime_error("Asio UDP bind: " + ec.message());
         socket_.set_option(udp::socket::send_buffer_size(4 * 1024 * 1024), ec);
         socket_.set_option(udp::socket::receive_buffer_size(4 * 1024 * 1024), ec);
         boost::asio::socket_base::send_buffer_size sendOption;
@@ -112,15 +120,16 @@ public:
         receiveBuffer_ = static_cast<int>(receiveOption.value());
         peer_ = udp::endpoint(target_, c.targetPort);
         socket_.non_blocking(true, ec);
-        if (ec) throw std::runtime_error("Asio non_blocking: " + ec.message());
+        if (ec)
+            throw std::runtime_error("Asio non_blocking: " + ec.message());
         localPort_ = socket_.local_endpoint(ec).port();
     }
 
-    bool send(const std::uint8_t* data, std::size_t size) override {
+    bool send(const std::uint8_t *data, std::size_t size) override {
         return submitDatagram(data, size, 0) == SendDisposition::Complete;
     }
 
-    SendDisposition submitDatagram(const std::uint8_t* data, std::size_t size,
+    SendDisposition submitDatagram(const std::uint8_t *data, std::size_t size,
                                    std::uint64_t token) override {
         if (size > MaxDatagram) {
             error_ = "datagram exceeds 1472";
@@ -141,15 +150,17 @@ public:
             }
             return SendDisposition::Complete;
         }
-        Slot* slot = acquire();
-        if (!slot) return SendDisposition::Backpressure;
+        Slot *slot = acquire();
+        if (!slot)
+            return SendDisposition::Backpressure;
         std::memcpy(slot->bytes.data(), data, size);
         slot->size = size;
         slot->token = token;
         const auto index = static_cast<std::size_t>(slot - slots_.data());
-        socket_.async_send_to(boost::asio::buffer(slot->bytes.data(), size), peer_,
-            [this, index](const boost::system::error_code& error, std::size_t sent) {
-                auto& done = slots_[index];
+        socket_.async_send_to(
+            boost::asio::buffer(slot->bytes.data(), size), peer_,
+            [this, index](const boost::system::error_code &error, std::size_t sent) {
+                auto &done = slots_[index];
                 done.active = false;
                 done.unobserved = true;
                 if (error) {
@@ -157,12 +168,12 @@ public:
                         error_ = "Asio send cancelled";
                     else
                         error_ = "Asio async_send_to: " + error.message();
-                    completions_[completionWrite_++ % completions_.size()] = {{
-                        done.token,
-                        error == boost::asio::error::operation_aborted
-                            ? SendDisposition::Cancelled
-                            : SendDisposition::Failed,
-                        rt::monotonicUs()}, index};
+                    completions_[completionWrite_++ % completions_.size()] = {
+                        {done.token,
+                         error == boost::asio::error::operation_aborted ? SendDisposition::Cancelled
+                                                                        : SendDisposition::Failed,
+                         rt::monotonicUs()},
+                        index};
                 } else if (sent != done.size) {
                     error_ = "short Asio async_send_to";
                     completions_[completionWrite_++ % completions_.size()] = {
@@ -175,15 +186,21 @@ public:
         return SendDisposition::Pending;
     }
 
-    bool pollCompletion(SendCompletion& out) override {
-        if (!async_) return false;
+    bool pollCompletion(SendCompletion &out) override {
+        if (!async_)
+            return false;
         // Handlers only run on this thread. Draining is bounded per call so a
         // completion storm cannot starve pacing.
+        // An idle poll stops io_context. A later submission needs a restart,
+        // otherwise its completion remains queued indefinitely (notably epoll).
+        if (context_.stopped())
+            context_.restart();
         context_.poll();
-        if (completionRead_ == completionWrite_) return false;
+        if (completionRead_ == completionWrite_)
+            return false;
         const auto pending = completions_[completionRead_++ % completions_.size()];
         out = pending.value;
-        auto& slot = slots_[pending.slot];
+        auto &slot = slots_[pending.slot];
         if (slot.unobserved) {
             slot.unobserved = false;
             --inFlight_;
@@ -191,14 +208,16 @@ public:
         return true;
     }
 
-    std::size_t inFlight() const noexcept override { return inFlight_; }
+    std::size_t inFlight() const noexcept override {
+        return inFlight_;
+    }
 
     void cancelOutstanding() noexcept override {
         boost::system::error_code ignored;
         socket_.cancel(ignored);
     }
 
-    bool receive(IncomingDatagram& out) override {
+    bool receive(IncomingDatagram &out) override {
         udp::endpoint source;
         boost::system::error_code ec;
         const auto size = socket_.receive_from(boost::asio::buffer(buffer_), source, 0, ec);
@@ -214,37 +233,61 @@ public:
         return true;
     }
 
-    ReceiveOutcome receiveFeedback(IncomingDatagram& out) override {
+    ReceiveOutcome receiveFeedback(IncomingDatagram &out) override {
         // The same bound socket carries feedback; read the OS result directly so
         // an error cannot masquerade as an empty queue.
         return readUdpFeedback(static_cast<FeedbackSocket>(socket_.native_handle()), out, error_);
     }
 
-    std::uint16_t localPort() const override { return localPort_; }
-    bool dfEnabled() const override { return df_; }
-    std::string lastError() const override { return error_; }
-    int sendBufferBytes() const override { return sendBuffer_; }
-    int receiveBufferBytes() const override { return receiveBuffer_; }
-    int connResetError() const override { return resetError_; }
+    std::uint16_t localPort() const override {
+        return localPort_;
+    }
+
+    bool dfEnabled() const override {
+        return df_;
+    }
+
+    std::string lastError() const override {
+        return error_;
+    }
+
+    int sendBufferBytes() const override {
+        return sendBuffer_;
+    }
+
+    int receiveBufferBytes() const override {
+        return receiveBuffer_;
+    }
+
+    int connResetError() const override {
+        return resetError_;
+    }
+
     std::string name() const override {
         return async_ ? "Boost.Asio UDP (bounded async)" : "Boost.Asio UDP (sync)";
     }
+
     std::string sendApi() const override {
         return async_ ? "asio::ip::udp::socket::async_send_to" : "asio::ip::udp::socket::send_to";
     }
+
     std::string libraryVersion() const override {
         return "Boost " BOOST_LIB_VERSION " / Asio " + std::to_string(BOOST_ASIO_VERSION);
     }
 
-private:
-    Slot* acquire() {
-        if (inFlight_ >= SlotCount) return nullptr;
+  private:
+    Slot *acquire() {
+        if (inFlight_ >= SlotCount)
+            return nullptr;
         std::size_t bytes = 0;
-        for (const auto& slot : slots_)
-            if (slot.active || slot.unobserved) bytes += slot.size;
-        for (auto& slot : slots_) {
-            if (slot.active || slot.unobserved) continue;
-            if (bytes + MaxDatagram > SlotBytes) return nullptr;
+        for (const auto &slot : slots_)
+            if (slot.active || slot.unobserved)
+                bytes += slot.size;
+        for (auto &slot : slots_) {
+            if (slot.active || slot.unobserved)
+                continue;
+            if (bytes + MaxDatagram > SlotBytes)
+                return nullptr;
             slot.active = true;
             ++inFlight_;
             return &slot;
@@ -259,13 +302,21 @@ private:
     address_v4 target_;
     std::array<std::uint8_t, MaxDatagram + 1> buffer_{};
     std::array<Slot, SlotCount> slots_{};
-    struct PendingCompletion { SendCompletion value; std::size_t slot; };
+
+    struct PendingCompletion {
+        SendCompletion value;
+        std::size_t slot;
+    };
+
     std::array<PendingCompletion, SlotCount> completions_{};
-    std::size_t completionRead_ = 0, completionWrite_ = 0;
+    std::size_t completionRead_ = 0;
+    std::size_t completionWrite_ = 0;
     std::size_t inFlight_ = 0;
     std::uint16_t localPort_ = 0;
     bool df_ = false;
-    int sendBuffer_ = 0, receiveBuffer_ = 0, resetError_ = 0;
+    int sendBuffer_ = 0;
+    int receiveBuffer_ = 0;
+    int resetError_ = 0;
     std::string error_;
 };
 } // namespace

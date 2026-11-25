@@ -1,5 +1,10 @@
 #include "network/AsioUdpTransport.h"
+#include "network/AsioReceiverSocket.h"
 #include "network/IUdpTransport.h"
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -8,22 +13,30 @@
 #include <vector>
 
 namespace {
-void require(bool ok, const char* what) { if (!ok) throw std::runtime_error(what); }
+void require(bool ok, const char *what) {
+    if (!ok)
+        throw std::runtime_error(what);
+}
 
 rt::StreamConfig config(std::uint16_t bindPort, std::uint16_t targetPort) {
     rt::StreamConfig c;
-    c.bindIp = "127.0.0.1"; c.targetIp = "127.0.0.1";
-    c.commandPort = bindPort; c.targetPort = targetPort;
+    c.bindIp = "127.0.0.1";
+    c.targetIp = "127.0.0.1";
+    c.commandPort = bindPort;
+    c.targetPort = targetPort;
     return c;
 }
-rt::IncomingDatagram readOne(rt::IUdpTransport& socket) {
+
+rt::IncomingDatagram readOne(rt::IUdpTransport &socket) {
     rt::IncomingDatagram datagram;
     for (int i = 0; i < 5000; ++i) {
-        if (socket.receive(datagram)) return datagram;
+        if (socket.receive(datagram))
+            return datagram;
         std::this_thread::sleep_for(std::chrono::microseconds(200));
     }
     throw std::runtime_error("loopback datagram not received");
 }
+
 void roundTrip(bool async) {
     auto receiver = rt::makeAsioUdpTransport(false);
     receiver->open(config(0, 1));
@@ -33,20 +46,26 @@ void roundTrip(bool async) {
     const std::vector<std::uint8_t> payload{1, 2, 3, 4, 5, 6, 7};
     if (!async) {
         require(sender->submitDatagram(payload.data(), payload.size(), 1) ==
-                    rt::SendDisposition::Complete, "sync send");
+                    rt::SendDisposition::Complete,
+                "sync send");
     } else {
+        // The engine polls while idle, including before its first submission.
+        rt::SendCompletion idleCompletion;
+        require(!sender->pollCompletion(idleCompletion), "idle completion queue is empty");
         std::vector<rt::SendCompletion> done;
         for (std::uint64_t token = 1; token <= 8; ++token) {
             require(sender->submitDatagram(payload.data(), payload.size(), token) ==
-                        rt::SendDisposition::Pending, "async submit");
+                        rt::SendDisposition::Pending,
+                    "async submit");
         }
         for (int i = 0; i < 20000 && done.size() < 8; ++i) {
             rt::SendCompletion completion;
-            while (sender->pollCompletion(completion)) done.push_back(completion);
+            while (sender->pollCompletion(completion))
+                done.push_back(completion);
             std::this_thread::sleep_for(std::chrono::microseconds(50));
         }
         require(done.size() == 8, "all async completions observed");
-        for (const auto& completion : done)
+        for (const auto &completion : done)
             require(completion.disposition == rt::SendDisposition::Complete,
                     "async completion is not success");
         require(sender->inFlight() == 0, "in-flight drained after reaping");
@@ -58,24 +77,32 @@ void roundTrip(bool async) {
     }
     // Backpressure must not be reported as success and must leave the socket usable.
     std::vector<std::uint8_t> big(1400, 0x5a);
-    std::size_t accepted = 0, pressured = 0;
+    std::size_t accepted = 0;
+    std::size_t pressured = 0;
     for (int i = 0; i < 200; ++i) {
         const auto result = sender->submitDatagram(big.data(), big.size(), 1000 + i);
-        if (result == rt::SendDisposition::Complete || result == rt::SendDisposition::Pending) ++accepted;
-        else if (result == rt::SendDisposition::Backpressure) { ++pressured; break; }
-        else throw std::runtime_error("unexpected send failure");
+        if (result == rt::SendDisposition::Complete || result == rt::SendDisposition::Pending)
+            ++accepted;
+        else if (result == rt::SendDisposition::Backpressure) {
+            ++pressured;
+            break;
+        } else
+            throw std::runtime_error("unexpected send failure");
     }
     require(accepted > 0, "some datagrams accepted before pressure");
     sender->cancelOutstanding();
     rt::SendCompletion completion;
     for (int i = 0; i < 20000; ++i) {
-        while (sender->pollCompletion(completion)) {}
-        if (!sender->inFlight()) break;
+        while (sender->pollCompletion(completion)) {
+        }
+        if (!sender->inFlight())
+            break;
         std::this_thread::sleep_for(std::chrono::microseconds(50));
     }
     require(sender->inFlight() == 0, "cancelled operations are reaped, not leaked");
     (void)pressured;
 }
+
 void exclusiveBind() {
     auto owner = rt::makeAsioUdpTransport(false);
     owner->open(config(0, 1));
@@ -83,28 +110,72 @@ void exclusiveBind() {
     bool failed = false;
     try {
         second->open(config(owner->localPort(), 1));
-    } catch (const std::exception&) {
+    } catch (const std::exception &) {
         failed = true;
     }
     require(failed, "a port owned by another socket must not be silently shared");
 }
+
 void feedback() {
     auto sender = rt::makeAsioUdpTransport(false);
     sender->open(config(0, 1));
     auto peer = rt::makeAsioUdpTransport(false);
     peer->open(config(0, sender->localPort()));
     const std::vector<std::uint8_t> payload{9, 8, 7};
-    require(peer->submitDatagram(payload.data(), payload.size(), 1) == rt::SendDisposition::Complete,
+    require(peer->submitDatagram(payload.data(), payload.size(), 1) ==
+                rt::SendDisposition::Complete,
             "feedback send");
     rt::IncomingDatagram datagram;
     for (int i = 0; i < 5000; ++i) {
         const auto outcome = sender->receiveFeedback(datagram);
-        if (outcome == rt::ReceiveOutcome::Received) break;
+        if (outcome == rt::ReceiveOutcome::Received)
+            break;
         require(outcome != rt::ReceiveOutcome::Error, "feedback read error");
         std::this_thread::sleep_for(std::chrono::microseconds(200));
     }
     require(datagram.bytes == payload && datagram.sourcePort == peer->localPort(),
             "feedback payload and source");
+}
+
+void oversizedReceiverDatagram() {
+    auto peer = rt::makeAsioUdpTransport(false);
+    peer->open(config(0, 1));
+    rt::AsioReceiverSocket receiver(0x7f000001, 0);
+
+    // Discover the receiver's ephemeral port through its feedback socket.
+    rt::Datagram probe;
+    probe.size = 1;
+    require(receiver.sendFeedback(probe, 0x7f000001, peer->localPort()), "receiver probe");
+    const auto receiverPort = readOne(*peer).sourcePort;
+
+    boost::asio::io_context context;
+    boost::asio::ip::udp::socket source(context, boost::asio::ip::udp::v4());
+    const boost::asio::ip::udp::endpoint target(boost::asio::ip::address_v4::loopback(),
+                                                receiverPort);
+    const std::vector<std::uint8_t> oversized(4096, 0x5a);
+    source.send_to(boost::asio::buffer(oversized), target);
+    const std::vector<std::uint8_t> normal{1, 2, 3};
+    source.send_to(boost::asio::buffer(normal), target);
+
+    std::array<std::uint8_t, rt::MaxDatagram + 1> buffer{};
+    std::uint32_t sourceIp = 0;
+    std::uint16_t sourcePort = 0;
+    auto read = [&] {
+        for (int i = 0; i < 5000; ++i) {
+            const auto size = receiver.read(buffer.data(), buffer.size(), sourceIp, sourcePort);
+            if (size >= 0)
+                return size;
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+        throw std::runtime_error("receiver datagram not received");
+    };
+    require(read() > static_cast<int>(rt::MaxDatagram),
+            "oversized input must remain oversized for protocol rejection");
+    require(sourceIp == 0x7f000001 && sourcePort == source.local_endpoint().port(),
+            "oversized datagram source preserved");
+    require(read() == static_cast<int>(normal.size()) &&
+                std::equal(normal.begin(), normal.end(), buffer.begin()),
+            "normal receiving must continue after an oversized datagram");
 }
 } // namespace
 
@@ -114,9 +185,10 @@ int main() {
         roundTrip(true);
         exclusiveBind();
         feedback();
+        oversizedReceiverDatagram();
         std::cout << "Asio transport sync, async, backpressure and cancellation passed\n";
         return 0;
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;
     }

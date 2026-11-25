@@ -35,43 +35,49 @@ QByteArray readFile(const QString &path, qint64 limit, const Task &t) {
         fail("读取期间文件大小发生变化");
     return bytes;
 }
+
 struct UnitScale {
     double toMm = 1;
     bool assumed = false;
     QString text;
 };
+
 UnitScale unitScale(const QString &units) {
     const QString raw = units.trimmed();
     const QString u = raw.toLower();
-    auto has = [&](std::initializer_list<const char *> keys) {
+    auto matches = [&](std::initializer_list<const char *> keys) {
         for (auto key : keys)
-            if (u.contains(QString::fromUtf8(key)))
+            if (u == QString::fromUtf8(key))
                 return true;
         return false;
     };
     if (u.isEmpty())
         return {1, true, raw};
-    // Check the prefixed spellings before the bare metre/meter forms.
-    if (has({"millim", "毫米"}) || u == "mm")
+    // Match complete unit names: an unsupported prefix (e.g. nanometres) must
+    // never silently become metres simply because it contains "metre".
+    if (matches({"mm", "millimetre", "millimetres", "millimeter", "millimeters", "毫米"}))
         return {1, false, raw};
-    if (has({"centim", "厘米"}) || u == "cm")
+    if (matches({"cm", "centimetre", "centimetres", "centimeter", "centimeters", "厘米"}))
         return {10, false, raw};
-    if (has({"microm", "微米"}) || u == "um" || u == QString::fromUtf8("µm"))
+    if (matches(
+            {"um", "µm", "μm", "micrometre", "micrometres", "micrometer", "micrometers", "微米"}))
         return {0.001, false, raw};
-    if (has({"kilomet", "千米", "公里"}) || u == "km")
+    if (matches({"km", "kilometre", "kilometres", "kilometer", "kilometers", "千米", "公里"}))
         return {1e6, false, raw};
-    if (has({"metre", "meter", "米"}) || u == "m")
+    if (matches({"m", "metre", "metres", "meter", "meters", "米"}))
         return {1000, false, raw};
-    if (has({"inch", "英寸"}) || u == "in")
+    if (matches({"in", "inch", "inches", "英寸"}))
         return {25.4, false, raw};
-    if (has({"feet", "foot", "英尺"}) || u == "ft")
+    if (matches({"ft", "feet", "foot", "英尺"}))
         return {304.8, false, raw};
     return {1, true, raw};
 }
+
 struct PointReader {
     const Field *xyz = nullptr;
     const Field *axis[3]{};
     qint64 count = 0;
+
     void read(qint64 i, double out[3]) const {
         if (xyz) {
             for (int k = 0; k < 3; ++k)
@@ -84,6 +90,7 @@ struct PointReader {
         }
     }
 };
+
 PointReader pointReader(const Dataset &d, int piece) {
     PointReader r;
     if (auto f = d.find("Points", piece)) {
@@ -109,6 +116,7 @@ PointReader pointReader(const Dataset &d, int piece) {
     }
     return r;
 }
+
 Dataset tracking(QByteArray bytes) {
     Dataset d;
     d.bx = std::move(bytes);
@@ -159,6 +167,7 @@ Dataset tracking(QByteArray bytes) {
     }
     return d;
 }
+
 void resources(Dataset &d, const QString &path, const Task &t) {
     auto refs = d.descriptor.value("resources").toArray();
     if (refs.isEmpty())
@@ -190,17 +199,21 @@ void resources(Dataset &d, const QString &path, const Task &t) {
     }
     d.descriptor["resourceStatus"] = details;
 }
+
 QString timestamp() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
 }
+
 struct Stage {
     QString final;
     QTemporaryFile temp;
+
     explicit Stage(const QString &path)
         : final(path), temp(QFileInfo(path).absoluteDir().filePath(".simtransfer-XXXXXX.tmp")) {
         if (!temp.open())
             fail("无法在目标目录创建临时文件 " + path + " " + temp.errorString());
     }
+
     void close() {
         if (!temp.flush())
             fail("临时文件 flush 失败 " + temp.errorString());
@@ -208,6 +221,7 @@ struct Stage {
         if (temp.error() != QFileDevice::NoError)
             fail("关闭临时文件失败 " + temp.errorString());
     }
+
     void publish() {
         if (QFileInfo::exists(final))
             fail("目标已经存在 " + final);
@@ -216,6 +230,7 @@ struct Stage {
         temp.setAutoRemove(false);
     }
 };
+
 void modelWrite(QIODevice &file, const Dataset &d, const QString &fmt, const Task &t) {
     if (fmt == "Aurora BX") {
         writeBx(file, d, t);
@@ -233,6 +248,7 @@ void modelWrite(QIODevice &file, const Dataset &d, const QString &fmt, const Tas
         fail("未知模型导出格式 " + fmt);
 }
 } // namespace
+
 QString formatForPath(const QString &path) {
     auto suffix = QFileInfo(path).suffix().toLower();
     if (suffix == "ply")
@@ -247,6 +263,7 @@ QString formatForPath(const QString &path) {
         return "Aurora BX";
     return {};
 }
+
 Snapshot load(const QString &path, const Task &t, const QString &expected) {
     try {
         t.report(1, "打开 " + path);
@@ -307,6 +324,7 @@ Snapshot load(const QString &path, const Task &t, const QString &expected) {
         fail(path + " — " + QString::fromUtf8(e.what()));
     }
 }
+
 QString Assessment::summary() const {
     return QString("原样保留：%1\n显式映射：%2\n省略属性：%3\n无法表达：%4\n适配器限制：%5\n"
                    "类型、数值、结构：%6")
@@ -316,6 +334,7 @@ QString Assessment::summary() const {
              unavailable.isEmpty() ? "无" : unavailable.join("、"),
              allowed() ? "原声明可恢复，数值位和顺序必须通过回读校验" : "拒绝严格导出");
 }
+
 Assessment assess(const Dataset &d, const QString &fmt) {
     Assessment a;
     a.preserved << "数据集描述、单位、坐标系、原始顺序";
@@ -330,7 +349,7 @@ Assessment assess(const Dataset &d, const QString &fmt) {
     if (fmt == "Aurora BX") {
         if (bxCloud || tracking) {
             a.impossible << "BX 仅支持加载与点云预览；本模块不支持将 BX 反向导出为 BX 或 "
-                             "PLY/VTP/VTK 等模型文件，也不恢复颜色、面连接等属性。";
+                            "PLY/VTP/VTK 等模型文件，也不恢复颜色、面连接等属性。";
             return a;
         }
         qint64 total = 0;
@@ -346,10 +365,9 @@ Assessment assess(const Dataset &d, const QString &fmt) {
         a.mapping << "每个顶点生成一个单工具 BX 响应帧：Handle 0x0A、Valid、Q=(1,0,0,0)、"
                      "Indicator 0、PortHandleStatus 0x31、FrameNumber 从 8 起每帧 +8、"
                      "SystemStatus 0";
-        a.mapping << (unit.assumed
-                          ? QString("源单位未知，采用仿真默认比例 1 模型单位 = 1 mm")
-                          : QString("源单位 %1，按 1 单位 = %2 mm 换算")
-                                .arg(unit.text, QString::number(unit.toMm, 'g', 12)));
+        a.mapping << (unit.assumed ? QString("源单位未知，采用仿真默认比例 1 模型单位 = 1 mm")
+                                   : QString("源单位 %1，按 1 单位 = %2 mm 换算")
+                                         .arg(unit.text, QString::number(unit.toMm, 'g', 12)));
         a.mapping << "坐标最后转换为 IEEE 754 Float32；允许正常舍入并统计最大绝对误差";
         a.omitted << "颜色、面连接、纹理、法向、点属性及 BX 无对应字段的其他内容";
         a.omitted << "真实工具姿态与运动时序（不从法向、面绕序或相邻点推断）";
@@ -357,7 +375,7 @@ Assessment assess(const Dataset &d, const QString &fmt) {
     }
     if (bxCloud || tracking) {
         a.impossible << "BX 仅支持加载与点云预览；本模块不支持将 BX 反向导出为 "
-                         "PLY/VTP/VTK 等模型文件，也不恢复颜色、面连接等属性。";
+                        "PLY/VTP/VTK 等模型文件，也不恢复颜色、面连接等属性。";
         return a;
     }
     if (fmt != "PLY" && fmt != "VTP" && fmt != "legacy VTK") {
@@ -368,9 +386,11 @@ Assessment assess(const Dataset &d, const QString &fmt) {
         a.impossible << "目标缺少 VTP Piece 分块结构";
     if (!d.descriptor["resources"].toArray().isEmpty())
         a.unavailable << "外部贴图只归档内容或缺失状态，模型导出未实现多文件资源提交";
-    bool floatColors = false, byteColors = false;
+    bool floatColors = false;
+    bool byteColors = false;
     const bool nativePly = fmt == "PLY" && d.descriptor.contains("plyHeader");
-    std::set<std::tuple<int, QString, QString>> nativeNames, nativeRoles;
+    std::set<std::tuple<int, QString, QString>> nativeNames;
+    std::set<std::tuple<int, QString, QString>> nativeRoles;
     for (const auto &f : d.fields) {
         const auto label = f.section + "/" + f.name;
         if (nativePly)
@@ -390,7 +410,8 @@ Assessment assess(const Dataset &d, const QString &fmt) {
             }
         }
         if (fmt == "legacy VTK" && topology(f.section)) {
-            auto vt = topologyValueType(f), ot = topologyOffsetType(f);
+            auto vt = topologyValueType(f);
+            auto ot = topologyOffsetType(f);
             if (vt != ot || (vt != Type::I32 && vt != Type::I64))
                 a.unavailable << label + " 的索引类型不能原样写为 legacy 5.1 所需的同类型 Int32 或 "
                                          "Int64 偏移和连接";
@@ -427,6 +448,7 @@ Assessment assess(const Dataset &d, const QString &fmt) {
         a.mapping << "COLOR_SCALARS 写 ASCII Float32，避免量化";
     return a;
 }
+
 void writeBx(QIODevice &out, const Dataset &d, const Task &t, BxWriteStats *statsOut) {
     if (d.descriptor.value("kind").toString() == "BxPointCloud" || d.tracking)
         fail("BX 点云或跟踪数据不能再次导出为 BX");
@@ -459,10 +481,13 @@ void writeBx(QIODevice &out, const Dataset &d, const Task &t, BxWriteStats *stat
             for (int k = 0; k < 3; ++k) {
                 const QChar axis(ushort('X' + k));
                 if (!std::isfinite(xyz[k]))
-                    fail(QString("第 %1 个点的 %2 分量不是有限数值（NaN/Inf）").arg(index).arg(axis));
+                    fail(QString("第 %1 个点的 %2 分量不是有限数值（NaN/Inf）")
+                             .arg(index)
+                             .arg(axis));
                 mm[k] = xyz[k] * unit.toMm;
                 if (!std::isfinite(mm[k]))
-                    fail(QString("第 %1 个点的 %2 分量单位换算后不是有限数值").arg(index).arg(axis));
+                    fail(
+                        QString("第 %1 个点的 %2 分量单位换算后不是有限数值").arg(index).arg(axis));
                 if (std::abs(mm[k]) > double(std::numeric_limits<float>::max()))
                     fail(QString("第 %1 个点的 %2 分量 %3 超出 Float32 范围")
                              .arg(index)
@@ -476,12 +501,11 @@ void writeBx(QIODevice &out, const Dataset &d, const Task &t, BxWriteStats *stat
                 stats.maxRoundingMm =
                     std::max(stats.maxRoundingMm, std::abs(double(value[k]) - mm[k]));
             }
-            const auto frame = static_cast<std::uint32_t>(
-                8ull + 8ull * static_cast<std::uint64_t>(index));
+            const auto frame =
+                static_cast<std::uint32_t>(8ull + 8ull * static_cast<std::uint64_t>(index));
             const auto bytes =
                 rt::aurora::encodeSingleValidTool(0x0A, {value[0], value[1], value[2]}, frame);
-            chunk.append(reinterpret_cast<const char *>(bytes.data()),
-                         qsizetype(bytes.size()));
+            chunk.append(reinterpret_cast<const char *>(bytes.data()), qsizetype(bytes.size()));
             if (chunk.size() >= 256 * 1024) {
                 writeAll(out, chunk);
                 chunk.clear();
@@ -496,6 +520,7 @@ void writeBx(QIODevice &out, const Dataset &d, const Task &t, BxWriteStats *stat
     if (statsOut)
         *statsOut = stats;
 }
+
 Dataset readBx(const QByteArray &bytes, const Task &t, const QString &source) {
     if (bytes.isEmpty())
         fail("BX 文件为空");
@@ -538,7 +563,8 @@ Dataset readBx(const QByteArray &bytes, const Task &t, const QString &source) {
                 t.check();
             points.data.append(reinterpret_cast<const char *>(position.positionMm.data()), 12);
             handle.data.append(char(position.handle));
-            const std::uint32_t frame = position.frameNumber, port = position.portStatus;
+            const std::uint32_t frame = position.frameNumber;
+            const std::uint32_t port = position.portStatus;
             frameNumber.data.append(reinterpret_cast<const char *>(&frame), 4);
             portStatus.data.append(reinterpret_cast<const char *>(&port), 4);
             for (int k = 0; k < 3; ++k) {
@@ -547,11 +573,13 @@ Dataset readBx(const QByteArray &bytes, const Task &t, const QString &source) {
             }
             ++count;
             if (!(count & 262143))
-                t.report(24, QString("解码 BX：%1 帧 / %2 个有效位置")
-                                 .arg(stats.frames)
-                                 .arg(count));
+                t.report(24,
+                         QString("解码 BX：%1 帧 / %2 个有效位置").arg(stats.frames).arg(count));
         },
-        stats);
+        stats, nullptr,
+        [&] {
+            t.check();
+        });
     if (!stats.frames)
         fail("BX 文件中没有完整帧");
     d.fields = {points, handle, frameNumber, portStatus};
@@ -561,10 +589,10 @@ Dataset readBx(const QByteArray &bytes, const Task &t, const QString &source) {
     d.descriptor["disabled"] = qint64(stats.disabled);
     d.descriptor["pointCount"] = count;
     if (count)
-        d.descriptor["bounds"] =
-            QJsonArray{low[0], high[0], low[1], high[1], low[2], high[2]};
+        d.descriptor["bounds"] = QJsonArray{low[0], high[0], low[1], high[1], low[2], high[2]};
     return d;
 }
+
 Snapshot loadBxObject(const QByteArray &bytes, const Task &t, const QString &label) {
     try {
         t.report(1, "解码 BX：" + label);
@@ -584,8 +612,8 @@ Snapshot loadBxObject(const QByteArray &bytes, const Task &t, const QString &lab
         fail(label + " — " + QString::fromUtf8(e.what()));
     }
 }
-void verifyBxFile(const QString &path, const Dataset &d, const BxWriteStats &stats,
-                  const Task &t) {
+
+void verifyBxFile(const QString &path, const Dataset &d, const BxWriteStats &stats, const Task &t) {
     QFile in(path);
     if (!in.open(QIODevice::ReadOnly))
         fail(path + " " + in.errorString());
@@ -608,23 +636,20 @@ void verifyBxFile(const QString &path, const Dataset &d, const BxWriteStats &sta
                 fail(QString("第 %1 帧读取截断").arg(index));
             rt::aurora::Reply reply;
             try {
-                reply = rt::aurora::decodeBx(
-                    reinterpret_cast<const std::uint8_t *>(bytes.constData()),
-                    std::size_t(bytes.size()));
+                reply =
+                    rt::aurora::decodeBx(reinterpret_cast<const std::uint8_t *>(bytes.constData()),
+                                         std::size_t(bytes.size()));
             } catch (const std::exception &e) {
-                fail(QString("第 %1 帧回读失败：%2")
-                         .arg(index)
-                         .arg(QString::fromUtf8(e.what())));
+                fail(QString("第 %1 帧回读失败：%2").arg(index).arg(QString::fromUtf8(e.what())));
             }
             if (reply.tools.size() != 1)
                 fail(QString("第 %1 帧工具数不是 1").arg(index));
             const auto &tool = reply.tools[0];
-            const auto expectedFrame = static_cast<std::uint32_t>(
-                8ull + 8ull * static_cast<std::uint64_t>(index));
+            const auto expectedFrame =
+                static_cast<std::uint32_t>(8ull + 8ull * static_cast<std::uint64_t>(index));
             if (tool.handle != 0x0A || tool.status != rt::aurora::HandleStatus::Valid ||
-                tool.portStatus != 0x31 || tool.frameNumber != expectedFrame ||
-                tool.quality != 0 || tool.quaternion != std::array<float, 4>{1, 0, 0, 0} ||
-                reply.systemStatus != 0)
+                tool.portStatus != 0x31 || tool.frameNumber != expectedFrame || tool.quality != 0 ||
+                tool.quaternion != std::array<float, 4>{1, 0, 0, 0} || reply.systemStatus != 0)
                 fail(QString("第 %1 帧的固定字段回读不符").arg(index));
             double xyz[3];
             reader.read(i, xyz);
@@ -641,10 +666,12 @@ void verifyBxFile(const QString &path, const Dataset &d, const BxWriteStats &sta
     if (!in.atEnd())
         fail("BX 文件在预期帧数之后仍有数据");
 }
+
 JobResult convert(Snapshot data, const QString &output, const QString &archiveDir, const Task &t) {
     JobResult result;
     result.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    QString target = QFileInfo(output).absoluteFilePath(), fmt = formatForPath(target);
+    QString target = QFileInfo(output).absoluteFilePath();
+    QString fmt = formatForPath(target);
     QString archive = QDir(archiveDir).absoluteFilePath(result.id + ".h5");
     const auto plan = assess(*data, fmt);
     QJsonObject rec{{"jobId", result.id},
@@ -702,13 +729,13 @@ JobResult convert(Snapshot data, const QString &output, const QString &archiveDi
             if (fmt == "Aurora BX") {
                 verifyBxFile(stage->temp.fileName(), *data, bxStats, t);
                 rec["outputFileSHA256"] = fileHash(stage->temp.fileName(), t);
-                rec["bx"] = QJsonObject{
-                    {"points", bxStats.points},
-                    {"frames", bxStats.frames},
-                    {"bytes", bxStats.frames * qint64(rt::aurora::SingleToolBxSize)},
-                    {"max_rounding_mm", bxStats.maxRoundingMm},
-                    {"assumed_units", bxStats.assumedUnits},
-                    {"source_units", bxStats.sourceUnits}};
+                rec["bx"] =
+                    QJsonObject{{"points", bxStats.points},
+                                {"frames", bxStats.frames},
+                                {"bytes", bxStats.frames * qint64(rt::aurora::SingleToolBxSize)},
+                                {"max_rounding_mm", bxStats.maxRoundingMm},
+                                {"assumed_units", bxStats.assumedUnits},
+                                {"source_units", bxStats.sourceUnits}};
             } else {
                 Task verify{t.stopped, {}};
                 auto back = load(stage->temp.fileName(), verify, fmt);
@@ -723,9 +750,10 @@ JobResult convert(Snapshot data, const QString &output, const QString &archiveDi
         archiveStage.close();
         rec["status"] = "success";
         rec["complete"] = true;
-        rec["verified"] = fmt == "Aurora BX"
-                              ? "53-byte frames, header/body CRC16, fixed tool fields and Float32 positions"
-                              : "typed values, ragged offsets and ordered manifest";
+        rec["verified"] =
+            fmt == "Aurora BX"
+                ? "53-byte frames, header/body CRC16, fixed tool fields and Float32 positions"
+                : "typed values, ragged offsets and ordered manifest";
         rec["finishedUtc"] = timestamp();
         archiveWrite(archiveStage.temp.fileName(), *data, rec, t);
         {
@@ -756,9 +784,8 @@ JobResult convert(Snapshot data, const QString &output, const QString &archiveDi
                       .arg(bxStats.frames)
                       .arg(bxStats.frames * qint64(rt::aurora::SingleToolBxSize))
                       .arg(bxStats.maxRoundingMm, 0, 'g', 6)
-                      .arg(bxStats.assumedUnits
-                               ? "；源单位未知，按 1 模型单位 = 1 mm 仿真默认比例"
-                               : QString())
+                      .arg(bxStats.assumedUnits ? "；源单位未知，按 1 模型单位 = 1 mm 仿真默认比例"
+                                                : QString())
                 : QString("目标及过程档案均已提交，字段、拓扑和数值位回读一致。");
         return result;
     } catch (const Cancelled &) {

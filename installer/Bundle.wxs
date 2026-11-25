@@ -1,0 +1,26 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Bundle Name="$(Brand)" Manufacturer="SimTransferLab" Version="$(Version)"
+          UpgradeCode="$(BundleFamily)" Compressed="yes" IconSourceFile="$(IconFile)">
+    <BootstrapperApplication>
+      <bal:WixInternalUIBootstrapperApplication />
+    </BootstrapperApplication>
+    <Variable Name="InstallFolder" Type="string" Value="" bal:Overridable="yes" />
+    <util:RegistrySearch Id="FindRuntimeVersion" Variable="VcRuntimeVersion" Root="HKLM"
+        Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" Value="Version" Result="value" Bitness="always64" />
+    <util:RegistrySearch Id="FindRuntimeInstalled" Variable="VcRuntimeInstalled" Root="HKLM"
+        Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" Value="Installed" Result="value" Bitness="always64" />
+    <Chain>
+      <ExePackage Id="VCRedistX64" SourceFile="$(Redist)" PerMachine="yes" Permanent="yes"
+          InstallArguments="/install /quiet /norestart"
+          DetectCondition="VcRuntimeInstalled = 1 AND VcRuntimeVersion &gt;= v$(RedistVersion)">
+        <ExitCode Value="3010" Behavior="scheduleReboot" />
+        <ExitCode Value="1641" Behavior="forceReboot" />
+      </ExePackage>
+      <MsiPackage Id="Simulator" SourceFile="$(Msi)" Cache="keep" Visible="no">
+        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" Condition="InstallFolder" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

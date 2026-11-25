@@ -75,7 +75,7 @@ python -m unittest discover -s tools -p "test_*.py"
 
 分发仓库中仅附[大型模型显示截图](model-verification/large-model.png)。依据输入头部，2026-11-19 生成的模型按 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) 分发，模型截图中的模型部分沿用该许可。肖像颜色来自 Daniel Case（2014），经裁剪、透视校正、重采样并映射顶点颜色。[肖像原图](https://commons.wikimedia.org/wiki/File:Front_view_of_Tiananmen_gate_from_north_end_of_Tiananmen_Square.jpg)，[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/)。彩绘取色来自 Lan Zhiyi（2024），经裁剪、透视校正、颜色归一化并映射顶点颜色。[彩绘原图](https://commons.wikimedia.org/wiki/File:%E5%A4%A9%E5%AE%89%E9%97%A8%E5%9F%8E%E6%A5%BC%E7%9A%84%E4%BE%A7%E9%9D%A2.jpg)，[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。国徽浅浮雕改编自文件头注明的公有领域图形，经过采样和颜色调整。[国徽原图](https://commons.wikimedia.org/wiki/File:%E4%B8%AD%E8%8F%AF%E4%BA%BA%E6%B0%91%E5%85%B1%E5%92%8C%E5%9C%8B%E5%9C%8B%E5%BE%BD.svg)。
 
-可从仓库根目录重复大模型检查。第二个参数为证据输出目录，最后一个参数为本机模型路径。
+可从仓库根目录重复大模型检查。第二个参数为证据输出目录，第三个参数为本机模型路径。当前测试可再传入轮数（默认 3），每轮均执行转换和回读。逐轮内存数据和复测命令见[天安门模型 12 轮内存复测](MODEL_MEMORY_SOAK.md)。
 
 ```bat
 build\verified-release\bin\SimModelGuiTests.exe build\verified-release\tests\model-fixtures docs\model-verification "%USERPROFILE%\Downloads\Tiananmen_Gate_Detailed.ply"

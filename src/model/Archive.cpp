@@ -7,25 +7,32 @@
 namespace rt::model {
 namespace {
 std::mutex archiveLock; // The distributed serial HDF5 build need not be thread-safe.
+
 void ok(herr_t result, const QString &where) {
     if (result < 0)
         fail("HDF5 " + where + " 失败");
 }
+
 struct Handle {
     hid_t id;
     herr_t (*closeFn)(hid_t);
+
     Handle(hid_t v, herr_t (*fn)(hid_t), const QString &what) : id(v), closeFn(fn) {
         if (v < 0)
             fail("HDF5 无法打开或创建 " + what);
     }
+
     Handle(const Handle &) = delete;
+
     ~Handle() {
         if (id >= 0)
             closeFn(id);
     }
+
     operator hid_t() const {
         return id;
     }
+
     void close(const QString &name) {
         if (id >= 0) {
             auto old = id;
@@ -34,6 +41,7 @@ struct Handle {
         }
     }
 };
+
 hid_t fileType(Type t) {
     switch (t) {
     case Type::I8:
@@ -59,12 +67,14 @@ hid_t fileType(Type t) {
     }
     fail("未知的档案数值类型");
 }
+
 void localLink(hid_t parent, const QByteArray &name) {
     H5L_info2_t info{};
     if (H5Lget_info2(parent, name.constData(), &info, H5P_DEFAULT) < 0 ||
         info.type != H5L_TYPE_HARD)
         fail("HDF5 缺少本地节点 " + QString::fromLatin1(name));
 }
+
 Handle group(hid_t parent, const QByteArray &name, bool create) {
     if (!create)
         localLink(parent, name);
@@ -73,6 +83,7 @@ Handle group(hid_t parent, const QByteArray &name, bool create) {
                       : H5Gopen2(parent, name.constData(), H5P_DEFAULT),
                   H5Gclose, QString::fromLatin1(name));
 }
+
 void put(hid_t parent, const QByteArray &name, Type type, qint64 rows, int cols, const char *data,
          const Task &t) {
     hsize_t dims[]{hsize_t(rows), hsize_t(cols)};
@@ -91,8 +102,8 @@ void put(hid_t parent, const QByteArray &name, Type type, qint64 rows, int cols,
               H5Dclose, name);
     for (qint64 i = 0; i < rows; i += block) {
         t.check();
-        hsize_t origin[]{hsize_t(i), 0},
-            extent[]{hsize_t(std::min(block, rows - i)), hsize_t(cols)};
+        hsize_t origin[]{hsize_t(i), 0};
+        hsize_t extent[]{hsize_t(std::min(block, rows - i)), hsize_t(cols)};
         ok(H5Sselect_hyperslab(space, H5S_SELECT_SET, origin, nullptr, extent, nullptr), "写选区");
         Handle mem(H5Screate_simple(2, extent, nullptr), H5Sclose, "内存选区");
         ok(H5Dwrite(ds, fileType(type), mem, space, H5P_DEFAULT, data + i * rowBytes),
@@ -100,6 +111,7 @@ void put(hid_t parent, const QByteArray &name, Type type, qint64 rows, int cols,
     }
     ds.close(name);
 }
+
 QByteArray get(hid_t parent, const QByteArray &name, Type type, qint64 rows, int cols, qint64 limit,
                const Task &t) {
     localLink(parent, name);
@@ -128,8 +140,8 @@ QByteArray get(hid_t parent, const QByteArray &name, Type type, qint64 rows, int
     qint64 block = std::max<qint64>(1, (1 << 20) / rowBytes);
     for (qint64 i = 0; i < rows; i += block) {
         t.check();
-        hsize_t origin[]{hsize_t(i), 0},
-            extent[]{hsize_t(std::min(block, rows - i)), hsize_t(cols)};
+        hsize_t origin[]{hsize_t(i), 0};
+        hsize_t extent[]{hsize_t(std::min(block, rows - i)), hsize_t(cols)};
         ok(H5Sselect_hyperslab(space, H5S_SELECT_SET, origin, nullptr, extent, nullptr), "读选区");
         Handle mem(H5Screate_simple(2, extent, nullptr), H5Sclose, "内存选区");
         ok(H5Dread(ds, fileType(type), mem, space, H5P_DEFAULT, data.data() + i * rowBytes),
@@ -137,14 +149,17 @@ QByteArray get(hid_t parent, const QByteArray &name, Type type, qint64 rows, int
     }
     return data;
 }
+
 QByteArray idName(int i) {
     return "a" + QByteArray::number(i).rightJustified(5, '0');
 }
+
 void metadata(hid_t g, const QByteArray &name, const QJsonObject &record, const Task &t) {
     auto bytes = json(record);
     put(g, name, Type::U8, bytes.size(), 1, bytes.constData(), t);
 }
 } // namespace
+
 void archiveWrite(const QString &path, const Dataset &d, const QJsonObject &record, const Task &t) {
     std::lock_guard<std::mutex> lock(archiveLock);
     H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
@@ -187,6 +202,7 @@ void archiveWrite(const QString &path, const Dataset &d, const QJsonObject &reco
     ok(H5Fflush(file, H5F_SCOPE_GLOBAL), "flush");
     file.close(path);
 }
+
 Dataset archiveRead(const QString &path, const Task &t, QJsonObject *record) {
     std::lock_guard<std::mutex> lock(archiveLock);
     H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
@@ -199,11 +215,13 @@ Dataset archiveRead(const QString &path, const Task &t, QJsonObject *record) {
     if (schema["application"] != "SimTransferRT/model-conversions" ||
         schema["version"].toInt() != 1)
         fail("HDF5 标识或 schema version 不受支持");
-    auto info = readJson("manifest"), integrity = readJson("integrity"),
-         job = readJson("provenance");
+    auto info = readJson("manifest");
+    auto integrity = readJson("integrity");
+    auto job = readJson("provenance");
     if (info["version"].toInt() != 1 || digest(json(info)) != integrity["manifest"].toString())
         fail("HDF5 manifest 版本或 SHA-256 不符");
-    auto specs = info["fields"].toArray(), hashes = integrity["fields"].toArray();
+    auto specs = info["fields"].toArray();
+    auto hashes = integrity["fields"].toArray();
     if (specs.size() != hashes.size() || specs.size() > 8192)
         fail("HDF5 字段数量不符");
     Dataset d;
@@ -216,7 +234,8 @@ Dataset archiveRead(const QString &path, const Task &t, QJsonObject *record) {
         if (spec["id"].toInt(-1) != i)
             fail("HDF5 字段 ID 不连续");
         auto f = description(spec);
-        auto rows = spec["values"].toInteger(-1), tuples = spec["tuples"].toInteger(-1);
+        auto rows = spec["values"].toInteger(-1);
+        auto tuples = spec["tuples"].toInteger(-1);
         total += checked(rows, width(f.type) * f.components) + checked(tuples, f.list ? 8 : 0);
         if (total > budget)
             fail("HDF5 解压超过预算");

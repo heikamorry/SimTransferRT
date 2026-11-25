@@ -3,4 +3,11 @@ IndentWidth: 4
 ColumnLimit: 100
 AllowShortFunctionsOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: None
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+SeparateDefinitionBlocks: Always
+SortIncludes: false
 BreakBeforeBraces: Attach

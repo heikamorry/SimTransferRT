@@ -46,6 +46,18 @@ class GuiLaunchTests(unittest.TestCase):
         self.assertNotEqual(self.launch("--model", "missing.ply", "--screenshot", image), 0)
         self.assertEqual(image.read_bytes(), contents)
 
+    def test_capture_rejects_an_alias_of_its_input(self):
+        source = self.directory / "model.ply"
+        contents = fixture.read_bytes()
+        source.write_bytes(contents)
+        image = self.directory / "capture.png"
+        try:
+            image.hardlink_to(source)
+        except OSError as error:
+            self.skipTest(f"fixture directory does not support hard links: {error}")
+        self.assertEqual(self.launch("--model", source, "--screenshot", image), 2)
+        self.assertEqual(image.read_bytes(), contents)
+
     def test_smoke_reports_model_failure_without_screenshot(self):
         self.assertNotEqual(self.launch("--smoke-test", "--model", "missing.ply"), 0)
 

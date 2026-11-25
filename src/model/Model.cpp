@@ -13,45 +13,56 @@ static_assert(Q_BYTE_ORDER == Q_LITTLE_ENDIAN,
               "The canonical-buffer adapter requires a little-endian host");
 static const QStringList names{"Int8",   "UInt8", "Int16",  "UInt16",  "Int32",
                                "UInt32", "Int64", "UInt64", "Float32", "Float64"};
+
 QString typeName(Type t) {
     return names.at(int(t));
 }
+
 Type typeOf(QString s) {
     int index = names.indexOf(s);
     if (index < 0)
         fail("不支持的数据类型 " + s);
     return Type(index);
 }
+
 int width(Type t) {
     static constexpr int bytes[]{1, 1, 2, 2, 4, 4, 8, 8, 4, 8};
     return bytes[int(t)];
 }
+
 bool integer(Type t) {
     return t != Type::F32 && t != Type::F64;
 }
+
 [[noreturn]] void fail(const QString &s) {
     throw std::runtime_error(s.toUtf8().constData());
 }
+
 qint64 checked(qint64 a, qint64 b, qint64 limit) {
     if (a < 0 || b < 0 || (b && a > limit / b))
         fail("声明的长度、数量或内存超过本模块预算");
     return a * b;
 }
+
 void Task::check() const {
     if (stopped && stopped())
         throw Cancelled();
 }
+
 void Task::report(int n, const QString &s) const {
     check();
     if (progress)
         progress(n, s);
 }
+
 QStringList cellKinds() {
     return {"Verts", "Lines", "Polys", "Strips"};
 }
+
 bool topology(const QString &s) {
     return s == "Verts" || s == "Lines" || s == "Polys" || s == "Strips";
 }
+
 Type topologyValueType(const Field &f) {
     auto declaration = f.declaration.value("valueType")
                            .toString(f.declaration.value("listValue").toString("Int64"));
@@ -60,6 +71,7 @@ Type topologyValueType(const Field &f) {
         fail("拓扑连接类型必须是整数 " + declaration);
     return type;
 }
+
 Type topologyOffsetType(const Field &f) {
     auto valueType = topologyValueType(f);
     auto defaultType = width(valueType) >= 4 ? valueType : Type::I64;
@@ -69,6 +81,7 @@ Type topologyOffsetType(const Field &f) {
         fail("拓扑偏移类型必须是整数 " + declaration);
     return type;
 }
+
 QByteArray encodeIndices(const QByteArray &canonical, Type target, const Task &t) {
     if (target == Type::I64)
         return canonical;
@@ -82,12 +95,14 @@ QByteArray encodeIndices(const QByteArray &canonical, Type target, const Task &t
     }
     return result;
 }
+
 const Field *Dataset::find(QString section, int piece) const {
     for (const auto &f : fields)
         if (f.piece == piece && f.section == section)
             return &f;
     return nullptr;
 }
+
 qint64 Dataset::points(int p) const {
     if (auto f = find("Points", p))
         return f->tuples();
@@ -99,6 +114,7 @@ qint64 Dataset::points(int p) const {
     }
     return 0;
 }
+
 qint64 Dataset::cells(int p) const {
     qint64 n = 0;
     for (const auto &f : fields)
@@ -106,9 +122,11 @@ qint64 Dataset::cells(int p) const {
             n += f.tuples();
     return n;
 }
+
 QByteArray json(const QJsonObject &j) {
     return QJsonDocument(j).toJson(QJsonDocument::Compact);
 }
+
 QJsonObject object(const QByteArray &b) {
     QJsonParseError error;
     const auto doc = QJsonDocument::fromJson(b, &error);
@@ -116,6 +134,7 @@ QJsonObject object(const QByteArray &b) {
         fail("描述信息 JSON 无效 " + error.errorString());
     return doc.object();
 }
+
 QJsonObject manifest(const Dataset &d) {
     QJsonArray fields;
     for (const auto &f : d.fields)
@@ -132,6 +151,7 @@ QJsonObject manifest(const Dataset &d) {
                                   {"declaration", f.declaration}});
     return {{"version", 1}, {"dataset", d.descriptor}, {"fields", fields}};
 }
+
 Field description(const QJsonObject &j) {
     Field f;
     f.section = j["section"].toString();
@@ -147,6 +167,7 @@ Field description(const QJsonObject &j) {
         fail("数组描述无效 " + f.name);
     return f;
 }
+
 void applyManifest(Dataset &d, const QJsonObject &j, const std::vector<int> &ids) {
     if (j["version"].toInt() != 1 || !j["fields"].isArray() || !j["dataset"].isObject())
         fail("不支持的属性映射版本");
@@ -180,6 +201,7 @@ void applyManifest(Dataset &d, const QJsonObject &j, const std::vector<int> &ids
     d.fields = std::move(ordered);
     d.descriptor = j["dataset"].toObject();
 }
+
 void validate(const Dataset &d, const Task &t) {
     if (d.pieces() < 1 || d.pieces() > 4096 || d.fields.size() > 8192)
         fail("数据集分块或字段数量超限");
@@ -254,9 +276,11 @@ void validate(const Dataset &d, const Task &t) {
             fail("单元属性数量不匹配 " + label);
     }
 }
+
 QString digest(const QByteArray &b) {
     return QString::fromLatin1(QCryptographicHash::hash(b, QCryptographicHash::Sha256).toHex());
 }
+
 QString fileHash(const QString &path, const Task &t) {
     QFile in(path);
     if (!in.open(QIODevice::ReadOnly))
@@ -271,6 +295,7 @@ QString fileHash(const QString &path, const Task &t) {
     }
     return QString::fromLatin1(h.result().toHex());
 }
+
 QString fieldHash(const Field &f, const Task &t) {
     QCryptographicHash h(QCryptographicHash::Sha256);
     auto feed = [&](const char *b, qint64 n) {
@@ -286,6 +311,7 @@ QString fieldHash(const Field &f, const Task &t) {
     feed(reinterpret_cast<const char *>(f.ends.data()), qint64(f.ends.size()) * 8);
     return QString::fromLatin1(h.result().toHex());
 }
+
 void compare(const Dataset &a, const Dataset &b, const Task &t) {
     if (a.bx != b.bx)
         fail("回读校验失败：BX 原始应答字节不同");
@@ -299,7 +325,8 @@ void compare(const Dataset &a, const Dataset &b, const Task &t) {
                 changed << it.key();
         fail("回读校验失败：数据集描述不同 " + changed.join(", "));
     }
-    auto left = manifest(a)["fields"].toArray(), right = manifest(b)["fields"].toArray();
+    auto left = manifest(a)["fields"].toArray();
+    auto right = manifest(b)["fields"].toArray();
     if (left.size() != right.size())
         fail("回读校验失败：字段数不同");
     for (int i = 0; i < left.size(); ++i)
@@ -315,6 +342,7 @@ void compare(const Dataset &a, const Dataset &b, const Task &t) {
                  " 数值位或连接顺序不同");
     }
 }
+
 void writeAll(QIODevice &out, const char *p, qint64 n) {
     while (n) {
         auto k = out.write(p, n);
@@ -324,11 +352,13 @@ void writeAll(QIODevice &out, const char *p, qint64 n) {
         n -= k;
     }
 }
+
 template <class T> static T value(const char *p) {
     T v;
     std::memcpy(&v, p, sizeof v);
     return v;
 }
+
 template <class F> static auto dispatch(Type t, F fn) {
     switch (t) {
     case Type::I8:
@@ -354,6 +384,7 @@ template <class F> static auto dispatch(Type t, F fn) {
     }
     fail("未知数值类型");
 }
+
 void scalarText(Type t, QByteArrayView s, char *dst) {
     if (s.startsWith('+'))
         s = s.sliced(1);
@@ -366,6 +397,7 @@ void scalarText(Type t, QByteArrayView s, char *dst) {
         return 0;
     });
 }
+
 QByteArray scalarString(Type t, const char *p) {
     return dispatch(t, [&](auto v) {
         char buf[96];
@@ -375,6 +407,7 @@ QByteArray scalarString(Type t, const char *p) {
         return QByteArray(buf, r.ptr - buf);
     });
 }
+
 qint64 indexValue(Type t, const char *p) {
     if (!integer(t))
         fail("索引或长度必须为整数");
@@ -388,6 +421,7 @@ qint64 indexValue(Type t, const char *p) {
         return static_cast<qint64>(n);
     });
 }
+
 void storeIndex(Type t, qint64 n, char *p) {
     dispatch(t, [&](auto v) {
         using T = decltype(v);
@@ -398,19 +432,25 @@ void storeIndex(Type t, qint64 n, char *p) {
         return 0;
     });
 }
+
 double displayNumber(Type t, const char *p) {
-    return dispatch(t, [&](auto v) { return double(value<decltype(v)>(p)); });
+    return dispatch(t, [&](auto v) {
+        return double(value<decltype(v)>(p));
+    });
 }
+
 void endianCopy(char *dst, const char *src, int n, bool big) {
     if (big)
         std::reverse_copy(src, src + n, dst);
     else
         std::memcpy(dst, src, n);
 }
+
 void Cursor::spaces() {
     while (p < end && uchar(*p) <= 32)
         ++p;
 }
+
 QByteArrayView Cursor::token() {
     spaces();
     auto first = p;
@@ -420,6 +460,7 @@ QByteArrayView Cursor::token() {
         fail(QString("字节 %1 处缺少数值").arg(position()));
     return {first, p - first};
 }
+
 QByteArray Cursor::line() {
     if (p == end)
         fail("文件提前结束");
@@ -434,6 +475,7 @@ QByteArray Cursor::line() {
         line.chop(1);
     return line;
 }
+
 const char *Cursor::take(qint64 n) {
     if (n < 0 || n > remaining())
         fail(QString("字节 %1 处数据截断，预期 %2 字节").arg(position()).arg(n));

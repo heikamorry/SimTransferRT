@@ -38,12 +38,15 @@ QString defaultArchive() {
                    "/model-conversions")
         .toString();
 }
+
 QString known(QString text) {
     return text.isEmpty() ? QStringLiteral("未知") : text;
 }
+
 QString fieldValue(float v) {
     return QString::number(v, 'g', 9);
 }
+
 template <size_t N> QString numbers(const std::array<float, N> &v) {
     QStringList out;
     for (auto f : v)
@@ -51,39 +54,54 @@ template <size_t N> QString numbers(const std::array<float, N> &v) {
     return out.join(", ");
 }
 } // namespace
+
 struct PreviewPanel::Impl {
     struct Work {
         quint64 generation;
-        QString file, format, dir, label;
+        QString file;
+        QString format;
+        QString dir;
+        QString label;
         Snapshot source;
         QByteArray bytes;
         bool object = false;
     };
+
     PreviewPanel *panel;
     Scene *scene = nullptr;
-    QComboBox *mode = nullptr, *attribute = nullptr;
+    QComboBox *mode = nullptr;
+    QComboBox *attribute = nullptr;
     QSpinBox *pointSize = nullptr;
-    QLabel *info = nullptr, *state = nullptr;
-    QPushButton *save = nullptr, *cancelButton = nullptr, *details = nullptr;
+    QLabel *info = nullptr;
+    QLabel *state = nullptr;
+    QPushButton *save = nullptr;
+    QPushButton *cancelButton = nullptr;
+    QPushButton *details = nullptr;
     QProgressBar *progress = nullptr;
     QTableWidget *trackingTable = nullptr;
     Snapshot current;
-    QString detailText, lastArchive, lastOutput;
+    QString detailText;
+    QString lastArchive;
+    QString lastOutput;
     bool active = false;
     quint64 committing = 0;
     std::atomic<bool> quitting{false};
-    std::atomic<quint64> generation{0}, cancelled{0};
+    std::atomic<quint64> generation{0};
+    std::atomic<quint64> cancelled{0};
     std::mutex mutex;
     std::condition_variable ready;
     std::deque<Work> pending;
     std::thread worker;
+
     explicit Impl(PreviewPanel *w) : panel(w) {}
+
     void setBusy(bool on) {
         active = on;
         save->setEnabled(bool(current) && !on);
         cancelButton->setEnabled(on);
         progress->setVisible(on);
     }
+
     void queue(QString file, QString format, Snapshot src = {}, QString dir = {}) {
         if (quitting)
             return;
@@ -106,6 +124,7 @@ struct PreviewPanel::Impl {
         state->setText("正在处理…");
         ready.notify_one();
     }
+
     void queueObject(QByteArray bytes, QString label) {
         if (quitting || bytes.isEmpty())
             return;
@@ -127,6 +146,7 @@ struct PreviewPanel::Impl {
         state->setText("正在解码网络 BX…");
         ready.notify_one();
     }
+
     template <class F> void post(quint64 gen, F fn) {
         QMetaObject::invokeMethod(
             panel,
@@ -136,12 +156,15 @@ struct PreviewPanel::Impl {
             },
             Qt::QueuedConnection);
     }
+
     void loop() {
         for (;;) {
             Work w;
             {
                 std::unique_lock<std::mutex> lock(mutex);
-                ready.wait(lock, [&] { return quitting || !pending.empty(); });
+                ready.wait(lock, [&] {
+                    return quitting || !pending.empty();
+                });
                 if (pending.empty() && quitting)
                     return;
                 w = std::move(pending.front());
@@ -149,7 +172,9 @@ struct PreviewPanel::Impl {
             }
             auto gen = w.generation;
             auto last = std::chrono::steady_clock::time_point{};
-            Task task{[this, gen] { return quitting || generation != gen || cancelled == gen; },
+            Task task{[this, gen] {
+                          return quitting || generation != gen || cancelled == gen;
+                      },
                       [this, gen, &last](int n, const QString &msg) {
                           auto now = std::chrono::steady_clock::now();
                           if (now - last < std::chrono::milliseconds(80))
@@ -191,8 +216,7 @@ struct PreviewPanel::Impl {
                     } catch (const std::exception &e) {
                         QString msg = QString::fromUtf8(e.what());
                         post(gen, [this, msg] {
-                            finishError("传输完成，但 BX 解码失败：" + msg);
-                            emit panel->bxObjectFinished(false, msg);
+                            finishError("传输完成，但 BX 解码失败：" + msg, true);
                         });
                         continue;
                     }
@@ -206,20 +230,23 @@ struct PreviewPanel::Impl {
                     } catch (const std::exception &e) {
                         QString msg = QString::fromUtf8(e.what());
                         post(gen, [this, msg] {
-                            finishError("BX 解码完成，但预览失败：" + msg);
-                            emit panel->bxObjectFinished(false, msg);
+                            finishError("BX 解码完成，但预览失败：" + msg, true);
                         });
                         continue;
                     }
-                    post(gen, [this, source, display = std::move(display)]() mutable {
+                    post(gen, [this, source, display = std::move(display), gen]() mutable {
+                        if (cancelled == gen) {
+                            finishError("已取消", true);
+                            return;
+                        }
                         present(std::move(source), display);
                         setBusy(false);
                         const auto &d = current->descriptor;
-                        emit panel->bxObjectFinished(
-                            true, QString("%1 帧 · %2 个有效位置 · %3 点")
-                                      .arg(d.value("frames").toInteger())
-                                      .arg(d.value("validPositions").toInteger())
-                                      .arg(d.value("pointCount").toInteger()));
+                        emit panel->bxObjectFinished(true,
+                                                     QString("%1 帧 · %2 个有效位置 · %3 点")
+                                                         .arg(d.value("frames").toInteger())
+                                                         .arg(d.value("validPositions").toInteger())
+                                                         .arg(d.value("pointCount").toInteger()));
                     });
                 } else {
                     auto source = load(w.file, task, w.format);
@@ -237,20 +264,29 @@ struct PreviewPanel::Impl {
                     });
                 }
             } catch (const Cancelled &) {
-                post(gen, [this] { finishError("已取消"); });
+                post(gen, [this, object = w.object] {
+                    finishError("已取消", object);
+                });
             } catch (const std::exception &e) {
                 QString msg = QString::fromUtf8(e.what());
-                post(gen, [this, msg] { finishError("失败：" + msg); });
+                post(gen, [this, msg, object = w.object] {
+                    finishError("失败：" + msg, object);
+                });
             }
         }
     }
-    void finishError(const QString &msg) {
+
+    void finishError(const QString &msg, bool object = false) {
         setBusy(false);
         state->setText(msg);
         detailText = msg;
         state->setToolTip(msg);
-        emit panel->fileTaskFinished(false);
+        if (object)
+            emit panel->bxObjectFinished(false, msg);
+        else
+            emit panel->fileTaskFinished(false);
     }
+
     void present(Snapshot source, const Display &display) {
         current = std::move(source);
         attribute->blockSignals(true);
@@ -258,7 +294,8 @@ struct PreviewPanel::Impl {
         attribute->addItem("原始颜色", -1);
         attribute->addItem("统一颜色", -2);
         int attrs = 0;
-        qint64 points = 0, cells = 0;
+        qint64 points = 0;
+        qint64 cells = 0;
         QStringList fields;
         for (size_t i = 0; i < current->fields.size(); ++i) {
             auto &f = current->fields[i];
@@ -285,8 +322,8 @@ struct PreviewPanel::Impl {
             for (const auto &f : current->tracking->tools) {
                 trackingTable->insertRow(row);
                 trackingTable->setRowHeight(row, 20);
-                bool valid = f.status == aurora::HandleStatus::Valid,
-                     port = f.status != aurora::HandleStatus::Disabled;
+                bool valid = f.status == aurora::HandleStatus::Valid;
+                bool port = f.status != aurora::HandleStatus::Disabled;
                 QStringList values{QString::number(f.handle),
                                    valid  ? (f.transformUsable() ? "有效" : "端口状态不可用")
                                    : port ? "Missing"
@@ -319,7 +356,7 @@ struct PreviewPanel::Impl {
         const auto missing = desc.value("missing").toInteger();
         const auto disabled = desc.value("disabled").toInteger();
         if (bxCloud) {
-            const auto source =
+            const auto sourceKind =
                 desc.value("source").toString() == "network" ? "网络接收" : "本地文件";
             QString bounds;
             const auto box = desc.value("bounds").toArray();
@@ -333,7 +370,7 @@ struct PreviewPanel::Impl {
                              .arg(box[5].toDouble(), 0, 'g', 7);
             info->setText(QString("%1 · %2 · BX 点云\n%3 帧 · %4 有效位置 · %5 Missing · "
                                   "%6 Disabled · %7 点 · 单位 mm")
-                              .arg(QFileInfo(current->path).fileName(), source)
+                              .arg(QFileInfo(current->path).fileName(), sourceKind)
                               .arg(frames)
                               .arg(valid)
                               .arg(missing)
@@ -344,7 +381,7 @@ struct PreviewPanel::Impl {
             detailText = current->path + "\n" + info->text() + "\n" + fields.join('\n');
             detailText += QString("\n来源：%1 · 帧 %2 · 有效位置 %3 · Missing %4 · Disabled %5 · "
                                   "点云记录 %6")
-                              .arg(source)
+                              .arg(sourceKind)
                               .arg(frames)
                               .arg(valid)
                               .arg(missing)
@@ -362,23 +399,21 @@ struct PreviewPanel::Impl {
                 QStringLiteral(" · 仅点云预览，不导出模型"));
             save->setToolTip("将已解码的 BX 点云写入过程档案；不导出模型文件");
         } else {
-            info->setText(QString("%1 · %2 · %3\n%4 点 · %5 单元 · %6 属性 · 单位 %7 · 坐标系 %8")
-                              .arg(QFileInfo(current->path).fileName(), origin,
-                                   desc["kind"].toString())
-                              .arg(points)
-                              .arg(cells)
-                              .arg(attrs)
-                              .arg(known(desc["units"].toString()),
-                                   known(desc["frame"].toString())));
+            info->setText(
+                QString("%1 · %2 · %3\n%4 点 · %5 单元 · %6 属性 · 单位 %7 · 坐标系 %8")
+                    .arg(QFileInfo(current->path).fileName(), origin, desc["kind"].toString())
+                    .arg(points)
+                    .arg(cells)
+                    .arg(attrs)
+                    .arg(known(desc["units"].toString()), known(desc["frame"].toString())));
             detailText = current->path + "\n" + info->text() + "\n" + fields.join('\n');
             if (current->tracking)
                 detailText +=
                     "\n系统状态 0x" + QString::number(current->tracking->systemStatus, 16);
             state->setText(
                 QString("已读取 · %1 分块").arg(current->pieces()) +
-                (display.hiddenPoints
-                     ? QString(" · 隐藏 %1 个非有限坐标").arg(display.hiddenPoints)
-                     : QString()) +
+                (display.hiddenPoints ? QString(" · 隐藏 %1 个非有限坐标").arg(display.hiddenPoints)
+                                      : QString()) +
                 (display.invalidPoses
                      ? QString(" · %1 个四元数无法显示姿态").arg(display.invalidPoses)
                      : QString()) +
@@ -399,6 +434,7 @@ struct PreviewPanel::Impl {
         scene->select(-1, mode->currentIndex());
     }
 };
+
 PreviewPanel::PreviewPanel(QWidget *parent) : QWidget(parent), p(std::make_unique<Impl>(this)) {
     setObjectName("localModelPanel");
     setMinimumWidth(340);
@@ -409,11 +445,13 @@ PreviewPanel::PreviewPanel(QWidget *parent) : QWidget(parent), p(std::make_uniqu
     tools->setSpacing(8);
     auto open = new QToolButton;
     open->setObjectName("modelOpen");
-    open->setText("打开 ▾");
+    open->setText("打开文件 ▾");
     open->setPopupMode(QToolButton::InstantPopup);
     open->setToolButtonStyle(Qt::ToolButtonTextOnly);
     open->setCursor(Qt::PointingHandCursor);
-    open->setMinimumSize(106, 34);
+    open->setMinimumSize(120, 36);
+    open->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    open->setAccessibleName("打开模型或过程档案");
     open->setToolTip("打开 PLY / VTP / legacy VTK、Aurora BX 帧序列或 HDF5 过程档案");
     auto menu = new QMenu(open);
     open->setMenu(menu);
@@ -432,17 +470,16 @@ PreviewPanel::PreviewPanel(QWidget *parent) : QWidget(parent), p(std::make_uniqu
     menu->addAction("卸载当前文件", this, &PreviewPanel::unload);
     p->save = new QPushButton("转换 / 另存为");
     p->save->setObjectName("modelConvert");
-    p->save->setMinimumHeight(34);
+    p->save->setMinimumHeight(36);
     p->save->setToolTip("严格转换并回读校验，同时写入 HDF5 过程档案");
     tools->addWidget(p->save);
     p->cancelButton = new QPushButton("取消");
     p->cancelButton->setObjectName("ghost");
     p->cancelButton->setMinimumHeight(34);
-    tools->addWidget(p->cancelButton);
     tools->addStretch();
     auto reset = new QPushButton("重置视图");
     reset->setObjectName("subtle");
-    reset->setMinimumHeight(34);
+    reset->setMinimumHeight(36);
     tools->addWidget(reset);
     layout->addLayout(tools);
     auto view = new QHBoxLayout;
@@ -457,7 +494,7 @@ PreviewPanel::PreviewPanel(QWidget *parent) : QWidget(parent), p(std::make_uniqu
     p->attribute->setMinimumHeight(32);
     view->addWidget(p->mode);
     view->addWidget(p->attribute, 1);
-    auto* sizeLabel = new QLabel("点大小");
+    auto *sizeLabel = new QLabel("点大小");
     sizeLabel->setObjectName("muted");
     view->addWidget(sizeLabel);
     p->pointSize = new QSpinBox;
@@ -499,9 +536,14 @@ PreviewPanel::PreviewPanel(QWidget *parent) : QWidget(parent), p(std::make_uniqu
     p->state = new QLabel("选择模型、Aurora BX 或过程档案");
     p->state->setObjectName("modelStatus");
     p->state->setWordWrap(true);
-    p->state->setMaximumHeight(34);
     p->state->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    layout->addWidget(p->state);
+    // Keep file actions together and cancellation beside task status. This
+    // avoids forcing the narrow preview pane wider just to fit four buttons.
+    auto *statusRow = new QHBoxLayout;
+    statusRow->setSpacing(8);
+    statusRow->addWidget(p->state, 1);
+    statusRow->addWidget(p->cancelButton);
+    layout->addLayout(statusRow);
     p->progress = new QProgressBar;
     p->progress->setTextVisible(false);
     p->progress->setFixedHeight(8);
@@ -564,14 +606,19 @@ PreviewPanel::PreviewPanel(QWidget *parent) : QWidget(parent), p(std::make_uniqu
         connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
         dialog.exec();
     });
-    p->worker = std::thread([this] { p->loop(); });
+    p->worker = std::thread([this] {
+        p->loop();
+    });
 }
+
 void PreviewPanel::openFile(const QString &path, const QString &type) {
     p->queue(path, type);
 }
+
 void PreviewPanel::showBxObject(const QByteArray &bytes, const QString &sourceLabel) {
     p->queueObject(bytes, sourceLabel);
 }
+
 void PreviewPanel::saveFile(const QString &path, const QString &dir) {
     if (!p->current)
         return;
@@ -585,6 +632,7 @@ void PreviewPanel::saveFile(const QString &path, const QString &dir) {
     p->state->setText(assessment.allowed() ? "能力检查通过 · 正在转换"
                                            : "能力检查拒绝 · 正在归档原因");
 }
+
 void PreviewPanel::cancel() {
     if (p->active) {
         std::lock_guard<std::mutex> lock(p->mutex);
@@ -596,6 +644,7 @@ void PreviewPanel::cancel() {
         p->state->setText("正在取消文件任务…");
     }
 }
+
 void PreviewPanel::unload() {
     ++p->generation;
     p->current.reset();
@@ -609,12 +658,15 @@ void PreviewPanel::unload() {
     p->detailText.clear();
     p->setBusy(false);
 }
+
 bool PreviewPanel::busy() const {
     return p->active;
 }
+
 double PreviewPanel::cameraDistance() const {
     return p->scene->cameraDistance();
 }
+
 void PreviewPanel::stop() {
     {
         std::lock_guard<std::mutex> lock(p->mutex);
@@ -624,6 +676,7 @@ void PreviewPanel::stop() {
     if (p->worker.joinable())
         p->worker.join();
 }
+
 PreviewPanel::~PreviewPanel() {
     stop();
 }

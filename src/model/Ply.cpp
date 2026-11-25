@@ -10,25 +10,32 @@ namespace rt::model {
 namespace {
 struct Property {
     QString name;
-    Type type = Type::U8, count = Type::U8;
+    Type type = Type::U8;
+    Type count = Type::U8;
     bool list = false;
-    int id = -1, component = 0;
+    int id = -1;
+    int component = 0;
 };
+
 struct Element {
     QString name;
     qint64 rows = 0;
     std::vector<Property> properties;
 };
+
 struct Layout {
     QByteArray raw;
     QString encoding;
     std::vector<Element> elements;
     QJsonObject extension;
     QStringList textures;
-    QString units, frame;
+    QString units;
+    QString frame;
 };
+
 const QStringList plyNames{"char", "uchar", "short",  "ushort", "int",
                            "uint", "int64", "uint64", "float",  "double"};
+
 Type plyType(QString name) {
     const auto index = plyNames.indexOf(name);
     if (index >= 0)
@@ -36,12 +43,14 @@ Type plyType(QString name) {
     return typeOf(name.startsWith("uint") ? "U" + name.sliced(1, 1).toUpper() + name.sliced(2)
                                           : name.left(1).toUpper() + name.sliced(1));
 }
+
 Layout header(Cursor &c) {
     Layout l;
     auto start = c.p;
     if (c.line() != "ply")
         fail("PLY 标识错误");
-    QSet<QString> elements, properties;
+    QSet<QString> elements;
+    QSet<QString> properties;
     while (c.p < c.end) {
         auto row = c.line();
         auto words = row.simplified().split(' ');
@@ -109,6 +118,7 @@ Layout header(Cursor &c) {
     }
     fail("PLY 缺少 end_header");
 }
+
 int newField(Dataset &d, const QString &section, const QString &name, const QString &role,
              Type type, int components, bool list) {
     Field f;
@@ -121,12 +131,14 @@ int newField(Dataset &d, const QString &section, const QString &name, const QStr
     d.fields.push_back(std::move(f));
     return int(d.fields.size()) - 1;
 }
+
 void group(Element &e, Dataset &d, const QStringList &names, const QString &section,
            const QString &field, const QString &role) {
     std::vector<Property *> props;
     for (const auto &n : names) {
-        auto it = std::find_if(e.properties.begin(), e.properties.end(),
-                               [&](auto &p) { return p.name == n; });
+        auto it = std::find_if(e.properties.begin(), e.properties.end(), [&](auto &p) {
+            return p.name == n;
+        });
         if (it == e.properties.end() || it->list || it->id >= 0 ||
             (!props.empty() && it->type != props.front()->type))
             return;
@@ -139,6 +151,7 @@ void group(Element &e, Dataset &d, const QStringList &names, const QString &sect
         p->component = component++;
     }
 }
+
 QJsonArray bindings(const Layout &l) {
     QJsonArray result;
     for (const auto &e : l.elements) {
@@ -149,6 +162,7 @@ QJsonArray bindings(const Layout &l) {
     }
     return result;
 }
+
 void bind(Layout &l, Dataset &d) {
     const bool mapped = !l.extension.isEmpty();
     if (mapped) {
@@ -206,8 +220,10 @@ void bind(Layout &l, Dataset &d) {
             // interleaves them.
             QJsonArray coordinateIds;
             for (const QString &name : QStringList{"x", "y", "z"}) {
-                auto it = std::find_if(e.properties.begin(), e.properties.end(),
-                                       [&](const auto &p) { return !p.list && p.name == name; });
+                auto it =
+                    std::find_if(e.properties.begin(), e.properties.end(), [&](const auto &p) {
+                        return !p.list && p.name == name;
+                    });
                 if (it == e.properties.end())
                     continue;
                 it->id =
@@ -281,6 +297,7 @@ void bind(Layout &l, Dataset &d) {
             if (!seen.count({int(i), k}))
                 fail("PLY 缺少映射的物理属性 " + d.fields[i].name);
 }
+
 void readValue(Cursor &c, Type type, char *dest, bool ascii, bool big) {
     if (ascii)
         scalarText(type, c.token(), dest);
@@ -289,6 +306,7 @@ void readValue(Cursor &c, Type type, char *dest, bool ascii, bool big) {
         endianCopy(dest, c.take(w), w, big);
     }
 }
+
 QStringList standardProperties(const Field &f) {
     if (f.section == "Points")
         return {"x", "y", "z"};
@@ -304,6 +322,7 @@ QStringList standardProperties(const Field &f) {
         return {"u", "v"};
     return {};
 }
+
 Layout outputLayout(const Dataset &d) {
     if (d.descriptor.contains("plyHeader")) {
         auto bytes = QByteArray::fromBase64(d.descriptor["plyHeader"].toString().toLatin1());
@@ -410,13 +429,15 @@ Layout outputLayout(const Dataset &d) {
     return l;
 }
 } // namespace
+
 Dataset readPly(const QByteArray &bytes, const Task &t) {
     Cursor c(bytes);
     auto l = header(c);
     Dataset d;
     bind(l, d);
     qint64 allocated = 0;
-    const bool ascii = l.encoding == "ascii", big = l.encoding == "binary_big_endian";
+    const bool ascii = l.encoding == "ascii";
+    const bool big = l.encoding == "binary_big_endian";
     for (auto &e : l.elements) {
         qint64 rowMinimum = 0;
         for (const auto &p : e.properties)
@@ -503,10 +524,12 @@ Dataset readPly(const QByteArray &bytes, const Task &t) {
     }
     return d;
 }
+
 void writePly(QIODevice &out, const Dataset &d, const Task &t) {
     auto l = outputLayout(d);
     writeAll(out, l.raw);
-    const bool ascii = l.encoding == "ascii", big = l.encoding == "binary_big_endian";
+    const bool ascii = l.encoding == "ascii";
+    const bool big = l.encoding == "binary_big_endian";
     QByteArray buffer;
     buffer.reserve(1 << 20);
     auto put = [&](Type type, const char *value) {
@@ -530,7 +553,8 @@ void writePly(QIODevice &out, const Dataset &d, const Task &t) {
                         f.data.constData() + (row * f.components + p.component) * width(f.type));
                     continue;
                 }
-                auto start = row ? f.ends.at(row - 1) : 0, end = f.ends.at(row);
+                auto start = row ? f.ends.at(row - 1) : 0;
+                auto end = f.ends.at(row);
                 char value[8];
                 storeIndex(p.count, end - start, value);
                 put(p.count, value);

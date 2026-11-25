@@ -23,11 +23,13 @@
 #include <vtkXMLPolyDataWriter.h>
 
 using namespace rt::model;
+
 namespace {
 void require(bool valid, const QString &why) {
     if (!valid)
         fail(why);
 }
+
 template <class F> void rejects(F fn, QString reason = {}) {
     try {
         fn();
@@ -37,12 +39,14 @@ template <class F> void rejects(F fn, QString reason = {}) {
     }
     fail("预期拒绝，但已通过 " + reason);
 }
+
 const Field &named(const Dataset &d, QString sec, QString name) {
     for (const auto &f : d.fields)
         if (f.section == sec && f.name == name)
             return f;
     fail("missing field " + sec + "/" + name);
 }
+
 template <class T> T at(const Field &f, int i) {
     T v;
     require((i + 1) * sizeof(T) <= size_t(f.data.size()), "index");
@@ -50,11 +54,13 @@ template <class T> T at(const Field &f, int i) {
     return v;
 }
 } // namespace
+
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     QDir fixtures(app.arguments().at(1));
     QTemporaryDir temp;
-    int failures = 0, passed = 0;
+    int failures = 0;
+    int passed = 0;
     auto test = [&](QString title, auto fn) {
         try {
             fn();
@@ -65,7 +71,9 @@ int main(int argc, char **argv) {
             ++failures;
         }
     };
-    auto read = [&](QString file) { return load(fixtures.filePath(file), {}); };
+    auto read = [&](QString file) {
+        return load(fixtures.filePath(file), {});
+    };
     auto round = [&](Snapshot data, QString format) {
         auto file =
             temp.filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) + "." + format);
@@ -220,7 +228,11 @@ int main(int argc, char **argv) {
         require(!assess(*d, "legacy VTK").allowed(), "legacy pieces");
         for (QString k :
              {"STRUCTURED_GRID", "STRUCTURED_POINTS", "RECTILINEAR_GRID", "UNSTRUCTURED_GRID"})
-            rejects([&] { read(k + ".vtk"); }, k);
+            rejects(
+                [&] {
+                    read(k + ".vtk");
+                },
+                k);
     });
     test("legacy all arrays and floating COLOR_SCALARS", [&] {
         auto d = read("colors.vtk");
@@ -318,10 +330,18 @@ int main(int argc, char **argv) {
             require(original.contains(prior), "original active Scalars");
             auto modified = original;
             modified.replace(prior, replacement);
-            rejects([&] { readVtp(modified, {}); }, "Scalars");
+            rejects(
+                [&] {
+                    readVtp(modified, {});
+                },
+                "Scalars");
             modified = original;
             modified.replace(prior, "");
-            rejects([&] { readVtp(modified, {}); }, "Scalars");
+            rejects(
+                [&] {
+                    readVtp(modified, {});
+                },
+                "Scalars");
         }
     });
     test("inconsistent recovered PLY row count refused before writing", [&] {
@@ -331,7 +351,11 @@ int main(int argc, char **argv) {
         d.descriptor["plyHeader"] = QString::fromLatin1(header.toBase64());
         QBuffer empty;
         require(empty.open(QIODevice::WriteOnly), "buffer");
-        rejects([&] { writePly(empty, d, {}); }, "文件头");
+        rejects(
+            [&] {
+                writePly(empty, d, {});
+            },
+            "文件头");
         require(empty.size() == 0, "unexpected partial PLY");
     });
     test("texture available and missing", [&] {
@@ -356,9 +380,9 @@ int main(int argc, char **argv) {
         sample.tools = {tool};
         sample.systemStatus = 0;
         const auto encoded = rt::aurora::encodeBx(sample);
-        const QByteArray golden = QByteArray::fromHex(
-            "C4A52D003043010A010000803F0000000000000000000000000000803F"
-            "000000400000404000000000310000000800000000000439");
+        const QByteArray golden =
+            QByteArray::fromHex("C4A52D003043010A010000803F0000000000000000000000000000803F"
+                                "000000400000404000000000310000000800000000000439");
         require(encoded.size() == 53 && golden.size() == 53 &&
                     QByteArray(reinterpret_cast<const char *>(encoded.data()), 53) == golden,
                 "fixed 53-byte sample");
@@ -376,22 +400,31 @@ int main(int argc, char **argv) {
         rt::aurora::Reply last;
         rt::aurora::scanBxSequence(
             sequence.data(), sequence.size(),
-            [&](const rt::aurora::BxPosition &p) { positions.push_back(p); }, stats, &last);
+            [&](const rt::aurora::BxPosition &p) {
+                positions.push_back(p);
+            },
+            stats, &last);
         require(stats.frames == 2 && stats.valid == 2 && stats.missing == 0 &&
                     stats.disabled == 0 && positions.size() == 2 && last.tools[0].frameNumber == 8,
                 "concatenated sequence");
-        rejects([&] {
-            rt::aurora::BxScanStats s;
-            rt::aurora::scanBxSequence(encoded.data(), encoded.size() - 1,
-                                       std::function<void(const rt::aurora::BxPosition &)>(), s);
-        }, "offset");
+        rejects(
+            [&] {
+                rt::aurora::BxScanStats s;
+                rt::aurora::scanBxSequence(encoded.data(), encoded.size() - 1,
+                                           std::function<void(const rt::aurora::BxPosition &)>(),
+                                           s);
+            },
+            "offset");
         auto bad = encoded;
         bad[10] ^= 1;
-        rejects([&] {
-            rt::aurora::BxScanStats s;
-            rt::aurora::scanBxSequence(bad.data(), bad.size(),
-                                       std::function<void(const rt::aurora::BxPosition &)>(), s);
-        }, "CRC");
+        rejects(
+            [&] {
+                rt::aurora::BxScanStats s;
+                rt::aurora::scanBxSequence(bad.data(), bad.size(),
+                                           std::function<void(const rt::aurora::BxPosition &)>(),
+                                           s);
+            },
+            "CRC");
     });
     test("model to BX keeps every vertex, duplicate and unreferenced point", [&] {
         auto surface = read("surface.ply");
@@ -435,13 +468,60 @@ int main(int argc, char **argv) {
         const auto bulk = read("compressed-cloud.ply");
         const auto bulkFile = temp.filePath("bulk.bx");
         const auto bulkResult = convert(bulk, bulkFile, temp.path(), {});
-        require(bulkResult.status == "success" &&
-                    QFileInfo(bulkFile).size() == 512 * 53,
+        require(bulkResult.status == "success" && QFileInfo(bulkFile).size() == 512 * 53,
                 "512 vertices produce 512 frames");
         const auto bulkCloud = load(bulkFile, {});
         require(bulkCloud->points(0) == 512 && bulkCloud->descriptor["frames"] == 512 &&
                     bulkCloud->descriptor["validPositions"] == 512,
                 "all 512 positions");
+    });
+    test("BX unit conversion matches whole units instead of substrings", [&] {
+        auto d = *read("surface.ply");
+        struct Case {
+            const char *units;
+            double scale;
+            bool assumed;
+        };
+        for (const auto &c :
+             {Case{"metres", 1000, false}, Case{" MILLIMETERS ", 1, false}, Case{"厘米", 10, false},
+              Case{"µm", 0.001, false}, Case{"μm", 0.001, false}, Case{"foot", 304.8, false},
+              Case{"nanometres", 1, true}, Case{"纳米", 1, true}, Case{"parameter", 1, true}}) {
+            d.descriptor["units"] = QString::fromUtf8(c.units);
+            QBuffer buffer;
+            require(buffer.open(QIODevice::ReadWrite), "buffer");
+            BxWriteStats stats;
+            writeBx(buffer, d, {}, &stats);
+            require(stats.scaleToMm == c.scale && stats.assumedUnits == c.assumed,
+                    "unit scale/assumption: " + QString::fromUtf8(c.units));
+            auto back = readBx(buffer.data(), {});
+            require(at<float>(named(back, "Points", ""), 3) == float(c.scale),
+                    "converted position: " + QString::fromUtf8(c.units));
+        }
+    });
+    test("BX streams without valid positions remain cancellable", [&] {
+        for (auto status :
+             {rt::aurora::HandleStatus::Missing, rt::aurora::HandleStatus::Disabled}) {
+            rt::aurora::Reply reply;
+            rt::aurora::Tool tool;
+            tool.handle = 1;
+            tool.status = status;
+            reply.tools.push_back(tool);
+            const auto frame = rt::aurora::encodeBx(reply);
+            const auto bytes =
+                QByteArray(reinterpret_cast<const char *>(frame.data()), frame.size())
+                    .repeated(2049);
+            int checkpoints = 0;
+            bool cancelled = false;
+            try {
+                readBx(bytes, {[&] {
+                                   return ++checkpoints == 2;
+                               },
+                               {}});
+            } catch (const Cancelled &) {
+                cancelled = true;
+            }
+            require(cancelled && checkpoints == 2, "missing/disabled scan did not cancel");
+        }
     });
     test("BX point cloud keeps all valid samples and status counts", [&] {
         auto d = read("tools.bx");
@@ -460,7 +540,9 @@ int main(int argc, char **argv) {
         require(repeated->points(0) == 6 && repeated->descriptor["frames"] == 2,
                 "repeated handle and coordinates kept");
         for (QString bad : {"crc", "length", "tail", "nonfinite"})
-            rejects([&] { read(bad + ".bx"); });
+            rejects([&] {
+                read(bad + ".bx");
+            });
         rt::aurora::Reply emptyReply;
         rt::aurora::Tool missing;
         missing.handle = 1;
@@ -486,7 +568,9 @@ int main(int argc, char **argv) {
             r.tools = {t};
             return rt::aurora::encodeBx(r);
         };
-        auto a = frame(0xfffffff8u, 1), b = frame(0u, 2), c = frame(8u, 3);
+        auto a = frame(0xfffffff8u, 1);
+        auto b = frame(0u, 2);
+        auto c = frame(8u, 3);
         rt::Bytes wrap = a;
         wrap.insert(wrap.end(), b.begin(), b.end());
         wrap.insert(wrap.end(), c.begin(), c.end());
@@ -518,11 +602,13 @@ int main(int argc, char **argv) {
             return d;
         };
         auto writeRejected = [&](const Dataset &d, const QString &why) {
-            rejects([&] {
-                QBuffer buffer;
-                require(buffer.open(QIODevice::WriteOnly), "buffer");
-                writeBx(buffer, d, {});
-            }, why);
+            rejects(
+                [&] {
+                    QBuffer buffer;
+                    require(buffer.open(QIODevice::WriteOnly), "buffer");
+                    writeBx(buffer, d, {});
+                },
+                why);
         };
         writeRejected(make(std::nan(""), 0, 0), "第 0 个点");
         writeRejected(make(1e300, 0, 0), "Float32");
@@ -531,17 +617,27 @@ int main(int argc, char **argv) {
         writeRejected(empty, "没有可用点");
     });
     test("bounds, cancellation, collisions and partial publication", [&] {
-        rejects([&] { read("bad-index.ply"); }, "索引");
-        rejects([&] { read("bad-length.ply"); });
+        rejects(
+            [&] {
+                read("bad-index.ply");
+            },
+            "索引");
+        rejects([&] {
+            read("bad-length.ply");
+        });
         auto d = read("surface.ply");
         auto same = convert(d, d->path, temp.path(), {});
         require(same.status == "failed" && same.output.isEmpty() && !same.archive.isEmpty(),
                 "no overwrite");
         auto dest = temp.filePath("cancel.vtp");
         bool cancel = false;
-        auto r =
-            convert(d, dest, temp.path(),
-                    {[&] { return cancel; }, [&](int n, const QString &) { cancel = n >= 48; }});
+        auto r = convert(d, dest, temp.path(),
+                         {[&] {
+                              return cancel;
+                          },
+                          [&](int n, const QString &) {
+                              cancel = n >= 48;
+                          }});
         require(r.status == "cancelled" && !r.archive.isEmpty() && !QFileInfo::exists(dest),
                 "cancel");
         auto blocked = convert(d, temp.filePath("unpublished.vtp"), d->path, {});
@@ -563,7 +659,11 @@ int main(int argc, char **argv) {
         auto h = H5Fcreate(file.toUtf8(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
         require(h >= 0, "create foreign archive");
         H5Fclose(h);
-        rejects([&] { load(file, {}); }, "SimTransferRT");
+        rejects(
+            [&] {
+                load(file, {});
+            },
+            "SimTransferRT");
         auto own = round(read("cloud.ply"), "h5");
         h = H5Fopen(own.toUtf8(), H5F_ACC_RDWR, H5P_DEFAULT);
         auto ds = H5Dopen2(h, "/SimTransferRT/schema", H5P_DEFAULT);
@@ -577,14 +677,21 @@ int main(int argc, char **argv) {
         H5Sclose(dims);
         H5Dclose(ds);
         H5Fclose(h);
-        rejects([&] { load(own, {}); }, "version");
+        rejects(
+            [&] {
+                load(own, {});
+            },
+            "version");
     });
     test("HDF5 typed chunks, reversible filters and field integrity", [&] {
         auto path = round(read("compressed-cloud.ply"), "h5");
         auto h = H5Fopen(path.toUtf8(), H5F_ACC_RDWR, H5P_DEFAULT);
         auto ds = H5Dopen2(h, "/SimTransferRT/arrays/a00000/values", H5P_DEFAULT);
-        auto type = H5Dget_type(ds), props = H5Dget_create_plist(ds), space = H5Dget_space(ds);
-        hsize_t shape[2]{}, chunk[2]{};
+        auto type = H5Dget_type(ds);
+        auto props = H5Dget_create_plist(ds);
+        auto space = H5Dget_space(ds);
+        hsize_t shape[2]{};
+        hsize_t chunk[2]{};
         require(H5Tequal(type, H5T_IEEE_F32LE) > 0 &&
                     H5Sget_simple_extent_dims(space, shape, nullptr) == 2 && shape[0] == 512 &&
                     shape[1] == 3,
@@ -603,7 +710,8 @@ int main(int argc, char **argv) {
                         H5Z_FILTER_DEFLATE &&
                     size == 1 && args[0] == 1,
                 "deflate level");
-        hsize_t start[2]{1, 0}, extent[2]{1, 1};
+        hsize_t start[2]{1, 0};
+        hsize_t extent[2]{1, 1};
         auto scalar = H5Screate_simple(2, extent, nullptr);
         float replacement = 900;
         require(H5Sselect_hyperslab(space, H5S_SELECT_SET, start, nullptr, extent, nullptr) >= 0 &&
@@ -615,7 +723,11 @@ int main(int argc, char **argv) {
         H5Tclose(type);
         H5Dclose(ds);
         H5Fclose(h);
-        rejects([&] { load(path, {}); }, "字段校验失败");
+        rejects(
+            [&] {
+                load(path, {});
+            },
+            "字段校验失败");
     });
     std::cout << "passed=" << passed << " failed=" << failures << std::endl;
     return failures ? 1 : 0;

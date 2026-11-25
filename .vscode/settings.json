@@ -2,7 +2,18 @@
   "cmake.useCMakePresets": "always",
   "cmake.configureOnOpen": false,
   "cmake.buildBeforeRun": false,
+
   "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.errorSquiggles": "disabled",
+
+  "clangd.arguments": [
+    "--background-index",
+    "--compile-commands-dir=${workspaceFolder}/build/clangd-index"
+  ],
+
   "editor.inlineSuggest.showToolbar": "never",
-  "files.associations": {"*.h": "cpp"}
+  "files.associations": {
+    "*.h": "cpp"
+  }
 }

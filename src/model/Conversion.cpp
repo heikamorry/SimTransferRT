@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <set>
 #include <tuple>
 #include <vector>
@@ -42,35 +43,42 @@ struct UnitScale {
     QString text;
 };
 
-UnitScale unitScale(const QString &units) {
-    const QString raw = units.trimmed();
-    const QString u = raw.toLower();
+std::optional<double> knownUnitScale(const QString &units) {
+    const QString u = units.trimmed().toLower();
     auto matches = [&](std::initializer_list<const char *> keys) {
         for (auto key : keys)
             if (u == QString::fromUtf8(key))
                 return true;
         return false;
     };
-    if (u.isEmpty())
-        return {1, true, raw};
     // Match complete unit names: an unsupported prefix (e.g. nanometres) must
     // never silently become metres simply because it contains "metre".
     if (matches({"mm", "millimetre", "millimetres", "millimeter", "millimeters", "毫米"}))
-        return {1, false, raw};
+        return 1;
     if (matches({"cm", "centimetre", "centimetres", "centimeter", "centimeters", "厘米"}))
-        return {10, false, raw};
+        return 10;
     if (matches(
             {"um", "µm", "μm", "micrometre", "micrometres", "micrometer", "micrometers", "微米"}))
-        return {0.001, false, raw};
+        return 0.001;
     if (matches({"km", "kilometre", "kilometres", "kilometer", "kilometers", "千米", "公里"}))
-        return {1e6, false, raw};
+        return 1e6;
     if (matches({"m", "metre", "metres", "meter", "meters", "米"}))
-        return {1000, false, raw};
+        return 1000;
     if (matches({"in", "inch", "inches", "英寸"}))
-        return {25.4, false, raw};
+        return 25.4;
     if (matches({"ft", "feet", "foot", "英尺"}))
-        return {304.8, false, raw};
-    return {1, true, raw};
+        return 304.8;
+    return std::nullopt;
+}
+
+UnitScale unitScale(const QString &units) {
+    const QString raw = units.trimmed();
+    const auto open = raw.indexOf('(');
+    const bool annotated = open >= 0 && raw.endsWith(')');
+    auto scale = knownUnitScale(annotated ? raw.first(open) : raw);
+    if (annotated && scale != knownUnitScale(raw.sliced(open + 1, raw.size() - open - 2)))
+        scale.reset();
+    return {scale.value_or(1), !scale.has_value(), raw};
 }
 
 struct PointReader {

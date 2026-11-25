@@ -24,7 +24,7 @@
 
 | 接收报告字段 | 解读 |
 |---|---|
-| `receiver.modules["2"].firstTailIdle`、`firstTailNewFrame` | 分别统计因 2 ms 无新片、同模块更新帧到达而首次发起尾部判定的次数 |
+| `receiver.modules["2"].firstTailIdle`、`firstTailNewFrame` | 每帧首次判定尾部时，按 2 ms 无新片或同模块更新帧到达计一次。此前已因中间缺片发过 NACK 的帧也计入，并沿用原定补发时间。 |
 | `fragment_outcomes.retry.accepted` | 补发先于其它副本填入空缺的分片数，包括最终过期的帧 |
 | `fragment_outcomes.retry.after_complete`、`original.after_expiry` | 在帧完成后到达的补发片和在帧过期后到达的原始片，两个值均在模块的 `fragment_outcomes` 下 |
 | `expired_frame_samples` | 每模块最先 8 个过期帧的编号、已收片数、总片数、请求轮次及过期原因 |

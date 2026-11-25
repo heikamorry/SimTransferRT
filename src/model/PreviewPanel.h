@@ -12,6 +12,8 @@ class PreviewPanel final : public QWidget {
     // Decodes a complete BX object received over UDP through the same path as a
     // local file. The bytes are copied, so the transport buffer may be reused.
     void showBxObject(const QByteArray &, const QString &sourceLabel);
+    void beginReceiveSession();
+    bool fileTaskActive() const;
     void saveFile(const QString &, const QString &archiveDirectory = {});
     void cancel();
     void unload();
@@ -19,6 +21,7 @@ class PreviewPanel final : public QWidget {
     bool busy() const;
     double cameraDistance() const;
   signals:
+    void localActionStarted();
     void fileTaskFinished(bool success);
     void bxObjectFinished(bool success, const QString &detail);
 

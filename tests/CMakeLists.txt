@@ -59,14 +59,15 @@ if(SIM_WITH_QT AND SIM_MODEL_PREVIEW)
         target_link_libraries(SimAppMemoryTests PRIVATE sim_model_ui sim_rt_asio Qt6::Test psapi)
         sim_stage_model_runtime(SimAppMemoryTests)
     endif()
-    add_test(NAME local_model_gui COMMAND SimModelGuiTests "${model_fixtures}")
-    set_tests_properties(local_model_gui PROPERTIES TIMEOUT 120)
+    add_test(NAME local_model_gui COMMAND SimModelGuiTests "${model_fixtures}" --local-only)
+    add_test(NAME rt_network_model_gui COMMAND SimModelGuiTests "${model_fixtures}" --network-only)
+    set_tests_properties(local_model_gui rt_network_model_gui PROPERTIES TIMEOUT 120)
     add_test(NAME gui_launch_options
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_gui_launch.py"
                 "$<TARGET_FILE:SimTransfer>" "${model_fixtures}/surface.ply")
     set_tests_properties(gui_launch_options PROPERTIES TIMEOUT 180)
     if(WIN32)
-        set_property(TEST local_model_gui rt_v2_ui rt_gui_smoke gui_launch_options APPEND PROPERTY ENVIRONMENT
+        set_property(TEST local_model_gui rt_network_model_gui rt_v2_ui rt_gui_smoke gui_launch_options APPEND PROPERTY ENVIRONMENT
             "QT_QPA_DISABLE_REDIRECT_STDERR=1")
         set_property(TEST gui_launch_options APPEND PROPERTY ENVIRONMENT "PATH=${_qt_test_path}")
     endif()

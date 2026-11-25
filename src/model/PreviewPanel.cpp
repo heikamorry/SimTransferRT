@@ -81,9 +81,13 @@ struct PreviewPanel::Impl {
     QTableWidget *trackingTable = nullptr;
     Snapshot current;
     QString detailText;
+    QString statusBeforeNetwork;
+    QString tooltipBeforeNetwork;
     QString lastArchive;
     QString lastOutput;
     bool active = false;
+    bool networkTask = false;
+    bool displayedNetwork = false;
     quint64 committing = 0;
     std::atomic<bool> quitting{false};
     std::atomic<quint64> generation{0};
@@ -95,8 +99,22 @@ struct PreviewPanel::Impl {
 
     explicit Impl(PreviewPanel *w) : panel(w) {}
 
-    void setBusy(bool on) {
+    void clearView() {
+        displayedNetwork = false;
+        current.reset();
+        scene->showData({}, {});
+        scene->render();
+        attribute->clear();
+        trackingTable->hide();
+        trackingTable->setRowCount(0);
+        info->setText("本地三维预览");
+        state->setToolTip({});
+        detailText.clear();
+    }
+
+    void setBusy(bool on, bool network = false) {
         active = on;
+        networkTask = on && network;
         save->setEnabled(bool(current) && !on);
         cancelButton->setEnabled(on);
         progress->setVisible(on);
@@ -120,6 +138,7 @@ struct PreviewPanel::Impl {
             pending.push_back(std::move(work));
         }
         setBusy(true);
+        emit panel->localActionStarted();
         progress->setValue(0);
         state->setText("正在处理…");
         ready.notify_one();
@@ -128,6 +147,10 @@ struct PreviewPanel::Impl {
     void queueObject(QByteArray bytes, QString label) {
         if (quitting || bytes.isEmpty())
             return;
+        if (!networkTask && current && !displayedNetwork) {
+            statusBeforeNetwork = state->text();
+            tooltipBeforeNetwork = state->toolTip();
+        }
         {
             std::lock_guard<std::mutex> lock(mutex);
             auto gen = ++generation;
@@ -141,7 +164,7 @@ struct PreviewPanel::Impl {
             work.object = true;
             pending.push_back(std::move(work));
         }
-        setBusy(true);
+        setBusy(true, true);
         progress->setValue(0);
         state->setText("正在解码网络 BX…");
         ready.notify_one();
@@ -239,7 +262,7 @@ struct PreviewPanel::Impl {
                             finishError("已取消", true);
                             return;
                         }
-                        present(std::move(source), display);
+                        present(std::move(source), display, true);
                         setBusy(false);
                         const auto &d = current->descriptor;
                         emit panel->bxObjectFinished(true,
@@ -287,7 +310,8 @@ struct PreviewPanel::Impl {
             emit panel->fileTaskFinished(false);
     }
 
-    void present(Snapshot source, const Display &display) {
+    void present(Snapshot source, const Display &display, bool network = false) {
+        displayedNetwork = network;
         current = std::move(source);
         attribute->blockSignals(true);
         attribute->clear();
@@ -619,6 +643,28 @@ void PreviewPanel::showBxObject(const QByteArray &bytes, const QString &sourceLa
     p->queueObject(bytes, sourceLabel);
 }
 
+void PreviewPanel::beginReceiveSession() {
+    if (fileTaskActive()) {
+        // A manual load or export keeps its generation, even when the old view was live.
+        if (p->displayedNetwork)
+            p->clearView();
+        return;
+    }
+    if (p->displayedNetwork) {
+        unload();
+    } else if (p->networkTask) {
+        // Discard both queued worker callbacks and work that is still decoding.
+        ++p->generation;
+        p->setBusy(false);
+        p->state->setText(p->current ? p->statusBeforeNetwork : QStringLiteral("等待本轮网络 BX"));
+        p->state->setToolTip(p->current ? p->tooltipBeforeNetwork : QString{});
+    }
+}
+
+bool PreviewPanel::fileTaskActive() const {
+    return p->active && !p->networkTask;
+}
+
 void PreviewPanel::saveFile(const QString &path, const QString &dir) {
     if (!p->current)
         return;
@@ -646,16 +692,10 @@ void PreviewPanel::cancel() {
 }
 
 void PreviewPanel::unload() {
+    emit localActionStarted();
     ++p->generation;
-    p->current.reset();
-    p->scene->showData({}, {});
-    p->scene->render();
-    p->attribute->clear();
-    p->trackingTable->hide();
-    p->trackingTable->setRowCount(0);
-    p->info->setText("本地三维预览");
+    p->clearView();
     p->state->setText("已卸载");
-    p->detailText.clear();
     p->setBusy(false);
 }
 

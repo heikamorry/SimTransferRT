@@ -179,13 +179,13 @@ std::optional<std::uint8_t> Receiver::ingest(const std::uint8_t *data, std::size
                         static_cast<std::uint32_t>(p.frameId - *module.highest) - 1;
                 module.highest = p.frameId;
                 for (auto &old : module.active)
-                    if (rt::newerId(p.frameId, old.frame.frameId)) {
+                    if (!old.tail && rt::newerId(p.frameId, old.frame.frameId)) {
                         old.tail = true;
+                        ++stats.firstTailNewFrame;
                         if (!old.discovered) {
                             old.discovered = true;
                             old.nextRequestUs = now;
                             ++stats.tailTriggers;
-                            ++stats.firstTailNewFrame;
                             observed = p.moduleId;
                         }
                     }
@@ -264,10 +264,10 @@ std::vector<rt::Datagram> Receiver::pollRequests(std::uint64_t now,
             } else if (now >= a.lastUs + 2000 && !a.tail) {
                 a.tail = true;
                 ++stats.tailTriggers;
+                ++stats.firstTailIdle;
                 if (!a.discovered) {
                     a.discovered = true;
                     a.nextRequestUs = a.lastUs + 2000;
-                    ++stats.firstTailIdle;
                 }
             }
             if (!a.discovered || now < a.nextRequestUs) {

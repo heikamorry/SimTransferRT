@@ -189,6 +189,44 @@ void testFragmentOutcomes() {
           "expired frame detail retains missing fragment count, rounds and cause");
 }
 
+void testTailCauseAfterInteriorGap(bool newerFrameFirst) {
+    std::uint64_t now = 100;
+    Receiver receiver(false, [&] {
+        return now;
+    });
+    auto read = [&](const Frame &frame, std::uint16_t index) {
+        const auto packet = encodeData(frame, index);
+        return receiver.receiveAndPollObserved(packet.bytes.data(), packet.size, now);
+    };
+    const auto frame = make(EpModule, 1, 3 * rt::PayloadStep + 1);
+    check(read(frame, 0).empty(), "first fragment starts the assembly");
+    now = 101;
+    const auto gap = read(frame, 2);
+    check(gap.size() == 1 && unpack(gap.front()).indices == std::vector<std::uint16_t>{1},
+          "interior gap immediately requests only the known missing fragment");
+    if (newerFrameFirst) {
+        now = 102;
+        check(read(make(EpModule, 2, 1), 0).empty(), "newer frame preserves the pending retry");
+    }
+    now = 2100;
+    check(receiver.poll(now).empty() && receiver.snapshot(now).modules[1].firstTailIdle == 0,
+          "idle tail determination waits two milliseconds after the last original");
+    now = 2101;
+    check(receiver.poll(now).empty(), "idle tail determination preserves the pending retry");
+    now = 2102;
+    check(read(make(EpModule, 3, 1), 0).empty(), "another frame cannot restart the retry timer");
+    const auto stats = receiver.snapshot(now).modules[1];
+    check(stats.firstTailIdle == (newerFrameFirst ? 0u : 1u) &&
+              stats.firstTailNewFrame == (newerFrameFirst ? 1u : 0u),
+          "exactly one tail cause is recorded even after an earlier interior gap");
+    now = 10100;
+    check(receiver.poll(now).empty(), "no retry before the ten-millisecond deadline");
+    now = 10101;
+    const auto retry = receiver.poll(now);
+    check(retry.size() == 1 && unpack(retry.front()).indices == std::vector<std::uint16_t>{1, 3},
+          "scheduled retry includes the interior gap and missing tail");
+}
+
 void testBoundedExpiryHistory() {
     Receiver receiver(false, [] {
         return 0u;
@@ -216,6 +254,8 @@ int main() {
         testQueuedOriginalTailAtThirdRoundExpiry();
         testRetryAcceptance();
         testFragmentOutcomes();
+        testTailCauseAfterInteriorGap(false);
+        testTailCauseAfterInteriorGap(true);
         testBoundedExpiryHistory();
         std::uint64_t now = 0;
         Receiver r(false, [&] {

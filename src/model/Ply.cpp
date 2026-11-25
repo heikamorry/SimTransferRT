@@ -78,9 +78,12 @@ Layout header(Cursor &c) {
             }
             if (note.startsWith("TextureFile ", Qt::CaseInsensitive))
                 l.textures.append(note.sliced(12).trimmed());
-            static const QRegularExpression units(R"(\bunits?\s*[:=]\s*([^.;]+))",
+            // A comma introduces another metadata field only if a key and ':' or '=' follow.
+            static const QString fieldValue =
+                QStringLiteral(R"(\s*[:=]\s*([^.;]+?)(?=[.;]|,\s*\w+\s*[:=]|$))");
+            static const QRegularExpression units(QStringLiteral(R"(\bunits?)") + fieldValue,
                                                   QRegularExpression::CaseInsensitiveOption);
-            static const QRegularExpression frame(R"(\bcoordinates?\s*[:=]\s*([^.;]+))",
+            static const QRegularExpression frame(QStringLiteral(R"(\bcoordinates?)") + fieldValue,
                                                   QRegularExpression::CaseInsensitiveOption);
             auto m = units.match(note);
             if (m.hasMatch())

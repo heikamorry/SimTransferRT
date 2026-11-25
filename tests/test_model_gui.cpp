@@ -1,6 +1,7 @@
 #include "model/Model.h"
 #include "model/PreviewPanel.h"
 #include "protocol/V2PacketCodec.h"
+#include "ui/BxPreviewQueue.h"
 #include "ui/V2Window.h"
 #include "asio_test_socket.h"
 #include <QApplication>
@@ -53,6 +54,43 @@ using namespace rt::model;
 void expect(bool ok, const QString &txt) {
     if (!ok)
         throw std::runtime_error(txt.toUtf8().constData());
+}
+
+void testPreviewQueue() {
+    rt::BxPreviewQueue queue;
+    auto offer = [&](std::uint64_t completed, std::uint32_t id) {
+        std::optional<rt::BxPreview> frame{rt::BxPreview{{}, completed, id}};
+        queue.offer(frame);
+    };
+    queue.begin();
+    offer(0, 1);
+    const auto first = queue.take(10, false, true);
+    expect(first && first->frameId == 1, "first preview");
+    offer(11, 2);
+    expect(!queue.take(12, false, true), "rate-limited preview");
+    queue.finish(false);
+    expect(!queue.take(13, false, true), "wait for in-flight receive before final preview");
+    offer(14, 3);
+    const auto final = queue.take(15, true, false);
+    expect(final && final->frameId == 3 && !queue.take(16, false, false),
+           "final latest BX bypasses preview rate limit and supersedes old network work");
+    queue.begin();
+    offer(17, 4);
+    queue.finish(false);
+    queue.localActionStarted();
+    offer(18, 5);
+    expect(!queue.take(19, false, false), "manual file work suppresses final BX");
+    queue.begin();
+    offer(20, 6);
+    queue.finish(true);
+    expect(!queue.take(21, false, false), "stopping protects an existing local file task");
+    queue.begin();
+    offer(22, 7);
+    queue.begin();
+    expect(!queue.take(23, false, true), "restart discards stale pending BX");
+    queue.close();
+    offer(24, 8);
+    expect(!queue.take(25, false, false), "closed view rejects late completions");
 }
 
 qint64 memory(bool peak) {
@@ -123,7 +161,10 @@ int main(int argc, char **argv) {
         QFile style(":/styles/light.qss");
         expect(style.open(QIODevice::ReadOnly), "application stylesheet is available");
         app.setStyleSheet(QString::fromUtf8(style.readAll()));
-        const auto args = app.arguments();
+        auto args = app.arguments();
+        const bool networkOnly = args.removeOne("--network-only");
+        const bool localOnly = args.removeOne("--local-only");
+        expect(!(networkOnly && localOnly), "select one model GUI test mode");
         QString fixturePath = args.value(1);
         if (fixturePath.isEmpty()) {
             QDir executableDir(app.applicationDirPath());
@@ -182,43 +223,9 @@ int main(int argc, char **argv) {
         auto saveShot = [&](QString name) {
             expect(w.grab().save(evidence.filePath(name)), "screenshot");
         };
+        testPreviewQueue();
         auto dark = viewport->grabFramebuffer();
         expect(!dark.isNull(), "OpenGL readback");
-        test::UdpSocket probe(0, 1);
-        const auto localPort = probe.localPort();
-        probe.close();
-        test::UdpSocket tx(0, localPort);
-        auto rx = w.findChild<QPushButton *>("v2Receive");
-        auto port = w.findChild<QSpinBox *>("v2ReceiverPort");
-        port->setValue(localPort);
-        QTest::mouseClick(rx, Qt::LeftButton);
-        until(
-            [&] {
-                return w.reportForExport()["receiver"].toObject()["receiver_port"].toInt() ==
-                       localPort;
-            },
-            5000);
-        rt::v2::Frame liveFrame;
-        liveFrame.bytes = rt::aurora::generateSample(2, 77);
-        auto sendLiveFrame = [&] {
-            ++liveFrame.frameId;
-            auto packet = rt::v2::encodeData(liveFrame, 0);
-            return tx.send(packet.bytes.data(), packet.size);
-        };
-        expect(sendLiveFrame(), "send BX test datagram");
-        QTimer liveTimer;
-        QObject::connect(&liveTimer, &QTimer::timeout, [&] {
-            sendLiveFrame();
-        });
-        liveTimer.setTimerType(Qt::PreciseTimer);
-        liveTimer.start(4);
-        auto liveToolsIntact = [&] {
-            return live->rowCount() == 2 && live->item(0, 0)->text() == "1" &&
-                   live->item(1, 0)->text() == "2" && live->item(0, 6)->text() == "77";
-        };
-        until(liveToolsIntact, 5000);
-        liveTimer.stop();
-        QTest::qWait(150);
         // A complete multi-frame BX object over V2 must use the same decoder.
         auto bxFrame = [](std::uint32_t id, float x) {
             rt::aurora::Reply reply;
@@ -241,37 +248,84 @@ int main(int argc, char **argv) {
         object.bytes = first;
         object.bytes.insert(object.bytes.end(), second.begin(), second.end());
         object.bytes.insert(object.bytes.end(), third.begin(), third.end());
-        object.frameId = liveFrame.frameId + 1;
-        auto objectPacket = rt::v2::encodeData(object, 0);
-        QSignalSpy bxObject(panel, &PreviewPanel::bxObjectFinished);
-        expect(tx.send(objectPacket.bytes.data(), objectPacket.size), "send BX object");
-        until(
-            [&] {
-                // The live table and the asynchronous BX preview refresh independently.
-                return !bxObject.isEmpty() &&
-                       info->text().contains(QString("NDI 帧 #%1").arg(object.frameId)) &&
-                       state->text().contains("3 点") && live->rowCount() == 1 &&
-                       live->item(0, 0) && live->item(0, 0)->text() == "10";
-            },
-            5000);
-        // Pause event delivery while the receiver continues. Preview work must
-        // coalesce before entering Qt's event queue, not only inside the panel.
-        auto *log = w.findChild<QPlainTextEdit *>();
-        expect(log, "run log");
-        const auto submissionsBefore = log->toPlainText().count("提交 BX 解码");
-        for (int i = 0; i < 24; ++i) {
-            ++object.frameId;
-            const auto packet = rt::v2::encodeData(object, 0);
-            expect(tx.send(packet.bytes.data(), packet.size), "send preview burst");
-            QThread::msleep(8);
+        if (!localOnly) {
+            test::UdpSocket probe(0, 1);
+            const auto localPort = probe.localPort();
+            probe.close();
+            test::UdpSocket tx(0, localPort);
+            auto rx = w.findChild<QPushButton *>("v2Receive");
+            auto port = w.findChild<QSpinBox *>("v2ReceiverPort");
+            port->setValue(localPort);
+            QTest::mouseClick(rx, Qt::LeftButton);
+            until(
+                [&] {
+                    return w.reportForExport()["receiver"].toObject()["receiver_port"].toInt() ==
+                           localPort;
+                },
+                5000);
+            rt::v2::Frame liveFrame;
+            liveFrame.bytes = rt::aurora::generateSample(2, 77);
+            auto sendLiveFrame = [&] {
+                ++liveFrame.frameId;
+                auto packet = rt::v2::encodeData(liveFrame, 0);
+                return tx.send(packet.bytes.data(), packet.size);
+            };
+            expect(sendLiveFrame(), "send BX test datagram");
+            QTimer liveTimer;
+            QObject::connect(&liveTimer, &QTimer::timeout, [&] {
+                sendLiveFrame();
+            });
+            liveTimer.setTimerType(Qt::PreciseTimer);
+            liveTimer.start(4);
+            auto liveToolsIntact = [&] {
+                return live->rowCount() == 2 && live->item(0, 0)->text() == "1" &&
+                       live->item(1, 0)->text() == "2" && live->item(0, 6)->text() == "77";
+            };
+            expect(
+                QTest::qWaitFor(liveToolsIntact, 5000),
+                "loopback BX did not reach the live NDI table (expected tools 1, 2 and frame 77)");
+            liveTimer.stop();
+            QTest::qWait(150);
+            object.frameId = liveFrame.frameId + 1;
+            auto objectPacket = rt::v2::encodeData(object, 0);
+            QSignalSpy bxObject(panel, &PreviewPanel::bxObjectFinished);
+            expect(tx.send(objectPacket.bytes.data(), objectPacket.size), "send BX object");
+            until(
+                [&] {
+                    // The live table and the asynchronous BX preview refresh independently.
+                    return !bxObject.isEmpty() &&
+                           info->text().contains(QString("NDI 帧 #%1").arg(object.frameId)) &&
+                           state->text().contains("3 点") && live->rowCount() == 1 &&
+                           live->item(0, 0) && live->item(0, 0)->text() == "10";
+                },
+                5000);
+            // Pause event delivery while the receiver continues. Preview work must
+            // coalesce before entering Qt's event queue, not only inside the panel.
+            auto *log = w.findChild<QPlainTextEdit *>();
+            expect(log, "run log");
+            const auto submissionsBefore = log->toPlainText().count("提交 BX 解码");
+            for (int i = 0; i < 24; ++i) {
+                ++object.frameId;
+                const auto packet = rt::v2::encodeData(object, 0);
+                expect(tx.send(packet.bytes.data(), packet.size), "send preview burst");
+                QThread::msleep(8);
+            }
+            QThread::msleep(60);
+            until([&] {
+                return info->text().contains(QString("NDI 帧 #%1").arg(object.frameId)) &&
+                       !panel->busy();
+            });
+            expect(log->toPlainText().count("提交 BX 解码") - submissionsBefore <= 2,
+                   "preview burst queued unbounded GUI work");
+            QTest::mouseClick(rx, Qt::LeftButton);
+            until([&] {
+                return port->isEnabled();
+            });
+            if (networkOnly) {
+                std::cout << "PASS network BX preview" << std::endl;
+                return 0;
+            }
         }
-        QThread::msleep(60);
-        until([&] {
-            return info->text().contains(QString("NDI 帧 #%1").arg(object.frameId)) &&
-                   !panel->busy();
-        });
-        expect(log->toPlainText().count("提交 BX 解码") - submissionsBefore <= 2,
-               "preview burst queued unbounded GUI work");
         QFile objectFile(tmp.filePath("network-object.bx"));
         expect(objectFile.open(QIODevice::WriteOnly) &&
                    objectFile.write(reinterpret_cast<const char *>(object.bytes.data()),
@@ -279,15 +333,19 @@ int main(int argc, char **argv) {
                        qsizetype(object.bytes.size()),
                "write received object");
         objectFile.close();
-        QTest::mouseClick(rx, Qt::LeftButton);
-        until([&] {
-            return port->isEnabled();
-        });
+        const QByteArray objectBytes(reinterpret_cast<const char *>(object.bytes.data()),
+                                     qsizetype(object.bytes.size()));
+        if (localOnly) {
+            QSignalSpy previewDone(panel, &PreviewPanel::bxObjectFinished);
+            panel->showBxObject(objectBytes, "offline-network-object");
+            until([&] {
+                return !previewDone.isEmpty();
+            });
+            expect(previewDone.front().front().toBool(), "present offline BX fixture");
+        }
         const auto beforeCancel = info->text();
         QSignalSpy cancelledObject(panel, &PreviewPanel::bxObjectFinished);
         QSignalSpy unrelatedFileTask(panel, &PreviewPanel::fileTaskFinished);
-        const QByteArray objectBytes(reinterpret_cast<const char *>(object.bytes.data()),
-                                     qsizetype(object.bytes.size()));
         panel->showBxObject(objectBytes, "cancelled-network-object");
         // Let decoding finish without dispatching its queued presentation.
         QThread::msleep(100);
@@ -306,14 +364,43 @@ int main(int argc, char **argv) {
         expect(!invalidObject[0][0].toBool() && unrelatedFileTask.isEmpty() &&
                    info->text() == beforeCancel,
                "failed network decoding changed the view or completed a file task");
-        open(files.filePath("tools.bx"));
+        // Old worker callbacks may already be in the Qt event queue at restart.
+        panel->showBxObject(objectBytes, "retired-network-object");
+        panel->beginReceiveSession();
+        expect(!panel->busy(), "restart invalidates an in-flight network preview");
+        QSignalSpy newSession(panel, &PreviewPanel::bxObjectFinished);
+        panel->showBxObject(objectBytes, "current-network-object");
+        until([&] {
+            return !newSession.isEmpty();
+        });
+        expect(newSession.size() == 1 && info->text().contains("current-network-object"),
+               "previous session presented after restart");
+        panel->beginReceiveSession();
+        expect(!info->text().contains("current-network-object"),
+               "clear last session's displayed BX");
+        QSignalSpy localOpen(panel, &PreviewPanel::fileTaskFinished);
+        panel->openFile(files.filePath("tools.bx"));
+        panel->beginReceiveSession();
+        until([&] {
+            return !localOpen.isEmpty();
+        });
+        expect(localOpen.front().front().toBool(), "restart preserved the active local file task");
+        const auto localInfo = info->text();
+        const auto localStatus = state->text();
+        const auto localTooltip = state->toolTip();
+        panel->showBxObject(objectBytes, "interrupted-network-object");
+        panel->beginReceiveSession();
+        expect(info->text() == localInfo && state->text() == localStatus &&
+                   state->toolTip() == localTooltip && !panel->busy(),
+               "restart preserved the local model and its task details");
         until(
             [&] {
                 return !panel->busy();
             },
             5000);
         auto table = panel->findChild<QTableWidget *>("localBxTools");
-        expect(!table->isVisible() && table->rowCount() == 0 && live->rowCount() == 1,
+        expect(!table->isVisible() && table->rowCount() == 0 &&
+                   live->rowCount() == (localOnly ? 0 : 1),
                "BX isolation");
         expect(info->text().contains("tools.bx") && info->text().contains("1 帧") &&
                    info->text().contains("3 有效位置") && state->text().contains("3 点") &&

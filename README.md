@@ -60,8 +60,10 @@ scripts\package.cmd
 
 ## 运行
 
+从工作区启动 Release 时，`run.cmd` 优先使用 `build.cmd Release` 的 `build\windows-release`。如果只配置过 `build-v2.cmd`，它会复用 `build\windows-v2-release`。脚本按当前源码增量构建 GUI，成功后打印并启动对应的 EXE。
+
 ```bat
-build\windows-release\SimTransfer.exe
+scripts\run.cmd Release
 build\windows-release\SimTransfer.exe --model D:\models\example.vtp
 build\windows-release\SimTransferCli.exe --protocol v2 --transport asio-async ^
   --target 127.0.0.1 --port 5650 --command-port 5500 --duration 30 --report tx.json

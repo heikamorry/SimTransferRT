@@ -28,7 +28,7 @@
       "args": [
         "/d",
         "/c",
-        "scripts\\build-v2.cmd Release"
+        "scripts\\build.cmd Release"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -46,7 +46,7 @@
         "windows-debug",
         "--no-tests=error",
         "-R",
-        "^rt_(v2_protocol|v2_receiver|v2_engine|v2_runner|asio_transport)$"
+        "^rt_(v2_protocol|v2_receiver|v2_receive_loop|v2_engine|v2_runner|asio_transport)$"
       ],
       "options": {
         "cwd": "${workspaceFolder}"

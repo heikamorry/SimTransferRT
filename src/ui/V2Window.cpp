@@ -1,6 +1,7 @@
 #include "ui/V2Window.h"
 #ifdef SIM_MODEL_PREVIEW
 #include "model/PreviewPanel.h"
+#include "ui/BxPreviewQueue.h"
 #endif
 #include "ui/MedicalBackdrop.h"
 #include "v2/Runner.h"
@@ -144,15 +145,6 @@ struct ReceiverUpdate {
     v2::ReceiveLoopStats loop;
     bool final = false;
 };
-
-#ifdef SIM_MODEL_PREVIEW
-struct PreviewUpdate {
-    QByteArray bytes;
-    std::uint64_t generation = 0;
-    std::uint64_t completedUs = 0;
-    std::uint32_t frameId = 0;
-};
-#endif
 
 using GuiReceiverSocket = AsioReceiverSocket;
 
@@ -384,8 +376,7 @@ struct V2Window::Impl {
     QString receiverError;
 #ifdef SIM_MODEL_PREVIEW
     model::PreviewPanel *preview = nullptr;
-    std::optional<PreviewUpdate> previewLatest; // Guarded by receiverMutex.
-    std::uint64_t nextPreviewUs = 0;            // GUI thread only.
+    BxPreviewQueue previewQueue;
 #endif
 };
 
@@ -622,6 +613,10 @@ QWidget *V2Window::createReceivePage() {
     models->addWidget(p_->toolsTable);
     p_->preview = new model::PreviewPanel(models);
     models->addWidget(p_->preview);
+    connect(p_->preview, &model::PreviewPanel::localActionStarted, this, [this] {
+        std::lock_guard<std::mutex> lock(p_->receiverMutex);
+        p_->previewQueue.localActionStarted();
+    });
     connect(p_->preview, &model::PreviewPanel::bxObjectFinished, this,
             [this](bool ok, const QString &detail) {
                 p_->log->appendPlainText(ok ? QStringLiteral("BX 解码完成，点云已显示：") + detail
@@ -775,6 +770,12 @@ void V2Window::initializeControls() {
 
 V2Window::~V2Window() {
     p_->receiverStop = true;
+#ifdef SIM_MODEL_PREVIEW
+    {
+        std::lock_guard<std::mutex> lock(p_->receiverMutex);
+        p_->previewQueue.close();
+    }
+#endif
     p_->session.stop();
     if (p_->receiverWorker.joinable())
         p_->receiverWorker.join();
@@ -1125,7 +1126,7 @@ void V2Window::refreshReceiver() {
     std::optional<ReceiverUpdate> latest;
     QString message;
 #ifdef SIM_MODEL_PREVIEW
-    std::optional<PreviewUpdate> preview;
+    std::optional<BxPreview> preview;
     const auto now = monotonicUs();
 #endif
     {
@@ -1133,12 +1134,8 @@ void V2Window::refreshReceiver() {
         latest.swap(p_->receiverLatest);
         message.swap(p_->receiverError);
 #ifdef SIM_MODEL_PREVIEW
-        // A single latest-value slot also bounds memory while the GUI is busy.
-        // Rendering is deliberately slower than live receive/consume accounting.
-        if (p_->receiverStop)
-            p_->previewLatest.reset();
-        else if (now >= p_->nextPreviewUs && p_->preview && !p_->preview->busy())
-            preview.swap(p_->previewLatest);
+        if (p_->preview)
+            preview = p_->previewQueue.take(now, p_->preview->busy(), p_->receiverRunning);
 #endif
     }
     if (latest && latest->generation == p_->receiverGeneration) {
@@ -1149,8 +1146,7 @@ void V2Window::refreshReceiver() {
     if (!message.isEmpty())
         p_->receiveState->setText(message);
 #ifdef SIM_MODEL_PREVIEW
-    if (preview && preview->generation == p_->receiverGeneration) {
-        p_->nextPreviewUs = now + 100000;
+    if (preview) {
         p_->log->appendPlainText(
             QStringLiteral("NDI 对象 #%1 传输完成（%2 字节，主机完成 %3 μs），提交 BX 解码。")
                 .arg(preview->frameId)
@@ -1355,6 +1351,10 @@ void V2Window::closeEvent(QCloseEvent *event) {
     p_->session.stop();
     p_->receiverStop = true;
 #ifdef SIM_MODEL_PREVIEW
+    {
+        std::lock_guard<std::mutex> lock(p_->receiverMutex);
+        p_->previewQueue.close();
+    }
     if (p_->preview)
         p_->preview->stop();
 #endif
@@ -1364,6 +1364,12 @@ void V2Window::closeEvent(QCloseEvent *event) {
 void V2Window::toggleReceiver() {
     if (p_->receiverRunning) {
         p_->receiverStop = true;
+#ifdef SIM_MODEL_PREVIEW
+        {
+            std::lock_guard<std::mutex> lock(p_->receiverMutex);
+            p_->previewQueue.finish(p_->preview->fileTaskActive());
+        }
+#endif
         p_->receive->setEnabled(false);
         p_->receiveState->setText(QStringLiteral("正在停止接收…"));
         return;
@@ -1404,10 +1410,12 @@ void V2Window::toggleReceiver() {
         p_->receiverLatest.reset();
         p_->receiverError.clear();
 #ifdef SIM_MODEL_PREVIEW
-        p_->previewLatest.reset();
-        p_->nextPreviewUs = 0;
+        p_->previewQueue.begin();
 #endif
     }
+#ifdef SIM_MODEL_PREVIEW
+    p_->preview->beginReceiveSession();
+#endif
     p_->receiverWorker = std::thread([this, bindAddress, port, generation] {
         try {
             GuiReceiverSocket socket(bindAddress, port);
@@ -1416,16 +1424,15 @@ void V2Window::toggleReceiver() {
             });
 #ifdef SIM_MODEL_PREVIEW
             if (p_->preview) {
-                receiver.setFrameConsumer([this, generation](const v2::Frame &frame,
-                                                             std::uint64_t completed) {
-                    if (frame.moduleId != 1 || p_->receiverStop)
+                receiver.setFrameConsumer([this](const v2::Frame &frame, std::uint64_t completed) {
+                    if (frame.moduleId != 1)
                         return;
-                    std::optional<PreviewUpdate> update{
-                        PreviewUpdate{QByteArray(reinterpret_cast<const char *>(frame.bytes.data()),
-                                                 qsizetype(frame.bytes.size())),
-                                      generation, completed, frame.frameId}};
+                    std::optional<BxPreview> update{
+                        BxPreview{QByteArray(reinterpret_cast<const char *>(frame.bytes.data()),
+                                             qsizetype(frame.bytes.size())),
+                                  completed, frame.frameId}};
                     std::lock_guard<std::mutex> lock(p_->receiverMutex);
-                    p_->previewLatest.swap(update);
+                    p_->previewQueue.offer(update);
                 });
             }
 #endif

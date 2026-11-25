@@ -475,6 +475,34 @@ int main(int argc, char **argv) {
                     bulkCloud->descriptor["validPositions"] == 512,
                 "all 512 positions");
     });
+    test("comma-separated PLY metadata preserves the unit when exporting BX", [&] {
+        QFile ply(temp.filePath("comma-units.ply"));
+        require(ply.open(QIODevice::WriteOnly), ply.errorString());
+        writeAll(ply, "ply\nformat ascii 1.0\ncomment Units: metres, Coordinates: local XYZ.\n"
+                      "element vertex 1\nproperty float x\nproperty float y\nproperty float z\n"
+                      "end_header\n1 -2 0.5\n");
+        ply.close();
+        const auto source = load(ply.fileName(), {});
+        require(source->descriptor["units"] == "metres" &&
+                    source->descriptor["frame"] == "local XYZ",
+                "PLY unit and coordinate frame");
+        const auto output = temp.filePath("comma-units.bx");
+        const auto result = convert(source, output, temp.path(), {});
+        require(result.status == "success", result.message);
+        const auto bx = load(output, {});
+        const auto &points = named(*bx, "Points", "");
+        require(at<float>(points, 0) == 1000 && at<float>(points, 1) == -2000 &&
+                    at<float>(points, 2) == 500,
+                "decoded BX coordinates in millimetres");
+        const auto reversed = readPly("ply\nformat ascii 1.0\n"
+                                      "comment Coordinates: local X, Y, Z, Units: meters (m).\n"
+                                      "element vertex 1\nproperty float x\nproperty float y\n"
+                                      "property float z\nend_header\n1 -2 0.5\n",
+                                      {});
+        require(reversed.descriptor["units"] == "meters (m)" &&
+                    reversed.descriptor["frame"] == "local X, Y, Z",
+                "coordinate frame with embedded commas before unit");
+    });
     test("BX unit conversion matches whole units instead of substrings", [&] {
         auto d = *read("surface.ply");
         struct Case {
@@ -485,6 +513,8 @@ int main(int argc, char **argv) {
         for (const auto &c :
              {Case{"metres", 1000, false}, Case{" MILLIMETERS ", 1, false}, Case{"厘米", 10, false},
               Case{"µm", 0.001, false}, Case{"μm", 0.001, false}, Case{"foot", 304.8, false},
+              Case{"meters (m)", 1000, false}, Case{"meters (cm)", 1, true},
+              Case{"meters (custom)", 1, true}, Case{"nanometres (m)", 1, true},
               Case{"nanometres", 1, true}, Case{"纳米", 1, true}, Case{"parameter", 1, true}}) {
             d.descriptor["units"] = QString::fromUtf8(c.units);
             QBuffer buffer;

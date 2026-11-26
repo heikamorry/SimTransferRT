@@ -46,7 +46,10 @@ struct ProducerWaitStats {
     std::uint64_t worstTargetUs = 0;
     std::uint64_t worstReturnUs = 0;
     std::uint64_t leadUs = 80;
+    std::uint64_t leadFloorUs = 0;
     std::uint64_t leadCapUs = 0;
+    bool priorityRaised = false;
+    unsigned priorityError = 0;
 };
 
 class ProducerWait {
@@ -55,7 +58,8 @@ class ProducerWait {
         Automatic,
         ConditionVariable
     };
-    ProducerWait(ProducerStop &, ProducerWaitStats &, unsigned hz, Timer = Timer::Automatic);
+    ProducerWait(ProducerStop &, ProducerWaitStats &, unsigned hz, Timer = Timer::Automatic,
+                 unsigned leadCapUs = 2000);
     ~ProducerWait();
     ProducerWait(const ProducerWait &) = delete;
     ProducerWait &operator=(const ProducerWait &) = delete;
@@ -68,6 +72,7 @@ class ProducerWait {
     ProducerWaitStats &stats_;
 #ifdef _WIN32
     void *timer_ = nullptr;
+    int previousPriority_ = 0;
 #endif
 };
 } // namespace rt::v2

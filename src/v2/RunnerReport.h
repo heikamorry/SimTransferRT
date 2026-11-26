@@ -68,6 +68,7 @@ struct State {
     bool finished = false;
     std::string transport;
     std::string sendApi;
+    OperationStorageStats operationStorage;
     std::string boostVersion;
     std::string error;
     std::string endedReason;
@@ -75,6 +76,12 @@ struct State {
     int receiveBuffer = 0;
     int resetError = 0;
     bool asynchronous = false;
+    bool senderPriorityRaised = false;
+    unsigned senderPriorityError = 0;
+    std::uint64_t ndiGuardWindows = 0;
+    std::uint64_t ndiGuardHits = 0;
+    std::uint64_t ndiGuardWaitWallUs = 0;
+    std::uint64_t ndiReadyToDequeueMaxUs = 0;
     std::uint64_t feedbackPollCalls = 0;
     std::uint64_t feedbackEmptyPolls = 0;
     std::uint64_t feedbackReadErrors = 0;

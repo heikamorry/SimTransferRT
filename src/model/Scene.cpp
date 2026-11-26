@@ -1,9 +1,16 @@
 #include "Scene.h"
+#include "core/Diagnostics.h"
+#include "core/SamplingClock.h"
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QOpenGLContext>
 #include <QPalette>
+#include <QShowEvent>
+#include <QScopeGuard>
+#include <QSurfaceFormat>
 #include <QVTKOpenGLNativeWidget.h>
+#include <QWindow>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -256,8 +263,14 @@ struct Scene::Impl {
     vtkNew<vtkAxesActor> direction;
     vtkNew<vtkOrientationMarkerWidget> marker;
     std::vector<vtkSmartPointer<vtkActor>> actors;
+    vtkSmartPointer<vtkActor> axesActor;
     Snapshot source;
+    bool live = false;
     int pointSize = 8;
+    StageProfile updateTiming;
+    StageProfile renderTiming;
+    StageProfile composeTiming;
+    std::uint64_t composeStartedUs = 0;
 };
 
 Scene::Scene(QWidget *parent) : QWidget(parent), p(std::make_unique<Impl>()) {
@@ -276,6 +289,15 @@ Scene::Scene(QWidget *parent) : QWidget(parent), p(std::make_unique<Impl>()) {
     }
     p->widget = new QVTKOpenGLNativeWidget(this);
     p->widget->setObjectName("modelViewport");
+    connect(p->widget, &QOpenGLWidget::aboutToCompose, this, [this] {
+        p->composeStartedUs = monotonicUs();
+    });
+    connect(p->widget, &QOpenGLWidget::frameSwapped, this, [this] {
+        if (p->composeStartedUs) {
+            p->composeTiming.add(monotonicUs() - p->composeStartedUs);
+            p->composeStartedUs = 0;
+        }
+    });
     // The viewport is the flexible part of the panel: it must yield space to the
     // BX table instead of forcing the whole panel past the splitter height.
     p->widget->setMinimumSize(0, 0);
@@ -297,6 +319,7 @@ Scene::Scene(QWidget *parent) : QWidget(parent), p(std::make_unique<Impl>()) {
 Scene::~Scene() {
     if (!p->widget)
         return;
+    disconnect(p->widget, nullptr, this, nullptr);
     p->marker->SetEnabled(false);
     p->marker->SetInteractor(nullptr);
     p->widget->makeCurrent();
@@ -307,15 +330,84 @@ Scene::~Scene() {
 }
 
 void Scene::render() {
-    if (p->widget && p->widget->isValid() && isVisible())
+    if (p->widget && p->widget->isValid() && isVisible() && !window()->isMinimized()) {
+        const auto started = monotonicUs();
         p->window->Render();
+        p->renderTiming.add(monotonicUs() - started);
+    }
+}
+
+void Scene::resetTiming() {
+    p->updateTiming = {};
+    p->renderTiming = {};
+    p->composeTiming = {};
+    p->composeStartedUs = 0;
+}
+
+QJsonObject Scene::timingReport() const {
+    auto row = [](const StageProfile &stage) {
+        return QJsonObject{{"calls", static_cast<qint64>(stage.calls)},
+                           {"total_us", static_cast<qint64>(stage.totalUs)},
+                           {"max_us", static_cast<qint64>(stage.maxUs)}};
+    };
+    QJsonObject report{{"scene_update", row(p->updateTiming)},
+                       {"scene_render", row(p->renderTiming)},
+                       {"qt_compose_to_swap", row(p->composeTiming)},
+                       {"requested_swap_interval", QSurfaceFormat::defaultFormat().swapInterval()},
+                       {"top_level_window_swap_interval", QJsonValue::Null},
+                       {"widget_context_swap_interval", QJsonValue::Null}};
+    if (const auto *native = window()->windowHandle(); native && native->handle())
+        report["top_level_window_swap_interval"] = native->format().swapInterval();
+    if (p->widget && p->widget->isValid())
+        report["widget_context_swap_interval"] = p->widget->context()->format().swapInterval();
+    return report;
+}
+
+void Scene::showEvent(QShowEvent *event) {
+    QWidget::showEvent(event);
+    // Refresh data that arrived while the viewport was hidden or minimized.
+    // Rendering stays on the GUI thread after Qt has exposed its OpenGL widget.
+    QMetaObject::invokeMethod(
+        this,
+        [this] {
+            render();
+        },
+        Qt::QueuedConnection);
 }
 
 double Scene::cameraDistance() const {
     return p->renderer->GetActiveCamera()->GetDistance();
 }
 
-void Scene::showData(const Display &display, Snapshot source) {
+void Scene::showData(const Display &display, Snapshot source, bool live) {
+    const auto started = monotonicUs();
+    const auto timing = qScopeGuard([this, started] {
+        p->updateTiming.add(monotonicUs() - started);
+    });
+    const bool continuingLive =
+        live && p->live && source && p->source &&
+        bool(source->tracking) == bool(p->source->tracking) &&
+        source->descriptor.value("kind") == p->source->descriptor.value("kind");
+    if (continuingLive && p->actors.size() == display.pieces.size() &&
+        bool(p->axesActor) == bool(display.axes)) {
+        bool hadPoints = false;
+        for (size_t i = 0; i < p->actors.size(); ++i) {
+            auto *mapper = vtkPolyDataMapper::SafeDownCast(p->actors[i]->GetMapper());
+            hadPoints = hadPoints || mapper->GetInput()->GetNumberOfPoints() > 0;
+            mapper->SetInputData(display.pieces[i]);
+        }
+        if (p->axesActor)
+            vtkPolyDataMapper::SafeDownCast(p->axesActor->GetMapper())->SetInputData(display.axes);
+        p->source = std::move(source);
+        // Keep the live camera and GPU objects. Replacing mapper input updates
+        // positions without tearing down graphics resources for every BX object.
+        if (!hadPoints) {
+            p->renderer->ResetCamera();
+            p->renderer->GetActiveCamera()->Zoom(0.9);
+        }
+        p->renderer->ResetCameraClippingRange();
+        return;
+    }
     if (p->widget && p->widget->isValid() && !p->actors.empty()) {
         p->widget->makeCurrent();
         p->renderer->ReleaseGraphicsResources(p->window);
@@ -323,7 +415,9 @@ void Scene::showData(const Display &display, Snapshot source) {
     }
     p->renderer->RemoveAllViewProps();
     p->actors.clear();
+    p->axesActor = nullptr;
     p->source = std::move(source);
+    p->live = live;
     for (const auto &piece : display.pieces) {
         vtkNew<vtkPolyDataMapper> mapper;
         mapper->SetInputData(piece);
@@ -350,13 +444,16 @@ void Scene::showData(const Display &display, Snapshot source) {
         a->SetMapper(m);
         a->GetProperty()->SetLineWidth(3);
         p->renderer->AddActor(a);
+        p->axesActor = a;
     }
     auto camera = p->renderer->GetActiveCamera();
-    camera->SetPosition(0, -1, .55);
-    camera->SetFocalPoint(0, 0, 0);
-    camera->SetViewUp(0, 0, 1);
-    p->renderer->ResetCamera();
-    camera->Zoom(0.9); // keep a margin so extreme points are not on the edge
+    if (!continuingLive) {
+        camera->SetPosition(0, -1, .55);
+        camera->SetFocalPoint(0, 0, 0);
+        camera->SetViewUp(0, 0, 1);
+        p->renderer->ResetCamera();
+        camera->Zoom(0.9); // keep a margin so extreme points are not on the edge
+    }
     p->renderer->ResetCameraClippingRange();
 }
 

@@ -8,10 +8,12 @@
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPaintEvent>
 #include <QPixmap>
 #include <QRadialGradient>
 #include <QWidget>
 #include <algorithm>
+#include <cmath>
 
 namespace rt::ui {
 namespace detail {
@@ -141,8 +143,71 @@ class MedicalBackdrop final : public QWidget {
     }
 
   protected:
-    void paintEvent(QPaintEvent *) override {
+    void paintEvent(QPaintEvent *event) override {
         QPainter p(this);
+        const qreal dpr = devicePixelRatioF();
+        const auto transform = p.deviceTransform();
+        if (transform.type() > QTransform::TxScale || transform.m11() != dpr ||
+            transform.m22() != dpr || std::floor(transform.dx()) != transform.dx() ||
+            std::floor(transform.dy()) != transform.dy()) {
+            paintBackground(p);
+            return;
+        }
+        if (cachedSize_ != size() || cachedDpr_ != dpr) {
+            background_ = QImage();
+            // A resize can invalidate just a sliver. Do not rasterize the full
+            // window for a small repaint, including disjoint dirty rectangles.
+            qint64 dirtyArea = 0;
+            for (const QRect &area : event->region())
+                dirtyArea += qint64(area.width()) * area.height();
+            if (2 * dirtyArea < qint64(width()) * height()) {
+                // A later return to an old size still needs a fresh cache.
+                cachedSize_ = {};
+                paintBackground(p);
+                return;
+            }
+            cachedSize_ = size();
+            cachedDpr_ = dpr;
+            // Hold at most one 32 MiB image; very large surfaces retain vector painting.
+            constexpr int maxPixels = 8 * 1024 * 1024;
+            const qreal w = std::ceil(width() * dpr);
+            const qreal h = std::ceil(height() * dpr);
+            if (w >= 1 && h >= 1 && w * h <= maxPixels) {
+                background_ = QImage(static_cast<int>(w), static_cast<int>(h),
+                                     QImage::Format_ARGB32_Premultiplied);
+                if (!background_.isNull()) {
+                    background_.setDevicePixelRatio(dpr);
+                    background_.fill(Qt::transparent);
+                    QPainter raster(&background_);
+                    paintBackground(raster);
+                }
+            }
+        }
+        if (background_.isNull()) {
+            paintBackground(p);
+            return;
+        }
+        // A partially covered edge must blend with the actual backing store.
+        const QRect interior(0, 0, width() - (width() * dpr != background_.width()),
+                             height() - (height() * dpr != background_.height()));
+        if (!interior.contains(event->region().boundingRect())) {
+            p.save();
+            p.setClipRect(interior, Qt::IntersectClip);
+            p.drawImage(QPointF(), background_);
+            p.restore();
+            p.setClipRegion(QRegion(rect()).subtracted(interior), Qt::IntersectClip);
+            paintBackground(p);
+        } else {
+            p.drawImage(QPointF(), background_);
+        }
+    }
+
+  private:
+    QSize cachedSize_;
+    qreal cachedDpr_ = 0;
+    QImage background_;
+
+    void paintBackground(QPainter &p) const {
         p.setRenderHint(QPainter::Antialiasing, true);
         QLinearGradient bg(0, 0, width() * 0.4, height());
         bg.setColorAt(0.0, QColor("#F8FCFE"));

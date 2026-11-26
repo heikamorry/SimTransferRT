@@ -14,10 +14,13 @@ struct Config {
     unsigned linkMbps = 1000;
     unsigned observedLinkMbps = 0;
     unsigned pathLimitMbps = 0;
+    unsigned sampleLeadCapUs = 2000;
+    unsigned ndiHandoffGuardUs = 0;
     bool allowOversubscribed = false;
-    bool mailboxFastPath = false; // opt-in candidate; queue capacity and admission are unchanged
+    bool mailboxFastPath = true;
     bool handoffTrace = false;
     bool fragmentTrace = false;
+    bool asioPooledHandler = false;
     std::uint64_t durationUs = 0;
     std::uint64_t frameLimit = 0;
     std::uint32_t initialNdiId = 1;

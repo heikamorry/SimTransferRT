@@ -126,7 +126,9 @@ void testRetryAcceptance() {
         return 0u;
     });
     const auto f = make(2, 1, 1437);
+    check(r.nextDeadlineUs() == UINT64_MAX, "empty receiver has no timer deadline");
     deliver(r, f, 0, 100);
+    check(r.nextDeadlineUs() == 2100, "2 ms tail deadline");
     r.poll(2101);
     auto json = receiverJson(r.snapshot(2101));
     check(verdict(json, "receiver_retry_timing", "fail") &&
@@ -136,11 +138,13 @@ void testRetryAcceptance() {
     r.reset();
     deliver(r, f, 0, 100);
     r.poll(2100);
+    check(r.nextDeadlineUs() == 12100, "next request is 10 ms after actual first generation");
     json = receiverJson(r.snapshot(2100));
     check(verdict(json, "receiver_retry_timing", "not_tested") &&
               verdict(json, "receiver_request_lateness", "pass"),
           "first request alone cannot establish inter-round spacing");
     r.poll(12100);
+    check(r.nextDeadlineUs() == 22100, "third-round deadline");
     json = receiverJson(r.snapshot(12100));
     check(verdict(json, "receiver_retry_timing", "pass") &&
               verdict(json, "receiver_retry_interval", "pass"),

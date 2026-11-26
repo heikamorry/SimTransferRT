@@ -5,24 +5,16 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import socket
 import subprocess
 
 from run_diagnostics import free_ports, write_json
+from runtime_support import probe_udp_loopback
 
 
 def verify_loopback():
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as rx, \
-            socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as tx:
-        rx.bind(("127.0.0.1", 0))
-        rx.settimeout(2)
-        tx.sendto(b"sim-v2-bench", rx.getsockname())
-        try:
-            packet, _ = rx.recvfrom(32)
-        except TimeoutError as exc:
-            raise RuntimeError("UDP loopback probe timed out; endpoint measurements unavailable") from exc
-        if packet != b"sim-v2-bench":
-            raise RuntimeError("UDP loopback probe received unrelated traffic")
+    result = probe_udp_loopback()
+    if not result["available"]:
+        raise RuntimeError(f"IPv4 UDP loopback unavailable for benchmark: {json.dumps(result)}")
 
 
 def run_rate(binaries, sender_cli, output, rate, startup, legacy_driver):

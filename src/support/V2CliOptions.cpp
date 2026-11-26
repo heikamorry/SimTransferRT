@@ -57,6 +57,10 @@ CliOptions parseV2Options(int argc, char **argv) {
             o.transport = v;
         } else if (a == "--mailbox-fast-path")
             o.config.mailboxFastPath = traceMode(value(), a);
+        else if (a == "--sample-lead-cap-us")
+            o.config.sampleLeadCapUs = static_cast<unsigned>(number(value(), 4000));
+        else if (a == "--ndi-handoff-guard-us")
+            o.config.ndiHandoffGuardUs = static_cast<unsigned>(number(value(), 400));
         else if (a == "--network-profile") {
             const auto n = parseNetworkProfile(value());
             if (profile && *profile != n)
@@ -131,6 +135,8 @@ CliOptions parseV2Options(int argc, char **argv) {
             o.config.handoffTrace = traceMode(value(), a);
         else if (a == "--fragment-trace")
             o.config.fragmentTrace = traceMode(value(), a);
+        else if (a == "--asio-pooled-handler")
+            o.config.asioPooledHandler = traceMode(value(), a);
         else if (a == "--allow-oversubscribed")
             o.config.allowOversubscribed = true;
         else if (a == "--drop-first")
@@ -168,6 +174,8 @@ std::string v2CliHelp() {
            "  --transport native|asio-sync|asio-async (both CLIs default to native; the GUI is "
            "Asio-only)\n"
            "  --mailbox-fast-path on|off (four-slot SPSC frame handoff; default off)\n"
+           "  --sample-lead-cap-us 80..4000 (default 2000, capped at 1/8 of one period)\n"
+           "  --ndi-handoff-guard-us 0..400 (0 disables the idle sender's NDI pre-wake)\n"
            "  --link-mbps 100|1000|2500 (compatibility alias; conflicting values fail)\n"
            "  --target 127.0.0.1 --port 5650 --bind 127.0.0.1 --command-port 5500\n"
            "  --allowed-nack-ip 127.0.0.1 --allowed-nack-port 0\n"
@@ -184,6 +192,7 @@ std::string v2CliHelp() {
            "  --handoff-trigger-report new-file.json (snapshot at first observed EP ready-to-first "
            ">=7 ms)\n"
            "  --fragment-trace on|off (bounded initial-fragment send intervals, default off)\n"
+            "  --asio-pooled-handler on|off (reuse Asio async operation storage, default off)\n"
            "  --fragment-trigger-report new-file.json (snapshot on EP first-to-last span >=18 ms)\n"
            "Simulated 60 Hz is not proof of Aurora hardware sampling at 60 Hz.\n";
 }

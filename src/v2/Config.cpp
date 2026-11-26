@@ -49,6 +49,10 @@ unsigned effectiveMbps(const Config &c, unsigned liveLinkMbps) {
 }
 
 void validateConfig(const Config &c) {
+    if (c.sampleLeadCapUs < 80 || c.sampleLeadCapUs > 4000)
+        throw std::invalid_argument("Sampling wake lead cap must be 80..4000 us");
+    if (c.ndiHandoffGuardUs > 400)
+        throw std::invalid_argument("NDI handoff guard must be 0..400 us");
     if (c.linkMbps != 100 && c.linkMbps != 1000 && c.linkMbps != 2500)
         throw std::invalid_argument("V2 requires one of three network profiles");
     if (!c.targetPort)

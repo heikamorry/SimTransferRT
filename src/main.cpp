@@ -10,9 +10,7 @@
 #include <cstdio>
 #ifdef SIM_MODEL_PREVIEW
 #include "model/PreviewPanel.h"
-#include <QSurfaceFormat>
 #include <QTabWidget>
-#include <QVTKOpenGLNativeWidget.h>
 #include <filesystem>
 #endif
 
@@ -83,7 +81,7 @@ int showStartupModel(rt::V2Window &window, QApplication &app, const QString &mod
 
 int main(int argc, char **argv) {
 #ifdef SIM_MODEL_PREVIEW
-    QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
+    rt::model::PreviewPanel::setDefaultSurfaceFormat();
 #endif
     QApplication app(argc, argv);
     app.setOrganizationName("SimTransferLab");

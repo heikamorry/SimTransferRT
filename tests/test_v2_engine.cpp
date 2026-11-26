@@ -96,6 +96,93 @@ void testPriority() {
     require(p.moduleId == 2 && p.retransmission, "retry correct module");
 }
 
+void testDelayedCompletion() {
+    struct Delayed : rt::IUdpTransport {
+        std::uint64_t token = 0;
+        bool ready = false;
+        std::uint64_t observed = 20300;
+        rt::SendDisposition outcome = rt::SendDisposition::Complete;
+
+        void open(const rt::StreamConfig &) override {}
+
+        bool send(const std::uint8_t *, std::size_t) override {
+            return false;
+        }
+
+        rt::SendDisposition submitDatagram(const std::uint8_t *, std::size_t,
+                                           std::uint64_t id) override {
+            token = id;
+            return rt::SendDisposition::Pending;
+        }
+
+        bool pollCompletion(rt::SendCompletion &out) override {
+            if (!ready || !token)
+                return false;
+            out = {token, outcome, observed};
+            token = 0;
+            return true;
+        }
+
+        std::size_t inFlight() const noexcept override {
+            return token ? 1 : 0;
+        }
+
+        bool receive(rt::IncomingDatagram &) override {
+            return false;
+        }
+
+        std::uint16_t localPort() const override {
+            return 0;
+        }
+
+        bool dfEnabled() const override {
+            return false;
+        }
+
+        std::string lastError() const override {
+            return {};
+        }
+    } transport;
+
+    Engine engine(Config{});
+    engine.submit(make(EpModule, 1, 1, 1000));
+    auto clock = [] {
+        return std::uint64_t{1000};
+    };
+    require(engine.stepTransport(1000, transport, clock), "submitted first fragment");
+    require(!engine.stepTransport(1001, transport, clock), "scheduler revisits pending completion");
+    require(!engine.snapshot().modules[1].initialComplete, "pending callback is not completion");
+    transport.ready = true;
+    engine.stepTransport(20400, transport, clock);
+    const auto m = engine.snapshot().modules[1];
+    require(m.initialComplete == 1 && m.initialDuration.maxUs == 19300 && m.deadlineMisses == 1,
+            "only the real handler timestamp completes or misses the deadline");
+
+    Config c;
+    c.fragmentTrace = true;
+    for (const bool earlyFailure : {false, true}) {
+        Engine traced(c);
+        traced.submit(make(EpModule, 1, 1, 1000));
+        transport.ready = true;
+        transport.observed = earlyFailure ? 1015 : 20300;
+        transport.outcome = earlyFailure ? rt::SendDisposition::Failed : rt::SendDisposition::Complete;
+        std::uint64_t tick = 1000;
+        auto observedClock = [&] {
+            const auto now = tick;
+            tick += 10;
+            return now;
+        };
+        require(traced.stepTransport(1000, transport, observedClock), "traced asynchronous submit");
+        const auto span = traced.snapshot().worstFragmentSpan[1];
+        require(span && span->fragments.size() == 1, "one asynchronous original retained");
+        const auto &p = span->fragments.front();
+        require(p.pendingCompletion && p.success == !earlyFailure && p.callStartUs == 1010 &&
+                    p.submitReturnUs == 1020 && p.endUs == transport.observed &&
+                    span->ownCallUs == transport.observed - p.callStartUs,
+                "submission return cannot replace a late or already-observed completion endpoint");
+    }
+}
+
 void testBudget() {
     for (unsigned rate : {100u, 1000u, 2500u}) {
         Config c;
@@ -629,6 +716,10 @@ void testFragmentSpanPartition() {
                 ep.fragments[0].success && !ep.fragments[1].called && ep.fragments[2].called &&
                 !ep.fragments[2].success && !ep.fragments[3].called,
             "actual transport timestamps exclude injected drops and include failed real calls");
+    for (const auto &fragment : ep.fragments)
+        require(!fragment.pendingCompletion &&
+                    fragment.submitReturnUs == (fragment.called ? fragment.endUs : 0),
+                "immediate success and failure reuse return time; injected drops have no return");
     require(ep.intervening.ndi == 1 && ep.intervening.ep == 0 && ep.intervening.status == 1 &&
                 ep.intervening.retry == 0 && ep.intervening.duplicate == 1,
             "disjoint foreign dispatch counts");
@@ -802,6 +893,15 @@ void testWorstGapPairs() {
     step(15000);
     const auto mixed = engine.snapshot();
     const auto &global = mixed.worstPacketGaps[0];
+    const auto &pairs = mixed.globalGapViolationPairs;
+    require(pairs.size() == 2 && mixed.globalGapViolations == 2 &&
+                pairs[0].previous.moduleId == EpModule && pairs[0].previous.id == 7 &&
+                pairs[0].previous.index == 2 && !pairs[0].previous.success &&
+                pairs[0].previous.callStartUs == 1600 && pairs[0].previous.submitReturnUs == 1601 &&
+                pairs[0].current.index == 1 && std::string(pairs[0].current.kind) == "retry" &&
+                pairs[1].previous.startUs == pairs[0].current.startUs &&
+                pairs[1].current.moduleId == StatusModule && !pairs[1].current.callStartUs,
+            "violations preserve adjacent packets, failed sends and original call timing");
     require(mixed.globalPacketGapDeviation.count == 4 && global.previous.moduleId == EpModule &&
                 global.previous.index == 1 && global.previous.kind &&
                 std::string(global.previous.kind) == "retry" &&
@@ -830,6 +930,117 @@ void testWorstGapPairs() {
                 tied.worstPacketGaps[0].previous.id == 91 &&
                 tied.worstPacketGaps[0].current.id == 92,
             "retain the first valid pair when all deviations are zero");
+}
+
+void testGlobalGapViolationRetention() {
+    auto run = [](bool trace) {
+        Config config;
+        config.fragmentTrace = trace;
+        Engine engine(config);
+        std::uint64_t now = 2000;
+        auto dispatch = [&] {
+            require(engine.submitStatus({1}, 100), "queue status with fixed anchor");
+            require(engine.step(now, [](auto *, auto) { return true; }, [&] { return now; }),
+                    "send status for bounded violation trace");
+        };
+        dispatch();
+        now += 999;
+        dispatch();
+        now += 1000;
+        dispatch();
+        for (std::size_t i = 0; i < MaxGlobalGapViolationPairs + 4; ++i) {
+            now += 1001 + i;
+            dispatch();
+        }
+        return engine.snapshot();
+    };
+    const auto traced = run(true);
+    const auto untraced = run(false);
+    const auto &pairs = traced.globalGapViolationPairs;
+    require(traced.globalGapViolations == MaxGlobalGapViolationPairs + 5 &&
+                pairs.size() == MaxGlobalGapViolationPairs && pairs.front().deviationUs == 1000 &&
+                pairs.back().deviationUs == 1000 + MaxGlobalGapViolationPairs - 1 &&
+                traced.worstPacketGaps[0].deviationUs == 1000 + MaxGlobalGapViolationPairs + 4,
+            "retain first threshold-inclusive violations; worst pair includes overflow");
+    require(untraced.globalGapViolationPairs.empty() &&
+                untraced.globalGapViolations == traced.globalGapViolations &&
+                untraced.globalPacketGapDeviation.count == traced.globalPacketGapDeviation.count &&
+                untraced.globalPacketGapDeviation.maxUs == traced.globalPacketGapDeviation.maxUs,
+            "diagnostics preserve gap population and count when tracing is disabled");
+}
+
+void testNdiHandoffInViolationPairs() {
+    Config config;
+    config.fragmentTrace = true;
+    Engine engine(config);
+    FrameHandoff handoff;
+    handoff.enqueuedUs = 1200;
+    handoff.dequeuedUs = 1300;
+    engine.submit(make(NdiModule, 5, 1, 1000), handoff);
+    auto sendAt = [&](std::uint64_t now) {
+        require(engine.step(now, [](auto *, auto) { return true; }, [&] { return now; }),
+                "dispatch frame for violation handoff evidence");
+    };
+    sendAt(2000);
+    require(engine.submitStatus({1}, 1000), "queue status after NDI");
+    sendAt(5000);
+    const auto nack = encodeNack({NdiModule, 5, {0}});
+    engine.feedback(nack.bytes.data(), nack.size, 5000);
+    sendAt(15000);
+    const auto snapshot = engine.snapshot();
+    const auto &pairs = snapshot.globalGapViolationPairs;
+    require(pairs.size() == 2 && pairs[0].previous.id == 5 &&
+                pairs[0].previous.enqueuedUs == 1200 && pairs[0].previous.dequeuedUs == 1300 &&
+                !pairs[0].current.enqueuedUs && !pairs[0].current.dequeuedUs &&
+                std::string(pairs[1].current.kind) == "retry" &&
+                pairs[1].current.enqueuedUs == 1200 && pairs[1].current.dequeuedUs == 1300,
+            "both NDI DATA and later retry retain handoff stamps without handoff tracing");
+}
+
+void testPreviousEpFramesInViolationPairs() {
+    Config config;
+    config.fragmentTrace = true;
+    Engine engine(config);
+    auto sendAt = [&](std::uint64_t now) {
+        require(engine.step(now, [](auto *, auto) { return true; }, [&] { return now; }),
+                "dispatch packet for previous EP frame trace");
+    };
+    engine.submit(make(EpModule, 71, 4 * rt::PayloadStep));
+    sendAt(1000);
+    sendAt(4000);
+    const auto active = engine.snapshot();
+    require(active.gapPreviousEpFrames.size() == 1 && active.gapPreviousEpFrames[0].awaitingFinalize &&
+                !active.gapPreviousEpFrames[0].span,
+            "active EP frame does not expose a mutable span");
+    sendAt(7000);
+    sendAt(10000);
+    engine.submit(make(EpModule, 72, 1));
+    sendAt(13000);
+    require(engine.submitStatus({1}, 1000), "queue status after EP");
+    sendAt(16000);
+    const auto done = engine.snapshot();
+    const auto &pairs = done.globalGapViolationPairs;
+    const auto &frames = done.gapPreviousEpFrames;
+    require(pairs.size() == 5 && frames.size() == 2 && frames[0].frameId == 71 &&
+                frames[0].span && frames[0].span->fragments.size() == 4 &&
+                !frames[0].awaitingFinalize && frames[1].frameId == 72 && frames[1].span &&
+                frames[1].span->fragments.size() == 1 && !active.gapPreviousEpFrames[0].span,
+            "snapshots retain each frozen EP span independently of the worst frame");
+    for (const auto &pair : pairs) {
+        require(pair.previousEpFrameIndex &&
+                    frames.at(*pair.previousEpFrameIndex).frameId == pair.previous.id,
+                "each EP pair references the correct distinct frame");
+    }
+    engine.submit(make(EpModule, 73, 3 * rt::PayloadStep));
+    sendAt(19000);
+    require(engine.submitStatus({1}, 1000), "queue status while EP is unfinished");
+    sendAt(22000);
+    engine.stop();
+    const auto stopped = engine.snapshot();
+    require(!stopped.globalGapViolationPairs.at(5).previousEpFrameIndex &&
+                stopped.gapPreviousEpFrames.size() == 3 && stopped.gapPreviousEpFrames[2].frameId == 73 &&
+                !stopped.gapPreviousEpFrames[2].awaitingFinalize && !stopped.gapPreviousEpFrames[2].span,
+            "non-EP predecessors have no link and a cancelled EP span is explicitly unavailable");
 }
 
 void testWorstPacketEventOrder() {
@@ -886,6 +1097,7 @@ int main() {
     try {
         testStaticEpPayload();
         testPriority();
+        testDelayedCompletion();
         testBudget();
         testCacheStopAndLate();
         testPreflight();
@@ -902,6 +1114,9 @@ int main() {
         testFragmentTraceLimits();
         testFragmentSpanDistribution();
         testWorstGapPairs();
+        testGlobalGapViolationRetention();
+        testNdiHandoffInViolationPairs();
+        testPreviousEpFramesInViolationPairs();
         testWorstPacketEventOrder();
         std::cout << "V2 engine tests passed\n";
         return 0;

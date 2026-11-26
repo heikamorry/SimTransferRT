@@ -1,6 +1,7 @@
 #pragma once
 #include "core/Types.h"
 #include <memory>
+#include <stdexcept>
 
 namespace rt {
 struct IncomingDatagram {
@@ -27,9 +28,24 @@ struct SendCompletion {
     std::uint64_t observedUs = 0;
 };
 
+struct OperationStorageStats {
+    bool enabled = false;
+    std::uint64_t hits = 0;
+    std::uint64_t fallbacks = 0;
+};
+
 class IUdpTransport {
   public:
     virtual ~IUdpTransport() = default;
+    virtual void setOperationStorageReuse(bool enabled) {
+        if (enabled)
+            throw std::invalid_argument("operation storage reuse requires asynchronous Boost.Asio");
+    }
+
+    virtual OperationStorageStats operationStorageStats() const noexcept {
+        return {};
+    }
+
     virtual void open(const StreamConfig &config) = 0;
     virtual bool send(const std::uint8_t *data, std::size_t size) = 0;
 

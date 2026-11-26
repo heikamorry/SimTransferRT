@@ -1,5 +1,7 @@
 #include "PreviewPanel.h"
 #include "Scene.h"
+#include "core/Diagnostics.h"
+#include "core/SamplingClock.h"
 #include <QAction>
 #include <QComboBox>
 #include <QDesktopServices>
@@ -17,12 +19,15 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSettings>
+#include <QScopeGuard>
 #include <QSpinBox>
 #include <QStandardPaths>
+#include <QSurfaceFormat>
 #include <QTableWidget>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QVTKOpenGLNativeWidget.h>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -30,6 +35,14 @@
 #include <thread>
 
 namespace rt::model {
+void PreviewPanel::setDefaultSurfaceFormat() {
+    auto format = QVTKOpenGLNativeWidget::defaultFormat();
+#ifdef SIM_GUI_IMMEDIATE_SWAP
+    format.setSwapInterval(0);
+#endif
+    QSurfaceFormat::setDefaultFormat(format);
+}
+
 namespace {
 QString defaultArchive() {
     return QSettings()
@@ -88,6 +101,8 @@ struct PreviewPanel::Impl {
     bool active = false;
     bool networkTask = false;
     bool displayedNetwork = false;
+    StageProfile presentTiming;
+    StageProfile busyTiming;
     quint64 committing = 0;
     std::atomic<bool> quitting{false};
     std::atomic<quint64> generation{0};
@@ -113,11 +128,17 @@ struct PreviewPanel::Impl {
     }
 
     void setBusy(bool on, bool network = false) {
+        const auto started = monotonicUs();
+        const auto timing = qScopeGuard([this, started] {
+            busyTiming.add(monotonicUs() - started);
+        });
         active = on;
         networkTask = on && network;
         save->setEnabled(bool(current) && !on);
         cancelButton->setEnabled(on);
-        progress->setVisible(on);
+        // Short live previews should not trigger a synchronous progress-bar repaint
+        // on the same thread that delivers NDI and EP frames to their widgets.
+        progress->setVisible(on && !network);
     }
 
     void queue(QString file, QString format, Snapshot src = {}, QString dir = {}) {
@@ -165,8 +186,8 @@ struct PreviewPanel::Impl {
             pending.push_back(std::move(work));
         }
         setBusy(true, true);
-        progress->setValue(0);
-        state->setText("正在解码网络 BX…");
+        if (!displayedNetwork)
+            state->setText("正在解码网络 BX…");
         ready.notify_one();
     }
 
@@ -194,7 +215,8 @@ struct PreviewPanel::Impl {
                 pending.pop_front();
             }
             auto gen = w.generation;
-            auto last = std::chrono::steady_clock::time_point{};
+            auto last = w.object ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
             Task task{[this, gen] {
                           return quitting || generation != gen || cancelled == gen;
                       },
@@ -204,6 +226,8 @@ struct PreviewPanel::Impl {
                               return;
                           last = now;
                           post(gen, [this, n, msg] {
+                              if (networkTask)
+                                  progress->show();
                               progress->setValue(n);
                               state->setText(msg);
                           });
@@ -311,6 +335,10 @@ struct PreviewPanel::Impl {
     }
 
     void present(Snapshot source, const Display &display, bool network = false) {
+        const auto started = monotonicUs();
+        const auto timing = qScopeGuard([this, started] {
+            presentTiming.add(monotonicUs() - started);
+        });
         displayedNetwork = network;
         current = std::move(source);
         attribute->blockSignals(true);
@@ -339,12 +367,13 @@ struct PreviewPanel::Impl {
             points += current->points(i);
             cells += current->cells(i);
         }
-        trackingTable->setRowCount(0);
+        const auto toolCount = current->tracking ? int(current->tracking->tools.size()) : 0;
+        if (trackingTable->rowCount() != toolCount)
+            trackingTable->setRowCount(toolCount);
         trackingTable->setVisible(bool(current->tracking));
         if (current->tracking) {
             int row = 0;
             for (const auto &f : current->tracking->tools) {
-                trackingTable->insertRow(row);
                 trackingTable->setRowHeight(row, 20);
                 bool valid = f.status == aurora::HandleStatus::Valid;
                 bool port = f.status != aurora::HandleStatus::Disabled;
@@ -357,8 +386,13 @@ struct PreviewPanel::Impl {
                                    valid ? fieldValue(f.quality) : "—",
                                    port ? QString::number(f.portStatus, 16) : "—",
                                    port ? QString::number(f.frameNumber) : "—"};
-                for (int i = 0; i < values.size(); ++i)
-                    trackingTable->setItem(row, i, new QTableWidgetItem(values[i]));
+                for (int i = 0; i < values.size(); ++i) {
+                    if (auto *item = trackingTable->item(row, i)) {
+                        if (item->text() != values[i])
+                            item->setText(values[i]);
+                    } else
+                        trackingTable->setItem(row, i, new QTableWidgetItem(values[i]));
+                }
                 ++row;
                 if (f.transformUsable())
                     ++points;
@@ -454,7 +488,7 @@ struct PreviewPanel::Impl {
             detailText += "\n贴图 " + item.toObject()["reference"].toString() + " · " +
                           item.toObject()["state"].toString();
         state->setToolTip(detailText);
-        scene->showData(display, current);
+        scene->showData(display, current, network);
         scene->select(-1, mode->currentIndex());
     }
 };
@@ -571,6 +605,13 @@ PreviewPanel::PreviewPanel(QWidget *parent) : QWidget(parent), p(std::make_uniqu
     p->progress = new QProgressBar;
     p->progress->setTextVisible(false);
     p->progress->setFixedHeight(8);
+    // Busy changes must not repeatedly resize the OpenGL viewport.
+    auto progressPolicy = p->progress->sizePolicy();
+    progressPolicy.setRetainSizeWhenHidden(true);
+    p->progress->setSizePolicy(progressPolicy);
+    auto cancelPolicy = p->cancelButton->sizePolicy();
+    cancelPolicy.setRetainSizeWhenHidden(true);
+    p->cancelButton->setSizePolicy(cancelPolicy);
     layout->addWidget(p->progress);
     p->setBusy(false);
     connect(reset, &QPushButton::clicked, p->scene, &Scene::reset);
@@ -644,6 +685,9 @@ void PreviewPanel::showBxObject(const QByteArray &bytes, const QString &sourceLa
 }
 
 void PreviewPanel::beginReceiveSession() {
+    p->presentTiming = {};
+    p->busyTiming = {};
+    p->scene->resetTiming();
     if (fileTaskActive()) {
         // A manual load or export keeps its generation, even when the old view was live.
         if (p->displayedNetwork)
@@ -705,6 +749,19 @@ bool PreviewPanel::busy() const {
 
 double PreviewPanel::cameraDistance() const {
     return p->scene->cameraDistance();
+}
+
+QJsonObject PreviewPanel::timingReport() const {
+    auto report = p->scene->timingReport();
+    const auto &stage = p->presentTiming;
+    report["preview_present"] = QJsonObject{{"calls", static_cast<qint64>(stage.calls)},
+                                            {"total_us", static_cast<qint64>(stage.totalUs)},
+                                            {"max_us", static_cast<qint64>(stage.maxUs)}};
+    const auto &busy = p->busyTiming;
+    report["preview_busy"] = QJsonObject{{"calls", static_cast<qint64>(busy.calls)},
+                                        {"total_us", static_cast<qint64>(busy.totalUs)},
+                                        {"max_us", static_cast<qint64>(busy.maxUs)}};
+    return report;
 }
 
 void PreviewPanel::stop() {

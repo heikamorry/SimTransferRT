@@ -49,8 +49,11 @@ void writeProducerWait(std::ostream &o, const ProducerWaitStats &w) {
       << ",\"spin_only_slots\":" << w.spinOnly << ",\"due_on_entry\":" << w.alreadyDue
       << ",\"cancelled\":" << w.cancelled << ",\"fallbacks\":" << w.fallbacks
       << ",\"early_returns\":" << w.earlyReturns << ",\"returns_past_slot\":" << w.returnsPastSlot
-      << ",\"lead_us\":" << w.leadUs << ",\"lead_cap_us\":" << w.leadCapUs
-      << ",\"spin_wall_us\":" << w.spinWallUs << ",\"max_wake_overshoot_us\":" << w.overshootMaxUs
+      << ",\"lead_us\":" << w.leadUs << ",\"lead_floor_us\":" << w.leadFloorUs
+      << ",\"lead_cap_us\":" << w.leadCapUs
+      << ",\"priority_raised\":" << (w.priorityRaised ? "true" : "false")
+      << ",\"priority_error\":" << w.priorityError << ",\"spin_wall_us\":" << w.spinWallUs
+      << ",\"max_wake_overshoot_us\":" << w.overshootMaxUs
       << ",\"wake_overshoot_ge_1000_us\":" << w.overshootGe1ms << ",\"worst_slot_us\":\""
       << w.worstSlotUs << '"' << ",\"worst_wake_target_us\":\"" << w.worstTargetUs
       << "\",\"worst_wake_return_us\":\"" << w.worstReturnUs << "\"}";
@@ -179,6 +182,8 @@ void writeFragmentSpan(std::ostream &o, const std::shared_ptr<const FragmentSpan
     o << "{\"module_id\":" << unsigned(f.moduleId) << ",\"frame_id\":" << f.frameId
       << ",\"sample_us\":" << nullableTime(f.sampleUs)
       << ",\"ready_us\":" << nullableTime(f.readyUs)
+      << ",\"enqueue_us\":" << nullableTime(f.enqueuedUs)
+      << ",\"dequeue_us\":" << nullableTime(f.dequeuedUs)
       << ",\"first_attempt_us\":" << nullableTime(f.firstAttemptUs)
       << ",\"end_us\":" << nullableTime(f.endUs) << ",\"span_us\":" << f.spanUs()
       << ",\"ready_to_first_us\":"
@@ -205,7 +210,14 @@ void writeFragmentSpan(std::ostream &o, const std::shared_ptr<const FragmentSpan
           << ",\"end_us\":" << nullableTime(p.endUs)
           << ",\"call_start_us\":" << nullableTime(p.called ? p.callStartUs : 0)
           << ",\"call_end_us\":" << nullableTime(p.called ? p.endUs : 0)
-          << ",\"called\":" << (p.called ? "true" : "false")
+          << ",\"submit_return_us\":" << nullableTime(p.submitReturnUs)
+          << ",\"completion_observed_us\":" << nullableTime(p.pendingCompletion ? p.endUs : 0)
+          << ",\"post_submit_wait_us\":";
+        if (p.pendingCompletion)
+            o << (p.endUs > p.submitReturnUs ? p.endUs - p.submitReturnUs : 0);
+        else
+            o << "null";
+        o << ",\"called\":" << (p.called ? "true" : "false")
           << ",\"success\":" << (p.success ? "true" : "false") << '}';
     }
     o << "]}";
@@ -220,21 +232,36 @@ void writeGapPacket(std::ostream &o, const GapPacket &p) {
         o << p.index;
     o << ",\"original_due_us\":\"" << p.planUs << "\",\"start_us\":\"" << p.startUs
       << "\",\"end_us\":\"" << p.endUs << "\",\"success\":" << (p.success ? "true" : "false")
-      << '}';
+      << ",\"ready_us\":" << nullableTime(p.readyUs)
+      << ",\"enqueue_us\":" << nullableTime(p.enqueuedUs)
+      << ",\"dequeue_us\":" << nullableTime(p.dequeuedUs)
+      << ",\"call_start_us\":" << nullableTime(p.callStartUs)
+      << ",\"submit_return_us\":" << nullableTime(p.submitReturnUs) << '}';
 }
 
-void writeWorstGap(std::ostream &o, const WorstGap &worst, const Distribution &all) {
-    o << "{\"count\":" << all.count << ",\"max_us\":" << all.maxUs << ",\"pair\":";
-    if (!worst.current.kind) {
-        o << "null}";
-        return;
-    }
+void writeGapPair(std::ostream &o, const WorstGap &worst, bool includeEpFrameIndex = false) {
     o << "{\"actual_gap_us\":" << worst.actualUs << ",\"expected_gap_us\":" << worst.expectedUs
       << ",\"deviation_us\":" << worst.deviationUs << ",\"previous\":";
     writeGapPacket(o, worst.previous);
     o << ",\"current\":";
     writeGapPacket(o, worst.current);
-    o << "}}";
+    if (includeEpFrameIndex) {
+        o << ",\"previous_ep_frame_index\":";
+        if (worst.previousEpFrameIndex)
+            o << *worst.previousEpFrameIndex;
+        else
+            o << "null";
+    }
+    o << '}';
+}
+
+void writeWorstGap(std::ostream &o, const WorstGap &worst, const Distribution &all) {
+    o << "{\"count\":" << all.count << ",\"max_us\":" << all.maxUs << ",\"pair\":";
+    if (worst.current.kind)
+        writeGapPair(o, worst);
+    else
+        o << "null";
+    o << '}';
 }
 
 void writeFragmentTrace(std::ostream &o, const State &s) {
@@ -244,9 +271,12 @@ void writeFragmentTrace(std::ostream &o, const State &s) {
     }
     o << "{\"enabled\":true,";
     writeTraceClock(o, s);
-    o << ",\"span_scope\":\"First original fragment attempt to last original attempt end. Actual "
-         "socket-call bounds are null for an injected drop. All original attempts of each retained "
-         "finalized span are in dispatch order.\""
+    o << ",\"span_scope\":\"First original fragment attempt to last original attempt end. "
+         "call_start_us and submit_return_us bound the transport submission. For pending submissions, "
+         "call_end_us and completion_observed_us retain the observed completion timestamp. "
+         "post_submit_wait_us is zero when completion was already observed by return. Immediate "
+         "returns have null completion fields, and injected drops have no call timestamps. "
+         "All original attempts of each retained finalized span are in dispatch order.\""
       << ",\"span_distribution_scope\":\"One observation per frame that reached its last original "
          "attempt, including send failures or injected drops. P99.9 uses the 100 us histogram "
          "bucket upper bound capped by the exact maximum. ge_18000_us includes equality.\""
@@ -266,7 +296,26 @@ void writeFragmentTrace(std::ostream &o, const State &s) {
         o << ",\"" << (i + 1) << "\":";
         writeWorstGap(o, s.engine.worstPacketGaps[i + 1], s.engine.modules[i].packetGapDeviation);
     }
-    o << "},\"worst_by_module\":{";
+    const auto &violations = s.engine.globalGapViolationPairs;
+    o << "},\"global_gap_violations\":{\"threshold_us\":1000,\"capacity\":"
+      << MaxGlobalGapViolationPairs << ",\"total\":" << s.engine.globalGapViolations
+      << ",\"omitted\":" << (s.engine.globalGapViolations - violations.size()) << ",\"pairs\":[";
+    for (std::size_t i = 0; i < violations.size(); ++i) {
+        if (i)
+            o << ',';
+        writeGapPair(o, violations[i], true);
+    }
+    o << "],\"previous_ep_frames\":[";
+    for (std::size_t i = 0; i < s.engine.gapPreviousEpFrames.size(); ++i) {
+        if (i)
+            o << ',';
+        const auto &frame = s.engine.gapPreviousEpFrames[i];
+        const char *state = frame.span ? "finalized" : frame.awaitingFinalize ? "pending" : "unavailable";
+        o << "{\"frame_id\":" << frame.frameId << ",\"state\":" << quote(state) << ",\"span\":";
+        writeFragmentSpan(o, frame.span);
+        o << '}';
+    }
+    o << "]},\"worst_by_module\":{";
     for (std::size_t i = 0; i < s.engine.worstFragmentSpan.size(); ++i) {
         if (i)
             o << ',';
@@ -304,7 +353,18 @@ std::string report(const State &s) {
       << ",\"socket_receive_buffer_bytes\":" << s.receiveBuffer
       << ",\"udp_reset_setup_error\":" << s.resetError << ",\"first_send_endpoint\":"
       << quote(s.asynchronous ? "completion_handler_observed" : "local_synchronous_return")
+      << ",\"sender_priority_raised\":" << (s.senderPriorityRaised ? "true" : "false")
+      << ",\"sender_priority_error\":" << s.senderPriorityError
+      << ",\"operation_storage\":{\"enabled\":" << (s.operationStorage.enabled ? "true" : "false")
+      << ",\"hits\":" << s.operationStorage.hits << ",\"fallbacks\":" << s.operationStorage.fallbacks
+      << '}'
+      << ",\"ndi_handoff\":{\"guard_windows\":" << s.ndiGuardWindows
+      << ",\"guard_window_dequeues\":" << s.ndiGuardHits
+      << ",\"brief_wait_wall_us\":" << s.ndiGuardWaitWallUs
+      << ",\"max_ready_to_dequeue_us\":" << s.ndiReadyToDequeueMaxUs << '}'
       << ",\"config\":{\"mailbox_fast_path\":" << (s.config.mailboxFastPath ? "true" : "false")
+      << ",\"ndi_handoff_guard_us\":" << s.config.ndiHandoffGuardUs
+      << ",\"asio_pooled_handler\":" << (s.config.asioPooledHandler ? "true" : "false")
       << ",\"network_profile\":" << quote(networkProfileName(s.config.linkMbps))
       << ",\"selected_link_mbps\":" << s.config.linkMbps
       << ",\"effective_link_mbps\":" << s.engine.effectiveMbps
@@ -497,14 +557,21 @@ std::string report(const State &s) {
                              "retains host-request proxy separately",
             i == 0 ? "<= 15000 us" : "<= 18000 us",
             std::to_string(m.initialDuration.maxUs) + " us; " + std::to_string(m.deadlineMisses) +
-                " late; " + std::to_string(m.initialIncomplete) + " incomplete",
+                " late; " + std::to_string(m.initialIncomplete) + " incomplete; " +
+                std::to_string(m.initialComplete) + "/" + std::to_string(a.built) +
+                " complete/built",
             !a.built || a.kind == "device"
                 ? "not_tested"
-                : (m.deadlineMisses || m.initialIncomplete || m.initialComplete != a.built
+                : (m.deadlineMisses || m.initialIncomplete
                        ? "fail"
-                       : "pass"),
-            "Local submission only; device common timestamp does not independently establish "
-            "source-to-host clock offset or physical egress");
+                       : (!s.finished ? "running"
+                                      : (m.initialComplete == a.built ? "pass" : "fail"))),
+            a.kind == "device"
+                ? "Device common timestamp does not independently establish source-to-host clock "
+                  "offset or physical egress"
+                : "The maximum covers completed frames. During a run, in-flight frames and "
+                  "independently published counters are pending evaluation. After draining, all "
+                  "built frames must have completed successfully by their deadlines.");
         row("packet_gap_jitter", i + 1, name + " packet interval deviation (engineering target)",
             "Actual first-copy interval minus original global scheduling plan interval",
             "strictly < 1000 us",

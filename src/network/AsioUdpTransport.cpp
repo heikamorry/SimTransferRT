@@ -1,8 +1,11 @@
 #include "network/AsioUdpTransport.h"
+#include "network/AsioOperationStorage.h"
 #include "network/FeedbackRead.h"
 #include "core/SamplingClock.h"
+#include <boost/asio/bind_allocator.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/error.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -10,7 +13,9 @@
 #include <boost/version.hpp>
 #include <array>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -30,11 +35,12 @@ namespace {
 using boost::asio::ip::address_v4;
 using boost::asio::ip::udp;
 
-// Fixed pool: no allocation on the send path, and the byte budget bounds what a
-// stalled NIC queue can pin. One completion slot per pool slot, so a completion
+// Datagram buffers have fixed capacity, bounding what a stalled socket can
+// pin. One completion slot per pool slot, so a completion
 // can never be dropped: it is only produced while its slot is still in flight.
 constexpr std::size_t SlotCount = 64;
 constexpr std::size_t SlotBytes = 256 * 1024;
+static_assert(SlotCount * MaxDatagram <= SlotBytes, "send pool exceeds its byte budget");
 
 struct Slot {
     std::array<std::uint8_t, MaxDatagram> bytes{};
@@ -47,6 +53,21 @@ struct Slot {
 class AsioUdpTransport final : public IUdpTransport {
   public:
     explicit AsioUdpTransport(bool async) : async_(async) {}
+
+    void setOperationStorageReuse(bool enabled) override {
+        if (socket_.is_open())
+            throw std::logic_error("configure operation storage reuse before opening the socket");
+        if (enabled && !async_)
+            throw std::invalid_argument("operation storage reuse requires asynchronous Boost.Asio");
+        if (enabled)
+            operationStorage_ = std::make_unique<AsioOperationStorage>();
+        else
+            operationStorage_.reset();
+    }
+
+    OperationStorageStats operationStorageStats() const noexcept override {
+        return operationStorage_ ? operationStorage_->stats() : OperationStorageStats{};
+    }
 
     ~AsioUdpTransport() override {
         // Cancellation still delivers handlers; observe them before the buffers
@@ -157,45 +178,54 @@ class AsioUdpTransport final : public IUdpTransport {
         slot->size = size;
         slot->token = token;
         const auto index = static_cast<std::size_t>(slot - slots_.data());
-        socket_.async_send_to(
-            boost::asio::buffer(slot->bytes.data(), size), peer_,
-            [this, index](const boost::system::error_code &error, std::size_t sent) {
-                auto &done = slots_[index];
-                done.active = false;
-                done.unobserved = true;
-                if (error) {
-                    if (error == boost::asio::error::operation_aborted)
-                        error_ = "Asio send cancelled";
-                    else
-                        error_ = "Asio async_send_to: " + error.message();
-                    completions_[completionWrite_++ % completions_.size()] = {
-                        {done.token,
-                         error == boost::asio::error::operation_aborted ? SendDisposition::Cancelled
-                                                                        : SendDisposition::Failed,
-                         rt::monotonicUs()},
-                        index};
-                } else if (sent != done.size) {
-                    error_ = "short Asio async_send_to";
-                    completions_[completionWrite_++ % completions_.size()] = {
-                        {done.token, SendDisposition::Failed, rt::monotonicUs()}, index};
-                } else {
-                    completions_[completionWrite_++ % completions_.size()] = {
-                        {done.token, SendDisposition::Complete, rt::monotonicUs()}, index};
-                }
-            });
+        auto onComplete = [this, index](const boost::system::error_code &error, std::size_t sent) {
+            auto &done = slots_[index];
+            done.active = false;
+            done.unobserved = true;
+            if (error) {
+                if (error == boost::asio::error::operation_aborted)
+                    error_ = "Asio send cancelled";
+                else
+                    error_ = "Asio async_send_to: " + error.message();
+                completions_[completionWrite_++ % completions_.size()] = {
+                    {done.token,
+                     error == boost::asio::error::operation_aborted ? SendDisposition::Cancelled
+                                                                    : SendDisposition::Failed,
+                     rt::monotonicUs()},
+                    index};
+            } else if (sent != done.size) {
+                error_ = "short Asio async_send_to";
+                completions_[completionWrite_++ % completions_.size()] = {
+                    {done.token, SendDisposition::Failed, rt::monotonicUs()}, index};
+            } else {
+                completions_[completionWrite_++ % completions_.size()] = {
+                    {done.token, SendDisposition::Complete, rt::monotonicUs()}, index};
+            }
+        };
+        const auto buffer = boost::asio::buffer(slot->bytes.data(), size);
+        try {
+            if (operationStorage_) {
+                std::pmr::polymorphic_allocator<std::byte> allocator(operationStorage_.get());
+                socket_.async_send_to(buffer, peer_,
+                                      boost::asio::bind_allocator(allocator, std::move(onComplete)));
+            } else {
+                socket_.async_send_to(buffer, peer_, std::move(onComplete));
+            }
+        } catch (...) {
+            // Initiation failed before a handler took ownership of this slot.
+            slot->active = false;
+            --inFlight_;
+            throw;
+        }
         return SendDisposition::Pending;
     }
 
     bool pollCompletion(SendCompletion &out) override {
         if (!async_)
             return false;
-        // Handlers only run on this thread. Draining is bounded per call so a
-        // completion storm cannot starve pacing.
-        // An idle poll stops io_context. A later submission needs a restart,
-        // otherwise its completion remains queued indefinitely (notably epoll).
-        if (context_.stopped())
-            context_.restart();
-        context_.poll();
+        // Observe one real handler without an extra idle OS poll per packet.
+        if (completionRead_ == completionWrite_)
+            context_.poll_one();
         if (completionRead_ == completionWrite_)
             return false;
         const auto pending = completions_[completionRead_++ % completions_.size()];
@@ -279,15 +309,9 @@ class AsioUdpTransport final : public IUdpTransport {
     Slot *acquire() {
         if (inFlight_ >= SlotCount)
             return nullptr;
-        std::size_t bytes = 0;
-        for (const auto &slot : slots_)
-            if (slot.active || slot.unobserved)
-                bytes += slot.size;
         for (auto &slot : slots_) {
             if (slot.active || slot.unobserved)
                 continue;
-            if (bytes + MaxDatagram > SlotBytes)
-                return nullptr;
             slot.active = true;
             ++inFlight_;
             return &slot;
@@ -296,8 +320,6 @@ class AsioUdpTransport final : public IUdpTransport {
     }
 
     bool async_;
-    boost::asio::io_context context_;
-    udp::socket socket_{context_};
     udp::endpoint peer_;
     address_v4 target_;
     std::array<std::uint8_t, MaxDatagram + 1> buffer_{};
@@ -318,6 +340,13 @@ class AsioUdpTransport final : public IUdpTransport {
     int receiveBuffer_ = 0;
     int resetError_ = 0;
     std::string error_;
+    // Both the data slots and the handler allocator must outlive io_context
+    // teardown, including handlers destroyed without invocation after close.
+    std::unique_ptr<AsioOperationStorage> operationStorage_;
+    boost::asio::io_context context_;
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_{
+        context_.get_executor()};
+    udp::socket socket_{context_};
 };
 } // namespace
 

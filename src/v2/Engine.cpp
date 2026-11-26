@@ -3,11 +3,8 @@
 #include "protocol/PacketCodec.h"
 #include "core/SamplingClock.h"
 #include <algorithm>
-#include <thread>
-#if defined(_M_X64) || defined(_M_IX86)
-#include <intrin.h>
-#endif
 #include <limits>
+#include <string_view>
 
 namespace rt::v2 {
 namespace {
@@ -85,23 +82,34 @@ Engine::Engine(Config c, unsigned liveLinkMbps)
     if (config_.handoffTrace)
         for (auto &events : worstFirstDispatch_)
             events.reserve(32);
-    if (config_.fragmentTrace)
+    if (config_.fragmentTrace) {
         fragmentSpanHistograms_.resize(caches_.size());
+        globalGapViolationPairs_.reserve(MaxGlobalGapViolationPairs);
+        gapPreviousEpFrames_.reserve(MaxGlobalGapViolationPairs);
+    }
 }
 
 void Engine::cancel(Slot &s, bool stopping) {
     s.duplicatePending = false;
     auto &m = stats_[s.p->moduleId - 1];
-    if (!s.finalized) {
+    const bool pending = inFlight_ && inFlight_->slot.get() == &s;
+    const bool original = pending && !inFlight_->retry && !inFlight_->duplicate;
+    const auto left = s.p->payload->packets.size() - s.next - (original ? 1 : 0);
+    // An evicted last fragment can still complete through the transport-owned buffer.
+    if (!s.finalized && (stopping || !original || left)) {
         ++m.initialIncomplete;
-        const auto left = s.p->payload->packets.size() - s.next;
         if (stopping)
             m.unsentAtStop += left;
         else
             m.unsentEvicted += left;
         s.finalized = true;
+        if (s.gapEpFrameIndex)
+            gapPreviousEpFrames_[*s.gapEpFrameIndex].awaitingFinalize = false;
     }
-    m.retryCancelled += s.pendingRetries.size();
+    m.retryCancelled +=
+        s.pendingRetries.size() -
+        (!stopping && pending && inFlight_->retry && s.pendingRetries.count(inFlight_->index) ? 1
+                                                                                              : 0);
     s.pendingRetries.clear();
 }
 
@@ -130,6 +138,8 @@ void Engine::submit(PreparedPtr p, FrameHandoff handoff) {
         span.frameId = slot->p->frameId;
         span.sampleUs = slot->p->sampleUs;
         span.readyUs = slot->p->readyUs;
+        span.enqueuedUs = handoff.enqueuedUs;
+        span.dequeuedUs = handoff.dequeuedUs;
         span.fragments.reserve(slot->p->payload->packets.size());
     }
     if (config_.handoffTrace) {
@@ -250,6 +260,8 @@ bool Engine::pendingInitial() const {
 }
 
 std::uint64_t Engine::nextDueUs() const {
+    if (inFlight_)
+        return 0; // Poll the outstanding completion on the next scheduler turn.
     if (statuses_.empty() && !pendingInitial() && retries_.empty())
         return UINT64_MAX;
     return (allowedTick_ + rate_ - 1) / rate_;
@@ -341,6 +353,11 @@ void Engine::finishFragmentSpan(Slot &slot) {
     if (!worst || span.spanUs() > worst->spanUs())
         worst = slot.finishedSpan;
     if (span.moduleId == EpModule) {
+        if (slot.gapEpFrameIndex) {
+            auto &frame = gapPreviousEpFrames_[*slot.gapEpFrameIndex];
+            frame.span = slot.finishedSpan;
+            frame.awaitingFinalize = false;
+        }
         if (pendingNdiWaitEp_.lock().get() == &slot) {
             worstNdiWaitEp_ = slot.finishedSpan;
             pendingNdiWaitEp_.reset();
@@ -469,41 +486,30 @@ bool Engine::step(std::uint64_t now, const SendFunction &send,
 
 bool Engine::stepTransport(std::uint64_t now, IUdpTransport &transport,
                            const std::function<std::uint64_t()> &clock) {
-    const bool asynchronous = transport.sendApi().find("async_send_to") != std::string::npos;
-    if (!asynchronous)
-        return stepInternal(
-            now,
-            [&](const std::uint8_t *p, std::size_t n) {
-                return transport.submitDatagram(p, n, 0);
-            },
-            clock, true);
-    // One dispatch at a time. The completion is observed before the next
-    // selection, so this candidate never reports initiation as a completed send
-    // and never reuses a buffer still owned by the socket.
-    std::uint64_t token = 0;
-    return stepInternal(
+    if (inFlight_ && !pollSend(transport, clock))
+        return false;
+    const bool sent = stepInternal(
         now,
         [&](const std::uint8_t *p, std::size_t n) {
-            token = ++asyncToken_;
-            const auto started = transport.submitDatagram(p, n, token);
-            if (started != SendDisposition::Pending)
-                return started;
-            for (unsigned spin = 0; spin < 200000; ++spin) {
-                SendCompletion done;
-                while (transport.pollCompletion(done))
-                    if (done.token == token)
-                        return done.disposition;
-                if (!transport.inFlight())
-                    break;
-#if defined(_M_X64) || defined(_M_IX86)
-                _mm_pause();
-#else
-                std::this_thread::yield();
-#endif
-            }
-            return SendDisposition::Failed;
+            return transport.submitDatagram(p, n, ++asyncToken_);
         },
         clock, true);
+    if (inFlight_)
+        pollSend(transport, clock);
+    return sent;
+}
+
+bool Engine::pollSend(IUdpTransport &transport, const std::function<std::uint64_t()> &clock) {
+    SendCompletion done;
+    if (!transport.pollCompletion(done))
+        return false;
+    if (done.token != asyncToken_)
+        throw std::runtime_error("Unexpected UDP completion token");
+    const auto dispatch = std::move(*inFlight_);
+    inFlight_.reset();
+    finishDispatch(dispatch, done.disposition == SendDisposition::Complete,
+                   done.observedUs ? done.observedUs : clock(), true);
+    return true;
 }
 
 bool Engine::stepInternal(
@@ -582,7 +588,6 @@ bool Engine::stepInternal(
     const auto plan = (original + rate_ - 1) / rate_;
     const auto start = clock();
     bool dropped = false;
-    bool success = false;
     const auto module = status ? 3 : selected->p->moduleId;
     const bool inject = !status && module == config_.faultModule;
     const bool traceOriginal = config_.fragmentTrace && !status && !retry && !duplicate;
@@ -592,28 +597,45 @@ bool Engine::stepInternal(
     if (inject && !retry && config_.faults.corruptFirst.count(index))
         packet.bytes[packet.size - 1] ^= 0x80;
     std::uint64_t callStart = 0;
-    std::uint64_t end;
-    if (dropped) {
-        end = clock();
-    } else {
+    SendDisposition disposition = SendDisposition::Failed;
+    if (!dropped) {
         if (traceOriginal)
             callStart = clock();
-        const auto disposition = send(packet.bytes.data(), packet.size);
+        disposition = send(packet.bytes.data(), packet.size);
         if (disposition == SendDisposition::Backpressure && allowDefer)
             return false;
-        success = disposition == SendDisposition::Complete;
-        end = clock();
     }
+    const auto end = disposition == SendDisposition::Pending ? 0 : clock();
+    // Immediate success/failure already has its return stamp. Only a traced, pending
+    // original needs another clock read before its completion handler can be polled.
+    const auto submitReturn =
+        traceOriginal && disposition == SendDisposition::Pending ? clock() : end;
     const auto cost = (packet.size + 66) * 8ULL;
-    if (traceOriginal)
-        recordFragment(*selected,
-                       {index, plan, adjusted, start, callStart, end, 0, !dropped, success});
     if (!status && !retry)
         originalTick_ = original + cost;
     // At most one datagram of catch-up credit. Long stalls cannot release an entire frame burst.
     const auto actual = start * rate_;
     const auto floor = actual > cost ? actual - cost : 0;
     allowedTick_ = std::max(allowedTick_, floor) + cost;
+    if (retry)
+        retries_.pop_front();
+    Dispatch dispatch{selected,  index,  retry, status,   duplicate, dropped,  packet.size,
+                      requested, anchor, plan,  adjusted, start,     callStart, submitReturn};
+    if (disposition == SendDisposition::Pending)
+        inFlight_ = std::move(dispatch);
+    else
+        finishDispatch(dispatch, disposition == SendDisposition::Complete, end);
+    return true;
+}
+
+void Engine::finishDispatch(const Dispatch &dispatch, bool success, std::uint64_t end,
+                            bool pendingCompletion) {
+    const auto &[selected, index, retry, status, duplicate, dropped, bytes, requested, anchor, plan,
+                 adjusted, start, callStart, submitReturn] = dispatch;
+    const auto module = status ? 3 : selected->p->moduleId;
+    if (config_.fragmentTrace && !status && !retry && !duplicate)
+        recordFragment(*selected, {index, plan, adjusted, start, callStart, dropped ? 0 : submitReturn,
+                                   end, 0, !dropped, success, pendingCompletion});
     GapPacket current;
     if (config_.fragmentTrace && !dropped) {
         current = {static_cast<std::uint8_t>(module),
@@ -627,6 +649,20 @@ bool Engine::stepInternal(
                    start,
                    end,
                    success};
+        if (module == NdiModule) {
+            // Retries can refer to a frame whose original trace is already finalized.
+            const auto *span = selected->fragmentTrace ? selected->fragmentTrace.get()
+                                                       : selected->finishedSpan.get();
+            if (span) {
+                current.enqueuedUs = span->enqueuedUs;
+                current.dequeuedUs = span->dequeuedUs;
+            }
+        }
+        if (!status && !retry && !duplicate) {
+            current.readyUs = selected->p->readyUs;
+            current.callStartUs = callStart;
+            current.submitReturnUs = submitReturn;
+        }
     }
     // Consume the exact interval already passed to each histogram. On ties
     // retain the first pair, including a valid first observation of zero.
@@ -642,16 +678,36 @@ bool Engine::stepInternal(
         const auto dev = absDiff(gap, expected);
         globalGaps_.add(gap);
         globalDeviation_.add(dev, 999);
-        if (dev >= 1000)
+        if (dev >= 1000) {
             ++globalViolations_;
+            if (config_.fragmentTrace && globalGapViolationPairs_.size() < MaxGlobalGapViolationPairs) {
+                const auto &previous = previousGapPacket_[0];
+                globalGapViolationPairs_.push_back({previous, current, gap, expected, dev});
+                if (previous.moduleId == EpModule && std::string_view(previous.kind) == "data") {
+                    auto &slot = *lastEpDataSlot_;
+                    if (!slot.gapEpFrameIndex) {
+                        slot.gapEpFrameIndex = gapPreviousEpFrames_.size();
+                        gapPreviousEpFrames_.push_back(
+                            {slot.p->frameId, !slot.finalized, slot.finishedSpan});
+                    }
+                    globalGapViolationPairs_.back().previousEpFrameIndex = slot.gapEpFrameIndex;
+                }
+            }
+        }
         if (config_.fragmentTrace)
             retainGap(0, gap, expected, dev);
     }
     if (!dropped) {
         lastGlobalStart_ = start;
         lastGlobalPlan_ = plan;
-        if (config_.fragmentTrace)
+        if (config_.fragmentTrace) {
+            // Keep the preceding EP frame across cache eviction until its next actual gap is known.
+            // Consecutive fragments of the same frame do not acquire a shared reference.
+            if (module == EpModule && !retry && !duplicate && selected.get() != lastEpDataSlot_.get() &&
+                globalGapViolationPairs_.size() < MaxGlobalGapViolationPairs)
+                lastEpDataSlot_ = selected;
             previousGapPacket_[0] = current;
+        }
     }
     PacketEvent event;
     event.moduleId = static_cast<std::uint8_t>(module);
@@ -676,7 +732,7 @@ bool Engine::stepInternal(
             ++m.injectedDrops;
         else if (success) {
             ++m.datagrams;
-            m.bytes += packet.size;
+            m.bytes += bytes;
             if (retry)
                 ++m.retransmissions;
         } else
@@ -684,7 +740,6 @@ bool Engine::stepInternal(
         if (retry) {
             retryWait_[module - 1].add(start >= requested ? start - requested : 0);
             selected->pendingRetries.erase(index);
-            retries_.pop_front();
         } else if (duplicate) {
             selected->duplicatePending = false;
         } else {
@@ -717,7 +772,7 @@ bool Engine::stepInternal(
             ++selected->next;
             if (success)
                 ++selected->successful;
-            if (inject && config_.faults.duplicateFirst.count(index)) {
+            if (module == config_.faultModule && config_.faults.duplicateFirst.count(index)) {
                 selected->duplicatePending = true;
                 selected->duplicateIndex = index;
             }
@@ -758,10 +813,12 @@ bool Engine::stepInternal(
         previousDispatch_ = {event.moduleId, event.frameId, event.index, start, end, retry};
     }
     recordEvent(event);
-    return true;
 }
 
 void Engine::stop() {
+    if (inFlight_ && inFlight_->slot)
+        cancel(*inFlight_->slot, true);
+    inFlight_.reset();
     for (auto &c : caches_)
         for (auto &s : c)
             cancel(*s, true);
@@ -802,8 +859,11 @@ EngineSnapshot Engine::snapshot() const {
         s.worstFirstDispatch = worstFirstDispatch_;
     }
     s.worstFragmentSpan = worstFragmentSpan_;
-    if (config_.fragmentTrace)
+    if (config_.fragmentTrace) {
         s.worstPacketGaps = worstPacketGaps_;
+        s.globalGapViolationPairs = globalGapViolationPairs_;
+        s.gapPreviousEpFrames = gapPreviousEpFrames_;
+    }
     for (std::size_t i = 0; i < fragmentSpanHistograms_.size(); ++i)
         s.fragmentSpanDistribution[i] = fragmentSpanHistograms_[i].summary();
     s.worstNdiWait = worstNdiWait_;

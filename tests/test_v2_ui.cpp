@@ -1,5 +1,6 @@
 #include "ui/V2Window.h"
 #include "asio_test_socket.h"
+#include "core/SamplingClock.h"
 #include "ui/MedicalBackdrop.h"
 #include "support/V2CliOptions.h"
 #include <QApplication>
@@ -15,6 +16,7 @@
 #include <QSettings>
 #include <QSpinBox>
 #include <QStandardPaths>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QThread>
@@ -160,6 +162,8 @@ void settingsAndLocking() {
 
 void presentation() {
     rt::V2Window w;
+    require(w.reportForExport()["receiver"].toObject().isEmpty(),
+            "a window without a receiver session must export an empty receiver report");
     QJsonArray rows{QJsonObject{{"requirement", "sampling"},
                                 {"measurement", "all intervals"},
                                 {"threshold", "<1000us"},
@@ -176,6 +180,10 @@ void presentation() {
     require(acceptance->item(0, 4)->text() == QStringLiteral("失败") &&
                 acceptance->item(1, 4)->text() == QStringLiteral("未检测"),
             "failed/unmeasured row rendered as pass");
+    w.presentSenderReport(QJsonObject{
+        {"acceptance", QJsonArray{QJsonObject{{"status", "running"}}}}});
+    require(acceptance->item(0, 4)->text() == QStringLiteral("进行中"),
+            "pending initial transmissions must render as running");
     const QJsonObject tool{{"handle", 1},
                            {"state", "valid"},
                            {"position", QJsonArray{10.0, 20.0, 30.0}},
@@ -215,9 +223,126 @@ void presentation() {
     }
 }
 
+void widgetTimingEvidence() {
+    rt::V2Window w;
+    QJsonObject view;
+    auto apply = [&] { w.presentReceiverReport(QJsonObject{{"display", view}}); };
+    auto evidence = [&] {
+        return w.reportForExport()["receiver"].toObject()["ui_observations"].toObject()["modules"]
+            .toArray();
+    };
+    const auto completed = static_cast<qint64>(rt::monotonicUs()) - 50000;
+    QJsonObject frame{{"frame_id", 17}, {"host_completed_us", completed}, {"stale", false}};
+    view["ndi"] = frame;
+    apply();
+    const auto ndiOnly = evidence();
+    require(ndiOnly.size() == 2 &&
+                ndiOnly.at(0).toObject().value("widget_updated_frames").toInteger() == 1 &&
+                ndiOnly.at(1).toObject()["max_update_endpoint"].isNull() &&
+                ndiOnly.at(1).toObject().value("widget_updated_frames").toInteger() == 0,
+            "an NDI widget update must only count toward NDI");
+    view["ep"] = frame;
+    apply();
+    const auto both = evidence();
+    for (const auto &value : both) {
+        const auto module = value.toObject();
+        require(!module.contains("worst_frame"), "disabled trace exported GUI diagnostics");
+        const auto endpoint = module["max_update_endpoint"].toObject();
+        require(endpoint["frame_id"].toInt() == 17 && endpoint["completed_us"].toInteger() == completed &&
+                    endpoint["widget_updated_us"].toInteger() - completed ==
+                        module["max_complete_to_widget_update_us"].toInteger() &&
+                    endpoint["tab_index"].toInt(-1) == w.findChild<QTabWidget *>()->currentIndex() &&
+                    endpoint["visible"].toBool() == w.isVisible() &&
+                    endpoint["minimized"].toBool() == w.isMinimized(),
+                "formal endpoint must describe the frame and window at the original maximum");
+        require(module["widget_updated_frames"].toInteger() == 1 &&
+                    module["updates_after_one_module_period"].toInteger() == 1 &&
+                    module["max_complete_to_widget_update_us"].toInteger() >= 50000,
+                "distinct frames with the same ID in NDI and EP must retain their actual lateness");
+    }
+    frame["stale"] = true;
+    view["ndi"] = frame;
+    apply();
+    require(evidence() == both, "freshness changes must not count as a second frame");
+    frame["frame_id"] = 18;
+    view["stopped"] = true;
+    view["ndi"] = frame;
+    view["ep"] = frame;
+    apply();
+    require(evidence() == both, "a stopped display snapshot must not count as a live frame");
+
+    view["stopped"] = false;
+    QJsonObject ep{{"frame_id", 1001}, {"samples", QJsonArray{3, 35, 67}}, {"stale", false}};
+    view["ep"] = ep;
+    apply();
+    auto *epState = child<QLabel>(w, "v2EpState");
+    require(epState->text().contains("1001"), "EP label must show the current frame");
+    const auto count = evidence().at(1).toObject()["widget_updated_frames"].toInteger();
+    ep["frame_id"] = 1002;
+    view["ep"] = ep;
+    apply();
+    require(epState->text().contains("1002") &&
+                evidence().at(1).toObject()["widget_updated_frames"].toInteger() == count + 1,
+            "identical EP samples in a new frame must still update the label and frame count");
+}
+
+void widgetFrameTimingTrace() {
+    rt::ui::WidgetFrameTiming worst;
+    require(worst.json().isNull(), "a module without queued frames must not report a sample");
+    using Drain = rt::ui::WidgetFrameDrain;
+    worst.retainWorst({9, 2, Drain::FrameEvent, 1000, 1020, 51020, 51120, 51180});
+    worst.retainWorst({10, 1, Drain::Timer, 65000, 65001, 65002, 65003, 65004});
+    const auto row = worst.json().toObject();
+    require(row["frame_id"].toInteger() == 9 && row["drain"].toString() == "frame_event" &&
+                row["queue_depth_at_enqueue"].toInt() == 2 &&
+                row["complete_to_enqueue_us"].toInteger() == 20 &&
+                row["enqueue_to_batch_us"].toInteger() == 50000 &&
+                row["batch_to_apply_us"].toInteger() == 100 &&
+                row["apply_to_update_us"].toInteger() == 60 &&
+                row["complete_to_update_us"].toInteger() == 50180,
+            "GUI worst trace lost the delayed frame or mixed timestamps from other frames");
+    auto wake = std::make_shared<rt::ui::WidgetWakeTiming>(11, 2, 80);
+    rt::ui::WidgetFrameTiming first{80, 1, Drain::Timer, 1000, 1010, 1020, 1021, 1025, wake};
+    const auto beforePost = first.json().toObject()["wake"].toObject();
+    require(!beforePost["inherited"].toBool() && beforePost["post_started_us"].isNull() &&
+                beforePost["drain_event_sequence"].isNull() && !beforePost["drained_by_this_event"].toBool(),
+            "a timer-drained frame must preserve its pending notification");
+    wake->postStarted.store(1040);
+    wake->postReturned.store(1042);
+    wake->eventEntered.store(1050);
+    rt::ui::WidgetFrameTiming next{81, 1, Drain::FrameEvent, 1043, 1045, 1051, 1053, 1060,
+                                    wake, 11, true};
+    const auto arrived = next.json().toObject()["wake"].toObject();
+    require(arrived["inherited"].toBool() && arrived["origin_module_id"].toInt() == 2 &&
+                arrived["origin_frame_id"].toInteger() == 80 && arrived["event_entered_us"].toInteger() == 1050 &&
+                arrived["post_returned_us"].toInteger() == 1042 && arrived["drained_by_this_event"].toBool(),
+            "a later frame can inherit the notification of a frame already drained by a timer");
+    const auto finished = first.json().toObject()["wake"].toObject();
+    require(finished["post_returned_us"].toInteger() == 1042 && !finished["drained_by_this_event"].toBool(),
+            "later delivery cannot change which code drained the retained frame");
+    next.drainWakeSequence = 12;
+    const auto otherEvent = next.json().toObject()["wake"].toObject();
+    require(otherEvent["drain_event_sequence"].toInteger() == 12 &&
+                !otherEvent["drained_by_this_event"].toBool(),
+            "a different event sequence must not be attributed to the retained wake");
+    auto racingWake = std::make_shared<rt::ui::WidgetWakeTiming>(13, 1, 90);
+    racingWake->postStarted.store(9001);
+    racingWake->eventEntered.store(9003);
+    rt::ui::WidgetFrameTiming racing{90, 1, Drain::FrameEvent, 8990, 9000, 9004, 9005, 9010,
+                                     racingWake, 13, false};
+    const auto inPost = racing.json().toObject()["wake"].toObject();
+    require(inPost["event_entered_us"].toInteger() == 9003 && inPost["post_returned_us"].isNull(),
+            "a GUI event need not wait for the return from postEvent");
+    racingWake->postReturned.store(9020);
+    require(racing.json().toObject()["wake"].toObject()["post_returned_us"].toInteger() == 9020,
+            "a late producer return must remain observable on the retained wake");
+}
+
 void liveLifecycle() {
     QSettings().clear();
-    rt::V2Window w;
+    rt::V2WindowRunOptions options;
+    options.fragmentTrace = true;
+    rt::V2Window w(nullptr, options);
     w.show();
     const QDir archive(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) +
                        "/v2-runs");
@@ -237,7 +362,12 @@ void liveLifecycle() {
             }),
             "receiver failed to publish ready baseline");
     auto *start = child<QPushButton>(w, "v2Start");
+    auto *tabs = w.findChild<QTabWidget *>();
+    require(tabs, "missing sender/receiver tabs");
+    tabs->setCurrentIndex(1);
     start->click();
+    require(!w.reportForExport()["sender"].toObject()["run_id"].toString().isEmpty(),
+            "live export on the receiver page lost the active sender");
     require(!child<QComboBox>(w, "v2NetworkProfile")->isEnabled(), "real run did not lock profile");
     require(until([&] {
                 return child<QTableWidget>(w, "v2NdiToolsTable")->rowCount() > 0;
@@ -261,6 +391,36 @@ void liveLifecycle() {
         }
     }
     require(jointlyChecked == 2, "joint export omitted one module");
+    const auto observed = w.reportForExport()["receiver"].toObject()["ui_observations"]
+                              .toObject()["modules"].toArray();
+    require(observed.size() == 2, "missing per-module GUI timing");
+    for (const auto &value : observed) {
+        const auto module = value.toObject();
+        const auto worst = module["worst_frame"].toObject();
+        const auto wake = worst["wake"].toObject();
+        const bool frameEvent = worst["drain"].toString() == "frame_event";
+        require(wake["sequence"].toInteger() > 0 &&
+                    wake["drained_by_this_event"].toBool() == frameEvent &&
+                    (frameEvent ? wake["drain_event_sequence"] == wake["sequence"]
+                                : wake["drain_event_sequence"].isNull()) &&
+                    (!frameEvent || (wake["event_entered_us"].toInteger() > 0 &&
+                                     wake["event_entered_us"].toInteger() <= worst["batch_taken_us"].toInteger())),
+                "recorded wake does not match the event that took this frame");
+        require(worst["queue_depth_at_enqueue"].toInt() > 0 &&
+                    worst["complete_to_update_us"].toInteger(-1) ==
+                        module["max_complete_to_widget_update_us"].toInteger() &&
+                    worst["completed_us"].toInteger() <= worst["enqueued_us"].toInteger() &&
+                    worst["enqueued_us"].toInteger() <= worst["batch_taken_us"].toInteger() &&
+                    worst["batch_taken_us"].toInteger() <= worst["apply_started_us"].toInteger() &&
+                    worst["apply_started_us"].toInteger() <= worst["widget_updated_us"].toInteger(),
+                "actual widget timing and the retained acceptance sample must agree");
+    }
+    auto senderRefreshCalls = [&] {
+        return w.reportForExport()["receiver"].toObject()["ui_work"].toObject()["sender_refresh"]
+            .toObject()["calls"].toInteger();
+    };
+    require(senderRefreshCalls() == 1,
+            "receiver page must finalize the sender without periodic sender table refreshes");
     auto *stats = child<QTableWidget>(w, "v2SenderStats");
     require(stats->item(0, 1)->text().toULongLong() > 0 &&
                 stats->item(1, 1)->text().toULongLong() > 0,
@@ -283,6 +443,8 @@ void liveLifecycle() {
     child<QComboBox>(w, "v2NetworkProfile")->setCurrentIndex(1);
     child<QSpinBox>(w, "v2EpBytes")->setValue(512);
     start->click();
+    tabs->setCurrentIndex(0);
+    require(senderRefreshCalls() == 1, "returning to the sender page did not refresh it immediately");
     require(until([&] {
                 return start->isEnabled() &&
                        w.reportForExport()["joint_scope"].toObject()["eligible"].toBool();
@@ -401,10 +563,16 @@ int main(int argc, char **argv) {
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
     try {
+        presentation();
+        widgetTimingEvidence();
+        widgetFrameTimingTrace();
+        if (app.arguments().contains("--presentation-only")) {
+            std::cout << "V2 widget presentation and per-module timing evidence passed\n";
+            return 0;
+        }
         iconIdentity();
         cli();
         settingsAndLocking();
-        presentation();
         liveLifecycle();
         std::cout << "V2 icon identity, CLI, profile persistence, stop locking, consumer "
                      "presentation and live lifecycle passed\n";

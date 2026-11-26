@@ -29,6 +29,8 @@ class Session {
     // Owner-thread operation; replacing the factory during a run is rejected.
     void setTransportFactory(TransportFactory);
     void start(const Config &);
+    // Stop production and drain admitted work, including the receiver retry window.
+    void finish() noexcept;
     void stop() noexcept;
     bool busy() const noexcept;
     // Exact EP maximum from the latest published, trace-enabled snapshot.

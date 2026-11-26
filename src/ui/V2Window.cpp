@@ -8,11 +8,14 @@
 #include "v2/Receiver.h"
 #include "v2/ReceiveLoop.h"
 #include "core/SamplingClock.h"
+#include "core/Diagnostics.h"
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QEvent>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -21,12 +24,15 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPaintEngine>
+#include <QPaintEvent>
 #include <QPainterPath>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -44,10 +50,12 @@
 #include "network/AsioUdpTransport.h"
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <mutex>
 #include <optional>
 #include <thread>
 #include <chrono>
+#include <deque>
 
 namespace rt {
 namespace {
@@ -103,6 +111,8 @@ QSpinBox *spin(int lo, int hi, int value, const char *name) {
 }
 
 QString verdict(const QString &s) {
+    if (s == "running")
+        return QStringLiteral("进行中");
     if (s == "pass")
         return QStringLiteral("通过");
     if (s == "fail")
@@ -146,6 +156,18 @@ struct ReceiverUpdate {
     bool final = false;
 };
 
+class WidgetFramesReady final : public QEvent {
+  public:
+    static QEvent::Type eventType() {
+        static const auto type = static_cast<QEvent::Type>(QEvent::registerEventType());
+        return type;
+    }
+    WidgetFramesReady(std::uint64_t generation, std::shared_ptr<ui::WidgetWakeTiming> wake)
+        : QEvent(eventType()), generation(generation), wake(std::move(wake)) {}
+    const std::uint64_t generation;
+    const std::shared_ptr<ui::WidgetWakeTiming> wake;
+};
+
 using GuiReceiverSocket = AsioReceiverSocket;
 
 inline v2::Session::TransportFactory guiTransportFactory() {
@@ -161,9 +183,9 @@ QString routeKey(const v2::Config &c) {
            QString::number(c.targetPort);
 }
 
-QJsonObject ndiDisplay(const v2::ReceiverSnapshot &snapshot) {
+QJsonObject ndiDisplay(const aurora::Reply &reply) {
     QJsonArray rows;
-    for (const auto &tool : snapshot.ndi.tools) {
+    for (const auto &tool : reply.tools) {
         QString state = QStringLiteral("disabled");
         if (tool.status == aurora::HandleStatus::Missing)
             state = "missing";
@@ -186,10 +208,10 @@ QJsonObject ndiDisplay(const v2::ReceiverSnapshot &snapshot) {
     return {{"tools", rows}};
 }
 
-QJsonObject epDisplay(const v2::ReceiveView &view) {
+QJsonObject epDisplay(const v2::Frame &frame) {
     QJsonObject ep{{"format", QStringLiteral("字节值预览；不是已解码的真实电生理波形")}};
-    if (view.frame) {
-        const auto &bytes = view.frame->bytes;
+    {
+        const auto &bytes = frame.bytes;
         QJsonArray samples;
         const auto stride = std::max<std::size_t>(1, bytes.size() / 256);
         for (std::size_t i = 0; i < bytes.size() && samples.size() < 256; i += stride)
@@ -200,21 +222,16 @@ QJsonObject epDisplay(const v2::ReceiveView &view) {
     return ep;
 }
 
-QJsonObject displayReport(const ReceiverUpdate &update, const ReceiverUpdate *previous,
-                          QJsonObject view) {
+QJsonObject displayReport(const ReceiverUpdate &update, QJsonObject view) {
     const auto &snapshot = update.snapshot;
     for (unsigned i = 0; i < 2; ++i) {
         const auto key = i == 0 ? "ndi" : "ep";
         const auto &latest = snapshot.latest[i];
         auto item = view[key].toObject();
-        if (!previous || previous->snapshot.latest[i].frame != latest.frame || item.isEmpty()) {
-            item = i == 0 ? ndiDisplay(snapshot) : epDisplay(latest);
-            if (latest.frame) {
-                item["frame_id"] = static_cast<qint64>(latest.frame->frameId);
-                item["host_completed_us"] = static_cast<qint64>(latest.hostCompletedUs);
-            }
-        }
-        item["stale"] = latest.stale || update.final;
+        // Statistics snapshots can precede frames already delivered to the widgets.
+        if (update.final || !item.contains("frame_id") ||
+            (latest.frame && latest.frame->frameId == item["frame_id"].toInteger()))
+            item["stale"] = latest.stale || update.final;
         view[key] = item;
     }
     QJsonObject status;
@@ -259,18 +276,78 @@ QJsonObject displayReport(const ReceiverUpdate &update, const ReceiverUpdate *pr
 class WaveView final : public QWidget {
   public:
     explicit WaveView(QWidget *parent = nullptr) : QWidget(parent) {
+        setAttribute(Qt::WA_OpaquePaintEvent);
         setMinimumHeight(140);
         setObjectName("v2Waveform");
     }
 
     void showSamples(QJsonArray samples) {
+        if (samples_ == samples) {
+            repeatedSamples_ = true;
+            return;
+        }
         samples_ = std::move(samples);
+        firstPaint_ = true;
+        repeatedSamples_ = false;
+        cachedWave_ = QImage();
         update();
     }
 
   protected:
-    void paintEvent(QPaintEvent *) override {
+    void paintEvent(QPaintEvent *event) override {
         QPainter p(this);
+        if (firstPaint_ || samples_.isEmpty() || !repeatedSamples_ || !p.paintEngine() ||
+            p.paintEngine()->type() != QPaintEngine::Raster || p.opacity() != 1 ||
+            p.compositionMode() != QPainter::CompositionMode_SourceOver) {
+            firstPaint_ = false;
+            paintWave(p);
+            return;
+        }
+        const auto transform = p.deviceTransform();
+        const qreal dpr = devicePixelRatioF();
+        if (transform.type() > QTransform::TxScale || transform.m11() != dpr ||
+            transform.m22() != dpr || std::floor(transform.dx()) != transform.dx() ||
+            std::floor(transform.dy()) != transform.dy()) {
+            paintWave(p);
+            return;
+        }
+        if (cachedSize_ != size() || cachedWave_.devicePixelRatio() != dpr)
+            cachedWave_ = QImage();
+        if (cachedWave_.isNull()) {
+            // A new value is painted directly. A partial repaint never rasterizes a full cache.
+            constexpr int maxPixels = 2 * 1024 * 1024; // One ARGB image, up to 8 MiB.
+            const qreal w = std::ceil(width() * dpr);
+            const qreal h = std::ceil(height() * dpr);
+            if (event->region() != QRegion(rect()) || p.hasClipping() ||
+                width() < 32 || height() < 40 || w * h > maxPixels) {
+                paintWave(p);
+                return;
+            }
+            cachedWave_ = QImage(static_cast<int>(w), static_cast<int>(h),
+                                 QImage::Format_ARGB32_Premultiplied);
+            if (cachedWave_.isNull()) {
+                paintWave(p);
+                return;
+            }
+            cachedSize_ = size();
+            cachedWave_.setDevicePixelRatio(dpr);
+            cachedWave_.fill(Qt::transparent);
+            QPainter raster(&cachedWave_);
+            paintWave(raster);
+        }
+        // The line is inset by 10 x 15 logical pixels. Paint a fractional outer edge
+        // against the actual destination, then blit the cached opaque interior.
+        const QRect interior(0, 0, width() - (width() * dpr != cachedWave_.width()),
+                             height() - (height() * dpr != cachedWave_.height()));
+        if (!interior.contains(event->region().boundingRect())) {
+            p.fillRect(rect(), QColor("#f3f7fa"));
+            p.setClipRect(interior, Qt::IntersectClip);
+        }
+        p.drawImage(QPointF(), cachedWave_);
+    }
+
+  private:
+    void paintWave(QPainter &p) const {
         p.fillRect(rect(), QColor("#f3f7fa"));
         p.setPen(QColor("#5a6a7a"));
         if (samples_.isEmpty()) {
@@ -302,12 +379,16 @@ class WaveView final : public QWidget {
         p.drawPath(path);
     }
 
-  private:
     QJsonArray samples_;
+    bool firstPaint_ = true;
+    bool repeatedSamples_ = false;
+    QSize cachedSize_;
+    QImage cachedWave_;
 };
 } // namespace
 
 struct V2Window::Impl {
+    V2WindowRunOptions options;
     v2::Session session{guiTransportFactory()};
     QComboBox *profile = nullptr;
     QWidget *configBox = nullptr;
@@ -321,6 +402,7 @@ struct V2Window::Impl {
     QSpinBox *commandPort = nullptr;
     QSpinBox *epBytes = nullptr;
     QSpinBox *tools = nullptr;
+    QSpinBox *ndiHandoffGuard = nullptr;
     QSpinBox *duration = nullptr;
     QSpinBox *pathLimit = nullptr;
     QSpinBox *receiverPort = nullptr;
@@ -358,20 +440,52 @@ struct V2Window::Impl {
     std::uint64_t archiveDueUs = 0;
     QJsonObject lastDisplay;
     std::uint64_t lastSenderPollUs = 0;
+    StageProfile senderRefresh;
+    StageProfile receiverRefresh;
+    StageProfile receiverSnapshot;
+    StageProfile receiverPresentation;
+    StageProfile previewLog;
+    StageProfile previewRequest;
     std::array<std::uint64_t, 2> displayedFrames{};
     std::array<std::uint64_t, 2> displayMaxDelayUs{};
+    struct DisplayEndpoint {
+        std::uint32_t frameId{};
+        std::uint64_t completed{}, updated{};
+        int tab{};
+        bool visible{}, minimized{};
+    };
+    std::array<DisplayEndpoint, 2> displayPeak{};
+    QTabWidget *tabs = nullptr;
+    std::array<std::uint64_t, 2> displayMaxWaitUs{};
+    std::array<std::uint64_t, 2> displayMaxApplyUs{};
     std::array<std::uint64_t, 2> displayLate{};
+    std::array<ui::WidgetFrameTiming, 2> worstWidgetFrame{};
     std::array<std::uint32_t, 2> displayedIds{};
     std::array<bool, 2> haveDisplayed{};
     std::uint32_t nextNdi = 1;
     std::uint32_t nextEp = 1;
     std::uint32_t nextStatus = 1;
     bool sending = false;
+    bool finishing = false;
     std::atomic<bool> receiverStop{true};
     std::atomic<bool> receiverRunning{false};
     std::thread receiverWorker;
     std::mutex receiverMutex;
     std::optional<ReceiverUpdate> receiverLatest;
+
+    struct WidgetFrame {
+        unsigned module;
+        QJsonObject view;
+        std::uint64_t enqueuedUs{};
+        unsigned queueDepth{};
+        bool inheritedWake{};
+    };
+
+    std::deque<WidgetFrame> widgetFrames;
+    std::array<std::uint64_t, 2> widgetQueueDrops{};
+    bool widgetWakePosted = false;
+    std::uint64_t nextWakeSequence = 0;
+    std::shared_ptr<ui::WidgetWakeTiming> pendingWidgetWake;
     std::optional<ReceiverUpdate> presentedUpdate;
     QString receiverError;
 #ifdef SIM_MODEL_PREVIEW
@@ -380,7 +494,9 @@ struct V2Window::Impl {
 #endif
 };
 
-V2Window::V2Window(QWidget *parent) : QMainWindow(parent), p_(std::make_unique<Impl>()) {
+V2Window::V2Window(QWidget *parent, V2WindowRunOptions options)
+    : QMainWindow(parent), p_(std::make_unique<Impl>()) {
+    p_->options = options;
     setWindowTitle(QStringLiteral("SimTransfer RT · V2 多模块传输"));
     setWindowIcon(ui::appIcon());
     resize(1350, 900);
@@ -398,13 +514,17 @@ V2Window::V2Window(QWidget *parent) : QMainWindow(parent), p_(std::make_unique<I
     scope->setWordWrap(true);
     layout->addWidget(scope);
     auto *tabs = new QTabWidget;
+    p_->tabs = tabs;
     layout->addWidget(tabs, 1);
     tabs->addTab(createSendPage(), QStringLiteral("发送与网络"));
-    tabs->addTab(createReceivePage(), QStringLiteral("接收与显示"));
+    auto *receivePage = createReceivePage();
+    tabs->addTab(receivePage, QStringLiteral("接收与显示"));
     auto *reportPage = createReportPage();
     tabs->addTab(reportPage, QStringLiteral("逐项验收"));
-    connect(tabs, &QTabWidget::currentChanged, this, [this, tabs, reportPage] {
-        if (tabs->currentWidget() == reportPage)
+    connect(tabs, &QTabWidget::currentChanged, this, [this, tabs, receivePage, reportPage] {
+        if (p_->sending && tabs->currentWidget() != receivePage)
+            refreshSender(true);
+        else if (tabs->currentWidget() == reportPage)
             p_->acceptance->resizeRowsToContents();
     });
     layout->addWidget(createLogCard());
@@ -511,6 +631,10 @@ QWidget *V2Window::createSendPage() {
     right->addRow(p_->ndiOn);
     p_->tools = spin(0, 255, 4, "v2NdiTools");
     right->addRow(QStringLiteral("模拟工具数（非设备能力）"), p_->tools);
+    p_->ndiHandoffGuard = spin(0, 400, v2::Config{}.ndiHandoffGuardUs, "v2NdiHandoffGuard");
+    p_->ndiHandoffGuard->setSpecialValueText(QStringLiteral("关闭"));
+    p_->ndiHandoffGuard->setToolTip(QStringLiteral("在预计 NDI 帧就绪前短时轮询，增加发送线程 CPU 用量。"));
+    right->addRow(QStringLiteral("NDI 交接提前量（µs）"), p_->ndiHandoffGuard);
     p_->ndiFile = line({}, "v2NdiReplay");
     auto *ndiBrowse = new QPushButton(QStringLiteral("选择 BX"));
     auto *nr = new QHBoxLayout;
@@ -793,6 +917,8 @@ V2Window::~V2Window() {
 
 v2::Config V2Window::selectedConfig() const {
     v2::Config c;
+    c.fragmentTrace = p_->options.fragmentTrace;
+    c.asioPooledHandler = p_->options.asioPooledHandler;
     c.linkMbps = p_->profile->currentData().toUInt();
     c.targetIp = p_->target->text().trimmed().toStdString();
     c.bindIp = p_->bind->text().trimmed().toStdString();
@@ -801,6 +927,7 @@ v2::Config V2Window::selectedConfig() const {
     c.commandPort = static_cast<std::uint16_t>(p_->commandPort->value());
     c.epBytes = static_cast<std::uint32_t>(p_->epBytes->value());
     c.ndiTools = static_cast<std::uint32_t>(p_->tools->value());
+    c.ndiHandoffGuardUs = static_cast<unsigned>(p_->ndiHandoffGuard->value());
     c.ndiEnabled = p_->ndiOn->isChecked();
     c.epEnabled = p_->epOn->isChecked();
     c.pathLimitMbps = static_cast<unsigned>(p_->pathLimit->value());
@@ -882,7 +1009,21 @@ void V2Window::startSending() {
         // Keep last displayed IDs so the preceding run's stale view is not counted again.
         p_->displayedFrames = {};
         p_->displayMaxDelayUs = {};
+        p_->displayPeak = {};
+        p_->displayMaxWaitUs = {};
+        p_->displayMaxApplyUs = {};
         p_->displayLate = {};
+        p_->worstWidgetFrame = {};
+        p_->senderRefresh = {};
+        p_->receiverRefresh = {};
+        p_->receiverSnapshot = {};
+        p_->receiverPresentation = {};
+        p_->previewLog = {};
+        p_->previewRequest = {};
+        {
+            std::lock_guard<std::mutex> lock(p_->receiverMutex);
+            p_->widgetQueueDrops = {};
+        }
         const auto modules = p_->receiverBaseline["modules"].toObject();
         const auto observed = p_->receiverBaseline["observed_host_us"].toString().toULongLong();
         const auto now = monotonicUs();
@@ -897,6 +1038,8 @@ void V2Window::startSending() {
                             p_->receiverBaseline["source_rejected"].toInteger() == 0;
         p_->session.start(c);
         p_->sending = true;
+        p_->finishing = false;
+        p_->stop->setText(QStringLiteral("停止发送"));
         setSenderControlsLocked(true);
         p_->runState->setText(QStringLiteral("准备 / 发送中"));
         p_->log->appendPlainText(QStringLiteral("开始 V2 运行 %1（传输后端：Boost.Asio "
@@ -909,10 +1052,17 @@ void V2Window::startSending() {
 }
 
 void V2Window::stopSending() {
-    p_->session.stop();
-    p_->stop->setEnabled(false);
     p_->post->setEnabled(false);
-    p_->runState->setText(QStringLiteral("正在停止并归档，完成后可换档"));
+    if (p_->finishing) {
+        p_->session.stop();
+        p_->stop->setEnabled(false);
+        p_->runState->setText(QStringLiteral("正在取消剩余发送"));
+        return;
+    }
+    p_->finishing = true;
+    p_->session.finish();
+    p_->stop->setText(QStringLiteral("立即停止"));
+    p_->runState->setText(QStringLiteral("正在完成已构建帧并处理补发"));
 }
 
 void V2Window::presentSenderReport(const QJsonObject &report) {
@@ -986,25 +1136,12 @@ void V2Window::presentSenderReport(const QJsonObject &report) {
 void V2Window::presentReceiverReport(const QJsonObject &report) {
     p_->presentedUpdate.reset();
     p_->receiverReport = report;
-    const auto view = report["display"].toObject();
-    auto retainDisplayEvidence = [&] {
-        QJsonArray rows;
-        for (unsigned i = 0; i < 2; ++i)
-            rows.append(QJsonObject{
-                {"module_id", int(i + 1)},
-                {"widget_updated_frames", static_cast<qint64>(p_->displayedFrames[i])},
-                {"max_complete_to_widget_update_us", static_cast<qint64>(p_->displayMaxDelayUs[i])},
-                {"updates_after_one_module_period", static_cast<qint64>(p_->displayLate[i])}});
-        p_->receiverReport["ui_observations"] = QJsonObject{
-            {"modules", rows},
-            {"measurement",
-             "Host receive-complete to Qt widget data update; not physical screen presentation"},
-            {"physical_render_status", "not_tested"}};
-    };
-    if (view == p_->lastDisplay) {
-        retainDisplayEvidence();
-        return;
-    }
+    applyReceiverView(report["display"].toObject());
+}
+
+std::uint64_t V2Window::applyReceiverView(const QJsonObject &view, unsigned observedModule) {
+    if (view == p_->lastDisplay)
+        return 0;
     const bool stopped = view["stopped"].toBool();
     const bool stopChanged = stopped != p_->lastDisplay["stopped"].toBool();
     if (stopChanged || view["ndi"] != p_->lastDisplay["ndi"]) {
@@ -1043,21 +1180,23 @@ void V2Window::presentReceiverReport(const QJsonObject &report) {
                      ep["format"].toString(QStringLiteral("业务布局未知，不能判定真实波形"))));
         p_->wave->showSamples(ep["stale"].toBool() ? QJsonArray{} : ep["samples"].toArray());
     }
-    p_->lastDisplay = view;
-    const auto status = view["status"].toObject();
-    p_->statusState->setText(
-        QStringLiteral("状态序号 %1：%2").arg(text(status["sequence"]), text(status["text"])));
-    p_->association->setText(
-        QStringLiteral("跨模块最近邻时间差：%1 μs；共同硬件时间域未验证，真实同步验收未检测。")
-            .arg(text(view["association_delta_us"])));
-    if (stopped) {
-        p_->statusState->setText(QStringLiteral("接收已停止，最后状态序号 %1：%2")
-                                     .arg(text(status["sequence"]), text(status["text"])));
-        p_->association->setText(QStringLiteral("接收已停止，无当前关联"));
-        retainDisplayEvidence();
-        return;
+    if (p_->lastDisplay.isEmpty() || stopChanged || view["status"] != p_->lastDisplay["status"]) {
+        const auto status = view["status"].toObject();
+        const auto format = stopped ? QStringLiteral("接收已停止，最后状态序号 %1：%2")
+                                    : QStringLiteral("状态序号 %1：%2");
+        p_->statusState->setText(format.arg(text(status["sequence"]), text(status["text"])));
     }
+    if (p_->lastDisplay.isEmpty() || stopChanged ||
+        view["association_delta_us"] != p_->lastDisplay["association_delta_us"]) {
+        p_->association->setText(stopped ? QStringLiteral("接收已停止，无当前关联")
+            : QStringLiteral("跨模块最近邻时间差：%1 μs；共同硬件时间域未验证，真实同步验收未检测。")
+                  .arg(text(view["association_delta_us"])));
+    }
+    p_->lastDisplay = view;
+    if (stopped)
+        return 0;
     const auto updated = monotonicUs();
+    std::uint64_t observedUpdate = 0;
     for (unsigned i = 0; i < 2; ++i) {
         const auto item = view[i == 0 ? "ndi" : "ep"].toObject();
         if (!item.contains("frame_id"))
@@ -1071,42 +1210,55 @@ void V2Window::presentReceiverReport(const QJsonObject &report) {
                 static_cast<std::uint64_t>(item["host_completed_us"].toInteger());
             if (completed && updated >= completed) {
                 const auto delay = updated - completed;
-                p_->displayMaxDelayUs[i] = std::max(p_->displayMaxDelayUs[i], delay);
+                if (observedModule == i + 1)
+                    observedUpdate = updated;
+                if (!p_->displayPeak[i].updated || delay > p_->displayMaxDelayUs[i]) {
+                    p_->displayMaxDelayUs[i] = delay;
+                    p_->displayPeak[i] = {id, completed, updated, p_->tabs->currentIndex(),
+                                          isVisible(), isMinimized()};
+                }
                 if (delay > (i == 0 ? 16667ull : 20000ull))
                     ++p_->displayLate[i];
             }
         }
     }
-    retainDisplayEvidence();
+    return observedUpdate;
+}
+
+void V2Window::refreshSender(bool force) {
+    if (!p_->sending)
+        return;
+    const auto now = monotonicUs();
+    const bool finished = !p_->session.busy();
+    if (!finished && !force &&
+        ((!p_->senderStats->isVisible() && !p_->acceptance->isVisible()) ||
+         now - p_->lastSenderPollUs < 500000))
+        return;
+    p_->lastSenderPollUs = now;
+    const auto result = finished ? p_->session.wait() : p_->session.snapshot();
+    if (!result.reportJson.empty())
+        presentSenderReport(
+            QJsonDocument::fromJson(QByteArray::fromStdString(result.reportJson)).object());
+    if (finished) {
+        p_->nextNdi = result.nextNdiId;
+        p_->nextEp = result.nextEpId;
+        p_->nextStatus = result.nextStatusSequence;
+        p_->sending = false;
+        p_->stop->setText(QStringLiteral("停止发送"));
+        p_->archivePending = true;
+        p_->archiveDueUs = now + 200000;
+        setSenderControlsLocked(false);
+        p_->runState->setText(result.success ? QStringLiteral("已停止，正在整理本轮报告")
+                                             : QStringLiteral("已停止，请查看错误及验收"));
+        if (!result.error.empty())
+            p_->log->appendPlainText(QString::fromStdString(result.error));
+    }
+    p_->senderRefresh.add(monotonicUs() - now);
 }
 
 void V2Window::refresh() {
-    const auto now = monotonicUs();
-    if (p_->sending && (now - p_->lastSenderPollUs >= 100000 || !p_->session.busy())) {
-        p_->lastSenderPollUs = now;
-        auto result = p_->session.snapshot();
-        if (!result.reportJson.empty())
-            presentSenderReport(
-                QJsonDocument::fromJson(QByteArray::fromStdString(result.reportJson)).object());
-        if (!p_->session.busy()) {
-            result = p_->session.wait();
-            if (!result.reportJson.empty())
-                presentSenderReport(
-                    QJsonDocument::fromJson(QByteArray::fromStdString(result.reportJson)).object());
-            p_->nextNdi = result.nextNdiId;
-            p_->nextEp = result.nextEpId;
-            p_->nextStatus = result.nextStatusSequence;
-            p_->sending = false;
-            p_->archivePending = true;
-            p_->archiveDueUs = now + 200000;
-            setSenderControlsLocked(false);
-            p_->runState->setText(result.success ? QStringLiteral("已停止，正在整理本轮报告")
-                                                 : QStringLiteral("已停止，请查看错误及验收"));
-            if (!result.error.empty())
-                p_->log->appendPlainText(QString::fromStdString(result.error));
-        }
-    }
-    refreshReceiver();
+    refreshSender();
+    refreshReceiver(ui::WidgetFrameDrain::Timer);
     if (!p_->receiverRunning && p_->receiverWorker.joinable()) {
         p_->receiverWorker.join();
         refreshReceiver();
@@ -1122,49 +1274,158 @@ void V2Window::refresh() {
         archiveRun();
 }
 
-void V2Window::refreshReceiver() {
+bool V2Window::event(QEvent *event) {
+    if (event->type() == WidgetFramesReady::eventType()) {
+        const auto &ready = *static_cast<const WidgetFramesReady *>(event);
+        if (ready.wake)
+            ready.wake->eventEntered.store(monotonicUs());
+        if (ready.generation == p_->receiverGeneration)
+            refreshReceiver(ui::WidgetFrameDrain::FrameEvent, ready.wake ? ready.wake->sequence : 0);
+        return true;
+    }
+    return QMainWindow::event(event);
+}
+
+void V2Window::refreshReceiver(ui::WidgetFrameDrain drain, std::uint64_t drainWakeSequence) {
+    const bool framesOnly = drain == ui::WidgetFrameDrain::FrameEvent;
+    const auto refreshStarted = monotonicUs();
     std::optional<ReceiverUpdate> latest;
+    std::deque<Impl::WidgetFrame> frames;
+    std::uint64_t batchTaken = 0;
+    std::shared_ptr<const ui::WidgetWakeTiming> batchWake;
     QString message;
 #ifdef SIM_MODEL_PREVIEW
     std::optional<BxPreview> preview;
-    const auto now = monotonicUs();
+    const bool previewVisible =
+        !framesOnly && p_->preview &&
+        (!p_->receiverRunning || (p_->preview->isVisible() && !isMinimized()));
 #endif
     {
         std::lock_guard<std::mutex> lock(p_->receiverMutex);
-        latest.swap(p_->receiverLatest);
-        message.swap(p_->receiverError);
+        if (p_->options.fragmentTrace && !p_->widgetFrames.empty())
+            batchWake = p_->pendingWidgetWake;
+        if (framesOnly) {
+            p_->widgetWakePosted = false;
+            p_->pendingWidgetWake.reset();
+        } else {
+            latest.swap(p_->receiverLatest);
+            message.swap(p_->receiverError);
 #ifdef SIM_MODEL_PREVIEW
-        if (p_->preview)
-            preview = p_->previewQueue.take(now, p_->preview->busy(), p_->receiverRunning);
+            if (previewVisible)
+                preview = p_->previewQueue.take(refreshStarted, p_->preview->busy(),
+                                                p_->receiverRunning);
 #endif
+        }
+        frames.swap(p_->widgetFrames);
+        if (p_->options.fragmentTrace && !frames.empty())
+            batchTaken = monotonicUs();
+    }
+    p_->receiverSnapshot.add(monotonicUs() - refreshStarted);
+    for (const auto &frame : frames) {
+        const auto index = frame.module - 1;
+        const auto started = monotonicUs();
+        const auto completed =
+            static_cast<std::uint64_t>(frame.view["host_completed_us"].toInteger());
+        auto view = p_->lastDisplay;
+        view["stopped"] = false;
+        view[frame.module == 1 ? "ndi" : "ep"] = frame.view;
+        const auto updated = applyReceiverView(view, frame.module);
+        if (frame.enqueuedUs && updated)
+            p_->worstWidgetFrame[index].retainWorst({
+                p_->displayedIds[index], frame.queueDepth, drain, completed, frame.enqueuedUs,
+                batchTaken, started, updated, batchWake, drainWakeSequence, frame.inheritedWake});
+        p_->displayMaxWaitUs[index] = std::max(p_->displayMaxWaitUs[index], started - completed);
+        p_->displayMaxApplyUs[index] =
+            std::max(p_->displayMaxApplyUs[index], monotonicUs() - started);
     }
     if (latest && latest->generation == p_->receiverGeneration) {
-        const auto *previous = p_->presentedUpdate ? &*p_->presentedUpdate : nullptr;
-        presentReceiverReport(displayReport(*latest, previous, p_->lastDisplay));
+        const auto presentationStarted = monotonicUs();
+        presentReceiverReport(displayReport(*latest, p_->lastDisplay));
         p_->presentedUpdate = std::move(latest);
+        p_->receiverPresentation.add(monotonicUs() - presentationStarted);
     }
     if (!message.isEmpty())
         p_->receiveState->setText(message);
 #ifdef SIM_MODEL_PREVIEW
     if (preview) {
+        const auto logStarted = monotonicUs();
         p_->log->appendPlainText(
             QStringLiteral("NDI 对象 #%1 传输完成（%2 字节，主机完成 %3 μs），提交 BX 解码。")
                 .arg(preview->frameId)
                 .arg(preview->bytes.size())
                 .arg(preview->completedUs));
+        p_->previewLog.add(monotonicUs() - logStarted);
+        const auto requestStarted = monotonicUs();
         p_->preview->showBxObject(preview->bytes,
                                   QStringLiteral("网络接收 · NDI 帧 #%1").arg(preview->frameId));
+        p_->previewRequest.add(monotonicUs() - requestStarted);
     }
 #endif
+    p_->receiverRefresh.add(monotonicUs() - refreshStarted);
 }
 
 QJsonObject V2Window::receiverReportForExport() const {
-    if (!p_->presentedUpdate)
-        return p_->receiverReport;
-    const auto bytes = QByteArray::fromStdString(v2::receiverJson(p_->presentedUpdate->snapshot));
-    auto report = QJsonDocument::fromJson(bytes).object();
+    QJsonObject report;
+    if (p_->presentedUpdate) {
+        const auto bytes =
+            QByteArray::fromStdString(v2::receiverJson(p_->presentedUpdate->snapshot));
+        report = QJsonDocument::fromJson(bytes).object();
+    }
     for (auto it = p_->receiverReport.constBegin(); it != p_->receiverReport.constEnd(); ++it)
         report.insert(it.key(), it.value());
+    if (report.isEmpty())
+        return report;
+    report["display"] = p_->lastDisplay;
+    std::array<std::uint64_t, 2> drops;
+    {
+        std::lock_guard<std::mutex> lock(p_->receiverMutex);
+        drops = p_->widgetQueueDrops;
+    }
+    QJsonArray rows;
+    for (unsigned i = 0; i < 2; ++i) {
+        QJsonObject row{
+            {"module_id", int(i + 1)},
+            {"widget_updated_frames", static_cast<qint64>(p_->displayedFrames[i])},
+            {"widget_queue_drops", static_cast<qint64>(drops[i])},
+            {"max_complete_to_gui_start_us", static_cast<qint64>(p_->displayMaxWaitUs[i])},
+            {"max_gui_apply_us", static_cast<qint64>(p_->displayMaxApplyUs[i])},
+            {"max_complete_to_widget_update_us", static_cast<qint64>(p_->displayMaxDelayUs[i])},
+            {"updates_after_one_module_period", static_cast<qint64>(p_->displayLate[i])}};
+        if (p_->options.fragmentTrace)
+            row["worst_frame"] = p_->worstWidgetFrame[i].json();
+        const auto &peak = p_->displayPeak[i];
+        if (peak.updated)
+            row["max_update_endpoint"] = QJsonObject{
+                {"frame_id", qint64(peak.frameId)}, {"completed_us", qint64(peak.completed)},
+                {"widget_updated_us", qint64(peak.updated)}, {"tab_index", peak.tab},
+                {"visible", peak.visible}, {"minimized", peak.minimized}};
+        else
+            row["max_update_endpoint"] = QJsonValue::Null;
+        rows.append(row);
+    }
+    report["ui_observations"] = QJsonObject{
+        {"modules", rows},
+        {"measurement",
+         "Host receive-complete to Qt widget data update; not physical screen presentation"},
+        {"max_update_endpoint_scope", "Window state observed at the update endpoint. "
+                                      "Tab 0=sender, 1=receiver, 2=report."},
+        {"physical_render_status", "not_tested"}};
+    auto profileJson = [](const StageProfile &stage) {
+        return QJsonObject{{"calls", static_cast<qint64>(stage.calls)},
+                           {"total_us", static_cast<qint64>(stage.totalUs)},
+                           {"max_us", static_cast<qint64>(stage.maxUs)}};
+    };
+    QJsonObject work{{"sender_refresh", profileJson(p_->senderRefresh)},
+                     {"receiver_refresh", profileJson(p_->receiverRefresh)},
+                     {"receiver_snapshot", profileJson(p_->receiverSnapshot)},
+                     {"receiver_presentation", profileJson(p_->receiverPresentation)},
+                     {"preview_log", profileJson(p_->previewLog)},
+                     {"preview_request", profileJson(p_->previewRequest)}};
+#ifdef SIM_MODEL_PREVIEW
+    if (p_->preview)
+        work["model_preview"] = p_->preview->timingReport();
+#endif
+    report["ui_work"] = work;
     return report;
 }
 
@@ -1211,20 +1472,23 @@ void V2Window::exportReport() {
 }
 
 QJsonObject V2Window::reportForExport() const {
+    const auto sender = p_->sending
+                            ? QJsonDocument::fromJson(
+                                  QByteArray::fromStdString(p_->session.snapshot().reportJson)).object()
+                            : p_->senderReport;
     const auto rx = receiverReportForExport();
     QJsonObject out{
         {"report_schema_version", 1},
         {"product_version", QString::fromLatin1(SIM_PRODUCT_VERSION)},
         {"protocol_version", 2},
-        {"sender", p_->senderReport},
+        {"sender", sender},
         {"receiver", rx},
         {"exported_utc", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
         {"note", QStringLiteral("本文件保留本地收发证据；累计收包不抵消跳采或首发超期。真实硬件时钟"
                                 "、物理出线及真实电生理业务仍需独立验证。")}};
-    auto rows = p_->senderReport["acceptance"].toArray();
+    auto rows = sender["acceptance"].toArray();
     for (const auto &row : rx["acceptance"].toArray())
         rows.append(row);
-    const auto &sender = p_->senderReport;
     const auto &base = p_->receiverBaseline;
     const auto localPort = sender["local_port"].toInt();
     const auto &c = p_->baselineConfig;
@@ -1393,8 +1657,18 @@ void V2Window::toggleReceiver() {
     p_->lastDisplay = {};
     p_->displayedFrames = {};
     p_->displayMaxDelayUs = {};
+    p_->displayPeak = {};
+    p_->displayMaxWaitUs = {};
+    p_->displayMaxApplyUs = {};
     p_->displayLate = {};
+    p_->worstWidgetFrame = {};
     p_->haveDisplayed = {};
+    p_->senderRefresh = {};
+    p_->receiverRefresh = {};
+    p_->receiverSnapshot = {};
+    p_->receiverPresentation = {};
+    p_->previewLog = {};
+    p_->previewRequest = {};
     p_->toolsTable->setRowCount(0);
     p_->epState->setText(QStringLiteral("电生理尚未收到"));
     p_->wave->showSamples({});
@@ -1408,6 +1682,10 @@ void V2Window::toggleReceiver() {
     {
         std::lock_guard<std::mutex> lock(p_->receiverMutex);
         p_->receiverLatest.reset();
+        p_->widgetFrames.clear();
+        p_->widgetQueueDrops = {};
+        p_->widgetWakePosted = false;
+        p_->pendingWidgetWake.reset();
         p_->receiverError.clear();
 #ifdef SIM_MODEL_PREVIEW
         p_->previewQueue.begin();
@@ -1422,20 +1700,57 @@ void V2Window::toggleReceiver() {
             v2::Receiver receiver(true, [] {
                 return monotonicUs();
             });
+            receiver.setFrameConsumer(
+                [this, generation, &receiver](const v2::Frame &frame, std::uint64_t completed) {
+                    auto view =
+                        frame.moduleId == 1 ? ndiDisplay(receiver.latestNdi()) : epDisplay(frame);
+                    view["frame_id"] = static_cast<qint64>(frame.frameId);
+                    view["host_completed_us"] = static_cast<qint64>(completed);
+                    view["stale"] = false;
 #ifdef SIM_MODEL_PREVIEW
-            if (p_->preview) {
-                receiver.setFrameConsumer([this](const v2::Frame &frame, std::uint64_t completed) {
-                    if (frame.moduleId != 1)
-                        return;
-                    std::optional<BxPreview> update{
-                        BxPreview{QByteArray(reinterpret_cast<const char *>(frame.bytes.data()),
-                                             qsizetype(frame.bytes.size())),
-                                  completed, frame.frameId}};
-                    std::lock_guard<std::mutex> lock(p_->receiverMutex);
-                    p_->previewQueue.offer(update);
-                });
-            }
+                    std::optional<BxPreview> preview;
+                    if (p_->preview && frame.moduleId == 1)
+                        preview.emplace(
+                            BxPreview{QByteArray(reinterpret_cast<const char *>(frame.bytes.data()),
+                                                 qsizetype(frame.bytes.size())),
+                                      completed, frame.frameId});
 #endif
+                    bool notify = false;
+                    std::shared_ptr<ui::WidgetWakeTiming> wake;
+                    {
+                        std::lock_guard<std::mutex> lock(p_->receiverMutex);
+#ifdef SIM_MODEL_PREVIEW
+                        if (preview)
+                            p_->previewQueue.offer(preview);
+#endif
+                        if (p_->widgetFrames.size() >= 64) {
+                            ++p_->widgetQueueDrops[frame.moduleId - 1];
+                            return;
+                        }
+                        p_->widgetFrames.push_back({frame.moduleId, std::move(view)});
+                        notify = !p_->widgetWakePosted;
+                        if (p_->options.fragmentTrace) {
+                            auto &item = p_->widgetFrames.back();
+                            item.queueDepth = static_cast<unsigned>(p_->widgetFrames.size());
+                            item.enqueuedUs = monotonicUs();
+                            item.inheritedWake = !notify;
+                            if (notify) {
+                                wake = std::make_shared<ui::WidgetWakeTiming>(
+                                    ++p_->nextWakeSequence, frame.moduleId, frame.frameId);
+                                p_->pendingWidgetWake = wake;
+                            }
+                        }
+                        p_->widgetWakePosted = true;
+                    }
+                    if (notify) {
+                        auto *event = new WidgetFramesReady(generation, wake);
+                        if (wake)
+                            wake->postStarted.store(monotonicUs());
+                        QCoreApplication::postEvent(this, event, Qt::HighEventPriority);
+                        if (wake)
+                            wake->postReturned.store(monotonicUs());
+                    }
+                });
             std::uint32_t peer = 0;
             quint16 peerPort = 0;
             bool pinned = false;
@@ -1515,7 +1830,7 @@ void V2Window::toggleReceiver() {
                 return true;
             };
             while (!p_->receiverStop) {
-                socket.waitReadable();
+                socket.waitReadable(std::min(receiver.nextDeadlineUs(), nextPublish));
                 v2::serviceReceiveBatch(
                     loop, monotonicUs,
                     [&] {

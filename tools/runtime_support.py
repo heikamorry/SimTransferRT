@@ -5,10 +5,51 @@ import hashlib
 import json
 import os
 import platform
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+
+def probe_udp_loopback():
+    """Measure local IPv4 UDP delivery in both directions using live, bound endpoints."""
+    report = {"address": "127.0.0.1", "available": False, "exchanges": []}
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as a, \
+                socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as b:
+            for sock in (a, b):
+                sock.bind((report["address"], 0))
+            for sender, receiver in ((a, b), (b, a)):
+                source = sender.getsockname()
+                destination = receiver.getsockname()
+                exchange = {"source": source, "destination": destination, "attempts": 0,
+                            "sent": 0, "matched": 0, "unrelated": 0}
+                report["exchanges"].append(exchange)
+                payload = os.urandom(24)
+                for _ in range(3):
+                    exchange["attempts"] += 1
+                    if sender.sendto(payload, destination) == len(payload):
+                        exchange["sent"] += 1
+                    deadline = time.monotonic() + 0.5
+                    while (remaining := deadline - time.monotonic()) > 0:
+                        receiver.settimeout(remaining)
+                        try:
+                            packet, peer = receiver.recvfrom(256)
+                        except TimeoutError:
+                            break
+                        if peer == source and packet == payload:
+                            exchange["matched"] += 1
+                            break
+                        exchange["unrelated"] += 1
+                    if exchange["matched"]:
+                        break
+        report["available"] = all(item["matched"] for item in report["exchanges"])
+    except OSError as error:
+        report["socket_error"] = str(error)
+        report["error_code"] = getattr(error, "winerror", None) or error.errno
+    return report
 
 
 def atomic_json(path, value):

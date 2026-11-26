@@ -1,4 +1,5 @@
 #include "network/AsioUdpTransport.h"
+#include "network/AsioOperationStorage.h"
 #include "network/AsioReceiverSocket.h"
 #include "network/IUdpTransport.h"
 #include <boost/asio/io_context.hpp>
@@ -29,7 +30,8 @@ rt::StreamConfig config(std::uint16_t bindPort, std::uint16_t targetPort) {
 
 rt::IncomingDatagram readOne(rt::IUdpTransport &socket) {
     rt::IncomingDatagram datagram;
-    for (int i = 0; i < 5000; ++i) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
         if (socket.receive(datagram))
             return datagram;
         std::this_thread::sleep_for(std::chrono::microseconds(200));
@@ -37,10 +39,105 @@ rt::IncomingDatagram readOne(rt::IUdpTransport &socket) {
     throw std::runtime_error("loopback datagram not received");
 }
 
-void roundTrip(bool async) {
+void operationStorageFallbacks() {
+    rt::AsioOperationStorage first;
+    rt::AsioOperationStorage second;
+    constexpr auto alignment = alignof(std::max_align_t);
+    constexpr auto extendedAlignment = alignment * 2;
+    auto *overaligned = first.allocate(32, extendedAlignment);
+    require(reinterpret_cast<std::uintptr_t>(overaligned) % extendedAlignment == 0,
+            "fallback preserves extended alignment");
+    first.deallocate(overaligned, 32, extendedAlignment);
+    auto *oversized = first.allocate(2048, alignment);
+    first.deallocate(oversized, 2048, alignment);
+
+    auto *block = first.allocate(32, alignment);
+    auto *overlap = first.allocate(32, alignment);
+    auto *independent = second.allocate(32, alignment);
+    require(block != overlap && block != independent &&
+                reinterpret_cast<std::uintptr_t>(block) % alignment == 0,
+            "live allocations are aligned and distinct");
+    first.deallocate(block, 32, alignment);
+    auto *reused = first.allocate(32, alignment);
+    require(reused == block, "the original block is reusable while a fallback remains live");
+    first.deallocate(overlap, 32, alignment);
+    first.deallocate(reused, 32, alignment);
+    second.deallocate(independent, 32, alignment);
+    require(first.stats().hits == 2 && first.stats().fallbacks == 3 &&
+                second.stats().hits == 1 && second.stats().fallbacks == 0,
+            "allocation and fallback counts are per instance");
+}
+
+void completionPool(bool reuse) {
+    auto receiver = rt::makeAsioUdpTransport(false);
+    receiver->open(config(0, 1));
+    auto sender = rt::makeAsioUdpTransport(true);
+    if (reuse)
+        sender->setOperationStorageReuse(true);
+    sender->open(config(0, receiver->localPort()));
+    rt::SendCompletion completion;
+    require(!sender->pollCompletion(completion), "poll before first submission");
+    std::array<bool, 64> observed{};
+    const std::uint8_t payload = 37;
+    for (std::size_t i = 0; i < observed.size(); ++i)
+        require(sender->submitDatagram(&payload, 1, i) == rt::SendDisposition::Pending,
+                "each pool slot holds a real pending submission");
+    require(sender->submitDatagram(&payload, 1, observed.size()) ==
+                rt::SendDisposition::Backpressure,
+            "a full pool applies backpressure");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (sender->inFlight() && std::chrono::steady_clock::now() < deadline) {
+        if (!sender->pollCompletion(completion)) {
+            std::this_thread::yield();
+            continue;
+        }
+        require(completion.token < observed.size() && !observed[completion.token] &&
+                    completion.disposition == rt::SendDisposition::Complete &&
+                    completion.observedUs > 0,
+                "each real handler has a unique token, timestamp and success result");
+        observed[completion.token] = true;
+    }
+    require(std::all_of(observed.begin(), observed.end(),
+                        [](bool value) {
+                            return value;
+                        }) &&
+                sender->inFlight() == 0 && !sender->pollCompletion(completion),
+            "all local handlers were reaped");
+    const auto stats = sender->operationStorageStats();
+    require(stats.enabled == reuse && (reuse ? stats.hits > 0 && stats.fallbacks > 0
+                                            : stats.hits == 0 && stats.fallbacks == 0),
+            "64 overlapping sends exercise both bound allocator paths only when enabled");
+    if (reuse) {
+        require(sender->submitDatagram(&payload, 1, 100) == rt::SendDisposition::Pending &&
+                    sender->operationStorageStats().hits > stats.hits,
+                "reaping a full pool makes operation storage reusable");
+        require(sender->submitDatagram(&payload, 1, 101) == rt::SendDisposition::Pending,
+                "overlapping operation before shutdown");
+        bool refused = false;
+        try {
+            sender->setOperationStorageReuse(false);
+        } catch (const std::logic_error &) {
+            refused = true;
+        }
+        require(refused, "an open transport must retain its live associated allocator");
+        // Destroy with both an inline and a fallback operation still outstanding.
+        const auto port = sender->localPort();
+        sender.reset();
+        auto replacement = rt::makeAsioUdpTransport(false);
+        replacement->open(config(port, receiver->localPort()));
+        require(replacement->localPort() == port, "shutdown released the pending sender");
+    }
+    std::cout << "64 distinct local send completions verified (allocator "
+              << (reuse ? "on" : "off") << ", hits " << stats.hits
+              << ", fallbacks " << stats.fallbacks << ")\n";
+}
+
+void roundTrip(bool async, bool reuse = false) {
     auto receiver = rt::makeAsioUdpTransport(false);
     receiver->open(config(0, 1));
     auto sender = rt::makeAsioUdpTransport(async);
+    if (reuse)
+        sender->setOperationStorageReuse(true);
     sender->open(config(0, receiver->localPort()));
     require(sender->localPort() != 0 && sender->dfEnabled(), "socket identity");
     const std::vector<std::uint8_t> payload{1, 2, 3, 4, 5, 6, 7};
@@ -179,10 +276,16 @@ void oversizedReceiverDatagram() {
 }
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
     try {
+        operationStorageFallbacks();
+        completionPool(false);
+        completionPool(true);
+        if (argc == 2 && std::strcmp(argv[1], "--local-completion-only") == 0)
+            return 0;
         roundTrip(false);
         roundTrip(true);
+        roundTrip(true, true);
         exclusiveBind();
         feedback();
         oversizedReceiverDatagram();

@@ -20,7 +20,6 @@
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QSplitter>
-#include <QSurfaceFormat>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -29,6 +28,7 @@
 #include <QTimer>
 #include <QVTKOpenGLNativeWidget.h>
 #include <vtkActor.h>
+#include <vtkCamera.h>
 #include <vtkDataSet.h>
 #include <vtkGenericOpenGLRenderWindow.h>
 #include <vtkMapper.h>
@@ -150,7 +150,7 @@ QJsonArray gpuMemory() {
 }
 
 int main(int argc, char **argv) {
-    QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
+    rt::model::PreviewPanel::setDefaultSurfaceFormat();
     QApplication app(argc, argv);
     QTemporaryDir tmp;
     QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -375,6 +375,27 @@ int main(int argc, char **argv) {
         });
         expect(newSession.size() == 1 && info->text().contains("current-network-object"),
                "previous session presented after restart");
+        auto *nativeLiveView = qobject_cast<QVTKOpenGLNativeWidget *>(viewport);
+        expect(nativeLiveView, "native live BX viewport");
+        auto *liveRenderer = nativeLiveView->renderWindow()->GetRenderers()->GetFirstRenderer();
+        auto *liveActor = vtkActor::SafeDownCast(liveRenderer->GetViewProps()->GetItemAsObject(0));
+        expect(liveActor && liveActor->GetMapper(), "live BX actor and mapper");
+        vtkWeakPointer<vtkActor> previousLiveActor = liveActor;
+        vtkWeakPointer<vtkMapper> previousLiveMapper = liveActor->GetMapper();
+        liveRenderer->GetActiveCamera()->Dolly(1.2);
+        const auto liveCameraDistance = panel->cameraDistance();
+        newSession.clear();
+        panel->showBxObject(objectBytes, "current-network-object");
+        until([&] {
+            return !newSession.isEmpty();
+        });
+        expect(newSession.front().front().toBool() && previousLiveActor && previousLiveMapper &&
+                   liveRenderer->GetViewProps()->GetItemAsObject(0) ==
+                       previousLiveActor.GetPointer() &&
+                   previousLiveActor->GetMapper() == previousLiveMapper.GetPointer(),
+               "successive live BX updates retain graphics actors and mappers");
+        expect(panel->cameraDistance() == liveCameraDistance,
+               "successive live BX updates preserve the user's camera");
         panel->beginReceiveSession();
         expect(!info->text().contains("current-network-object"),
                "clear last session's displayed BX");

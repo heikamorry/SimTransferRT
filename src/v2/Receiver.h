@@ -107,6 +107,11 @@ class Receiver {
     std::vector<rt::Datagram> receiveAndPollObserved(const std::uint8_t *, std::size_t,
                                                      std::uint64_t nowUs);
     std::vector<rt::Datagram> poll(std::uint64_t nowUs);
+    std::uint64_t nextDeadlineUs() const;
+
+    const rt::aurora::Reply &latestNdi() const {
+        return report_.ndi;
+    }
     ReceiverSnapshot snapshot(std::uint64_t nowUs) const;
 
     void setFrameConsumer(FrameConsumer f) {

@@ -1,13 +1,19 @@
 #pragma once
 #include "v2/Config.h"
+#include "ui/WidgetFrameTiming.h"
 #include <QMainWindow>
 #include <QJsonObject>
 #include <memory>
 
 namespace rt {
+struct V2WindowRunOptions {
+    bool fragmentTrace = false;
+    bool asioPooledHandler = false;
+};
+
 class V2Window final : public QMainWindow {
   public:
-    explicit V2Window(QWidget *parent = nullptr);
+    explicit V2Window(QWidget *parent = nullptr, V2WindowRunOptions options = {});
     ~V2Window() override;
     v2::Config selectedConfig() const;
     // Shared presentation entry points also used by deterministic UI tests.
@@ -17,6 +23,7 @@ class V2Window final : public QMainWindow {
     QJsonObject reportForExport() const;
 
   protected:
+    bool event(QEvent *) override;
     void closeEvent(QCloseEvent *) override;
 
   private:
@@ -32,7 +39,10 @@ class V2Window final : public QMainWindow {
     void stopSending();
     void toggleReceiver();
     void refresh();
-    void refreshReceiver();
+    void refreshSender(bool force = false);
+    void refreshReceiver(ui::WidgetFrameDrain drain = ui::WidgetFrameDrain::Explicit,
+                         std::uint64_t drainWakeSequence = 0);
+    std::uint64_t applyReceiverView(const QJsonObject &, unsigned observedModule = 0);
     QJsonObject receiverReportForExport() const;
     void updateBudget();
     void exportReport();

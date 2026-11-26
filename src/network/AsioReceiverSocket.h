@@ -9,7 +9,7 @@ class AsioReceiverSocket final {
   public:
     AsioReceiverSocket(std::uint32_t bindIp, std::uint16_t port);
     ~AsioReceiverSocket();
-    void waitReadable();
+    void waitReadable(std::uint64_t deadlineUs);
     // Nonblocking observation when reporting NACK generation. Does not consume data.
     std::optional<bool> readableNow() const;
     // 返回 -1 表示当前没有数据；零字节 UDP 包仍然算作一次读取。

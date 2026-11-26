@@ -3,7 +3,6 @@
 #include "network/IUdpTransport.h"
 #include "protocol/V2PacketCodec.h"
 #include "core/Diagnostics.h"
-#include "network/IUdpTransport.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -198,10 +197,12 @@ struct FragmentInterval {
     std::uint64_t pacingDueUs = 0;
     std::uint64_t attemptUs = 0;
     std::uint64_t callStartUs = 0;
+    std::uint64_t submitReturnUs = 0;
     std::uint64_t endUs = 0;
     std::uint64_t pacingGapUs = 0;
     bool called = false;
     bool success = false;
+    bool pendingCompletion = false;
 };
 
 struct FragmentSpan {
@@ -209,6 +210,8 @@ struct FragmentSpan {
     std::uint32_t frameId = 0;
     std::uint64_t sampleUs = 0;
     std::uint64_t readyUs = 0;
+    std::uint64_t enqueuedUs = 0;
+    std::uint64_t dequeuedUs = 0;
     std::uint64_t firstAttemptUs = 0;
     std::uint64_t endUs = 0;
     // These four disjoint parts sum to spanUs(). An all-dropped frame uses
@@ -245,6 +248,11 @@ struct GapPacket {
     std::uint64_t startUs = 0;
     std::uint64_t endUs = 0;
     bool success = false;
+    std::uint64_t readyUs = 0;
+    std::uint64_t enqueuedUs = 0;
+    std::uint64_t dequeuedUs = 0;
+    std::uint64_t callStartUs = 0;
+    std::uint64_t submitReturnUs = 0;
 };
 
 struct WorstGap {
@@ -253,11 +261,22 @@ struct WorstGap {
     std::uint64_t actualUs = 0;
     std::uint64_t expectedUs = 0;
     std::uint64_t deviationUs = 0;
+    std::optional<std::size_t> previousEpFrameIndex{};
 };
+
+struct GapEpFrame {
+    std::uint32_t frameId = 0;
+    bool awaitingFinalize = false;
+    std::shared_ptr<const FragmentSpan> span;
+};
+
+inline constexpr std::size_t MaxGlobalGapViolationPairs = 64;
 
 struct EngineSnapshot {
     // Index zero is the full dispatch stream; module IDs index their original DATA streams.
     std::array<WorstGap, 3> worstPacketGaps{};
+    std::vector<WorstGap> globalGapViolationPairs;
+    std::vector<GapEpFrame> gapPreviousEpFrames;
     std::array<ModuleStats, 2> modules;
     std::uint64_t statusAccepted = 0;
     std::uint64_t statusSent = 0;
@@ -326,6 +345,7 @@ class Engine {
         FragmentDispatchCounts fragmentCountsAtFirst;
         std::uint64_t lastCallEndUs = 0;
         std::shared_ptr<const FragmentSpan> finishedSpan;
+        std::optional<std::size_t> gapEpFrameIndex;
     };
 
     struct Retry {
@@ -339,6 +359,19 @@ class Engine {
         std::uint64_t confirmedUs = 0;
         std::uint32_t sequence = 0;
     };
+
+    struct Dispatch {
+        std::shared_ptr<Slot> slot;
+        std::uint16_t index;
+        bool retry, status, duplicate, dropped;
+        std::size_t bytes;
+        std::uint64_t requestedUs, anchorUs, planUs, adjustedUs, startUs, callStartUs, submitReturnUs;
+    };
+
+    std::optional<Dispatch> inFlight_;
+    bool pollSend(IUdpTransport &, const std::function<std::uint64_t()> &clock);
+    void finishDispatch(const Dispatch &, bool success, std::uint64_t end,
+                        bool pendingCompletion = false);
 
     Config config_;
     unsigned rate_;
@@ -356,6 +389,9 @@ class Engine {
     FragmentDispatchCounts fragmentCounts_;
     std::array<GapPacket, 3> previousGapPacket_{};
     std::array<WorstGap, 3> worstPacketGaps_{};
+    std::vector<WorstGap> globalGapViolationPairs_;
+    std::vector<GapEpFrame> gapPreviousEpFrames_;
+    std::shared_ptr<Slot> lastEpDataSlot_;
     std::vector<TimingHistogram> fragmentSpanHistograms_;
     std::array<std::shared_ptr<const FragmentSpan>, 2> worstFragmentSpan_;
     std::shared_ptr<const FragmentSpan> worstNdiWait_;

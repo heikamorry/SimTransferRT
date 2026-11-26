@@ -18,12 +18,17 @@ class Scene final : public QWidget {
   public:
     explicit Scene(QWidget *parent = nullptr);
     ~Scene() override;
-    void showData(const Display &, Snapshot);
+    void showData(const Display &, Snapshot, bool live = false);
     void select(int field, int representation);
     void setPointSize(int);
     void reset();
     double cameraDistance() const;
     void render();
+    void resetTiming();
+    QJsonObject timingReport() const;
+
+  protected:
+    void showEvent(QShowEvent *) override;
 
   private:
     struct Impl;

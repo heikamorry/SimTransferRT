@@ -1,4 +1,5 @@
 #include "network/AsioReceiverSocket.h"
+#include "core/SamplingClock.h"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -6,6 +7,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mstcpip.h>
+#include <windows.h>
 #endif
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -22,6 +24,20 @@ using boost::asio::ip::udp;
 struct AsioReceiverSocket::Impl {
     boost::asio::io_context context;
     udp::socket socket{context, udp::v4()};
+#ifdef _WIN32
+    WSAEVENT readable = WSACreateEvent();
+    HANDLE timer =
+        CreateWaitableTimerExW(nullptr, nullptr, 0x00000002, TIMER_MODIFY_STATE | SYNCHRONIZE);
+
+    ~Impl() {
+        if (readable != WSA_INVALID_EVENT) {
+            WSAEventSelect(socket.native_handle(), nullptr, 0);
+            WSACloseEvent(readable);
+        }
+        if (timer)
+            CloseHandle(timer);
+    }
+#endif
 };
 
 AsioReceiverSocket::AsioReceiverSocket(std::uint32_t bindIp, std::uint16_t port)
@@ -41,22 +57,51 @@ AsioReceiverSocket::AsioReceiverSocket(std::uint32_t bindIp, std::uint16_t port)
     p_->socket.bind({address_v4(bindIp), port});
     p_->socket.set_option(udp::socket::receive_buffer_size(4 * 1024 * 1024));
     p_->socket.non_blocking(true);
+#ifdef _WIN32
+    if (p_->timer && p_->readable != WSA_INVALID_EVENT &&
+        WSAEventSelect(p_->socket.native_handle(), p_->readable, FD_READ) == SOCKET_ERROR)
+        throw std::system_error(WSAGetLastError(), std::system_category(), "WSAEventSelect");
+#endif
 }
 
 AsioReceiverSocket::~AsioReceiverSocket() = default;
 
-void AsioReceiverSocket::waitReadable() {
-    // 仅等待读就绪；限时后由同一线程处理 NACK，不留下待取消的异步操作。
+void AsioReceiverSocket::waitReadable(std::uint64_t deadlineUs) {
+    const auto now = monotonicUs();
+    if (now >= deadlineUs)
+        return;
+    const auto fd = p_->socket.native_handle();
+    const auto remaining = deadlineUs - now;
 #ifdef _WIN32
-    WSAPOLLFD fd{p_->socket.native_handle(), POLLRDNORM, 0};
-    if (WSAPoll(&fd, 1, 1) == SOCKET_ERROR) {
-        const int error = WSAGetLastError();
-        if (error != WSAEINTR)
-            throw std::system_error(error, std::system_category(), "WSAPoll");
+    if (p_->timer && p_->readable != WSA_INVALID_EVENT) {
+        HANDLE handles[]{p_->readable, p_->timer};
+        LARGE_INTEGER relative{};
+        relative.QuadPart = -static_cast<LONGLONG>(remaining * 10);
+        if (!SetWaitableTimer(p_->timer, &relative, 0, nullptr, nullptr, FALSE))
+            throw std::system_error(GetLastError(), std::system_category(), "SetWaitableTimer");
+        const auto result = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+        if (result == WAIT_OBJECT_0) {
+            WSANETWORKEVENTS events{};
+            if (WSAEnumNetworkEvents(fd, p_->readable, &events) == SOCKET_ERROR)
+                throw std::system_error(WSAGetLastError(), std::system_category(),
+                                        "WSAEnumNetworkEvents");
+            if (events.iErrorCode[FD_READ_BIT])
+                throw std::system_error(events.iErrorCode[FD_READ_BIT], std::system_category(),
+                                        "FD_READ");
+        } else if (result != WAIT_OBJECT_0 + 1)
+            throw std::system_error(GetLastError(), std::system_category(), "receiver wait");
+        return;
     }
+    fd_set ready;
+    FD_ZERO(&ready);
+    FD_SET(fd, &ready);
+    timeval timeout{static_cast<long>(remaining / 1000000), static_cast<long>(remaining % 1000000)};
+    if (::select(0, &ready, nullptr, nullptr, &timeout) == SOCKET_ERROR &&
+        WSAGetLastError() != WSAEINTR)
+        throw std::system_error(WSAGetLastError(), std::system_category(), "select");
 #else
-    pollfd fd{p_->socket.native_handle(), POLLIN, 0};
-    if (::poll(&fd, 1, 1) < 0 && errno != EINTR)
+    pollfd ready{fd, POLLIN, 0};
+    if (::poll(&ready, 1, static_cast<int>((remaining + 999) / 1000)) < 0 && errno != EINTR)
         throw std::system_error(errno, std::generic_category(), "poll");
 #endif
 }

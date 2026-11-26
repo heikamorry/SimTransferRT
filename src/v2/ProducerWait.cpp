@@ -67,15 +67,29 @@ bool ProducerStop::waitUntil(std::uint64_t targetUs) {
 }
 
 ProducerWait::ProducerWait(ProducerStop &stop, ProducerWaitStats &stats, unsigned hz,
-                           [[maybe_unused]] Timer timer)
+                           [[maybe_unused]] Timer timer, unsigned leadCapUs)
     : stop_(stop), stats_(stats) {
     if (hz < 1 || hz > 1000)
         throw std::invalid_argument("V2 source rate must be 1..1000 Hz");
-    // At 50/60 Hz the cap is 500 us. Even at 1 kHz the intended spin window
-    // occupies at most one eighth of a period. Begin with the previous 80 us lead.
-    stats_.leadCapUs = std::min<std::uint64_t>(500, 1000000u / hz / 8);
+    if (leadCapUs < 80 || leadCapUs > 4000)
+        throw std::invalid_argument("Sampling wake lead cap must be 80..4000 us");
+    stats_.leadCapUs = std::min<std::uint64_t>(leadCapUs, 1000000u / hz / 8);
+    // Occasional millisecond wake delays recur even after many prompt returns.
+    // Reserve that margin on every slot, bounded to one eighth of the source period.
+    stats_.leadFloorUs = std::min<std::uint64_t>(2000, stats_.leadCapUs);
+    stats_.leadUs = stats_.leadFloorUs;
     stats_.backend = "condition_variable";
 #ifdef _WIN32
+    stats_.priorityRaised = false;
+    stats_.priorityError = 0;
+    previousPriority_ = GetThreadPriority(GetCurrentThread());
+    if (previousPriority_ != THREAD_PRIORITY_ERROR_RETURN &&
+        previousPriority_ < THREAD_PRIORITY_ABOVE_NORMAL) {
+        stats_.priorityRaised =
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL) != FALSE;
+        if (!stats_.priorityRaised)
+            stats_.priorityError = GetLastError();
+    }
     if (timer == Timer::Automatic && !stop_.event_)
         ++stats_.fallbacks;
     if (stop_.event_ && timer == Timer::Automatic) {
@@ -97,6 +111,8 @@ ProducerWait::~ProducerWait() {
 #ifdef _WIN32
     if (timer_)
         CloseHandle(timer_);
+    if (stats_.priorityRaised)
+        SetThreadPriority(GetCurrentThread(), previousPriority_);
 #endif
 }
 
@@ -161,11 +177,12 @@ bool ProducerWait::until(std::uint64_t slotUs, std::uint64_t &sampledUs) {
             ++stats_.returnsPastSlot;
         // Absorb observed wake lateness promptly; decay the lead over subsequent
         // returns. A 16 us margin covers timer rearm/clock granularity.
-        const auto desired = std::clamp<std::uint64_t>(overshoot + 16, 80, stats_.leadCapUs);
+        const auto desired =
+            std::clamp<std::uint64_t>(overshoot + 16, stats_.leadFloorUs, stats_.leadCapUs);
         if (desired >= stats_.leadUs)
             stats_.leadUs = desired;
         else
-            stats_.leadUs -= (stats_.leadUs - desired + 31) / 32;
+            stats_.leadUs -= (stats_.leadUs - desired + 127) / 128;
     } else if (now < slotUs)
         ++stats_.spinOnly;
     else

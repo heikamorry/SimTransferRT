@@ -5,6 +5,9 @@ target_link_libraries(sim_model_ui PUBLIC sim_model_io Qt6::Widgets Qt6::OpenGLW
     VTK::GUISupportQt VTK::RenderingOpenGL2 VTK::RenderingFreeType
     VTK::RenderingAnnotation VTK::InteractionWidgets VTK::InteractionStyle)
 target_compile_definitions(sim_model_ui PUBLIC SIM_MODEL_PREVIEW=1)
+if(SIM_GUI_IMMEDIATE_SWAP)
+    target_compile_definitions(sim_model_ui PRIVATE SIM_GUI_IMMEDIATE_SWAP=1)
+endif()
 vtk_module_autoinit(TARGETS sim_model_ui MODULES VTK::RenderingOpenGL2 VTK::RenderingFreeType VTK::InteractionStyle)
 if(WIN32)
     get_filename_component(model_vtk_bin "${VTK_DIR}/../../../bin" ABSOLUTE)

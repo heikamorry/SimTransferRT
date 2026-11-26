@@ -1,4 +1,5 @@
 #include "v2/Runner.h"
+#include "v2/RunnerReport.h"
 #include "v2/ProducerWait.h"
 #include "core/SamplingClock.h"
 #include "protocol/V2PacketCodec.h"
@@ -22,6 +23,38 @@ void require(bool x, const char *text) {
         throw std::runtime_error(text);
 }
 
+void initialSubmissionVerdict() {
+    rt::v2::runner_detail::State state;
+    state.sources[0].kind = "simulation";
+    state.sources[0].sampled = 10;
+    state.sources[0].built = 10;
+    auto &module = state.engine.modules[0];
+    auto status = [&] {
+        const auto json = rt::v2::runner_detail::report(state);
+        const auto begin = json.find("\"id\":\"initial_submission\"");
+        require(begin != std::string::npos, "initial submission acceptance row missing");
+        const auto row = json.substr(begin, json.find('}', begin) - begin);
+        const auto key = row.find("\"status\":\"");
+        require(key != std::string::npos, "initial submission status missing");
+        const auto start = key + std::string("\"status\":\"").size();
+        return row.substr(start, row.find('"', start) - start);
+    };
+    for (auto completed : {9u, 10u, 11u}) {
+        module.initialComplete = completed;
+        require(status() == "running", "live in-flight or snapshot skew caused a final verdict");
+    }
+    module.deadlineMisses = 1;
+    require(status() == "fail", "a recorded live deadline miss must fail immediately");
+    module.deadlineMisses = 0;
+    module.initialIncomplete = 1;
+    require(status() == "fail", "a recorded incomplete initial frame must fail");
+    module.initialIncomplete = 0;
+    state.finished = true;
+    require(status() == "fail", "final counter mismatch must remain failed");
+    module.initialComplete = 10;
+    require(status() == "pass", "fully drained initial submissions must pass");
+}
+
 struct Capture {
     std::mutex mutex;
     std::vector<rt::v2::DataPacket> packets;
@@ -33,6 +66,7 @@ struct Capture {
     bool requestFirstFragment = false;
     std::size_t nackAtPacket = 0;
     bool delayFirstEpFragment = false;
+    std::function<void()> onFragment65;
 };
 
 class Transport : public rt::IUdpTransport {
@@ -59,6 +93,8 @@ class Transport : public rt::IUdpTransport {
             packet.fragmentIndex == 0 && !packet.retransmission)
             std::this_thread::sleep_for(std::chrono::milliseconds(21));
         capture_->packets.push_back(std::move(packet));
+        if (capture_->packets.size() == 65 && capture_->onFragment65)
+            capture_->onFragment65();
         return true;
     }
 
@@ -191,9 +227,10 @@ void producerWaitCancellation() {
     const auto slot = rt::monotonicUs() + 5000;
     require(wait.until(slot, sample) && sample >= slot,
             "after reset keep the absolute slot and never sample early");
-    require(restarted.leadUs >= 80 && restarted.leadUs <= restarted.leadCapUs &&
-                restarted.leadCapUs == 125,
-            "adaptive lead remains limited at the maximum source rate");
+    require(restarted.leadFloorUs == 125 && restarted.leadUs == 125 && restarted.leadCapUs == 125,
+            "wake margin remains limited to one eighth of the maximum-rate period");
+    require(stats[0].leadFloorUs == 2000 && stats[1].leadFloorUs == 2000,
+            "50 Hz steady-state wake margin survives prompt timer returns");
     require(restarted.worstReturnUs >= restarted.worstTargetUs &&
                 restarted.overshootMaxUs == restarted.worstReturnUs - restarted.worstTargetUs,
             "wake overshoot timestamps agree");
@@ -509,6 +546,27 @@ void feedbackDuringPacedFrame() {
             "report counts actual nonblocking receive calls");
 }
 
+void finishDuringFrame() {
+    auto capture = std::make_shared<Capture>();
+    rt::v2::Config c;
+    c.ndiEnabled = false;
+    c.epBytes = 204800;
+    rt::v2::Session session(factory(capture));
+    capture->onFragment65 = [&] {
+        session.finish();
+    };
+    session.start(c);
+    const auto r = session.wait();
+    require(r.success && r.reportJson.find("user_finish_drained") != std::string::npos,
+            "graceful finish observed during fragment 65");
+    require(capture->packets.size() >= 143 && capture->packets.size() % 143 == 0,
+            "all admitted frames drained after stop");
+    require(capture->packets[142].fragmentIndex == 142 &&
+                r.reportJson.find("\"initial_incomplete\":1") == std::string::npos &&
+                r.reportJson.find("\"unsent_at_stop\":78") == std::string::npos,
+            "tail of the 143-fragment EP frame was transmitted");
+}
+
 void statusOnlyFrameBound() {
     rt::v2::Config c;
     c.ndiEnabled = false;
@@ -617,6 +675,7 @@ void oversizedDeviceReplyOnObservedLink() {
 
 int main() {
     try {
+        initialSubmissionVerdict();
         statusOnly();
         producerWaitCancellation();
         producerSessionRestart();
@@ -628,6 +687,7 @@ int main() {
         fastStopAndException();
         feedbackReadFailure();
         feedbackDuringPacedFrame();
+        finishDuringFrame();
         statusOnlyFrameBound();
         linkRecovery();
         oversizedDeviceReplyOnObservedLink();

@@ -246,6 +246,18 @@ std::vector<rt::Datagram> Receiver::poll(std::uint64_t now) {
     return pollRequests(now, std::nullopt);
 }
 
+std::uint64_t Receiver::nextDeadlineUs() const {
+    std::uint64_t next = UINT64_MAX;
+    for (const auto &module : state_)
+        for (const auto &a : module.active) {
+            if (!a.tail)
+                next = std::min(next, a.lastUs + 2000);
+            if (a.discovered && (a.tail || a.contiguous < a.highest || a.rounds == 3))
+                next = std::min(next, a.nextRequestUs);
+        }
+    return next;
+}
+
 std::vector<rt::Datagram> Receiver::pollRequests(std::uint64_t now,
                                                  std::optional<std::uint8_t> observedModule) {
     std::vector<rt::Datagram> packets;

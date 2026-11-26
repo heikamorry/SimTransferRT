@@ -175,28 +175,33 @@ struct SourceMailbox {
     std::mutex mutex;
     std::deque<QueuedFrame> queue;
     SourceStats stats;
-    // Only used by the opt-in untraced path. write is published after the
+    // Used when detailed handoff tracing is off. write is published after the
     // immutable frame, read only after consumer releases that cell. At most
     // four resident frames, exactly the same drop-new policy as the deque.
     std::array<PreparedPtr, 4> ring{};
+    std::array<std::uint64_t, 4> enqueuedUs{};
     alignas(64) std::atomic<unsigned> write{0};
     alignas(64) std::atomic<unsigned> read{0};
 
-    unsigned push(PreparedPtr frame) {
+    unsigned push(PreparedPtr frame, bool stampEnqueue) {
         const auto w = write.load(std::memory_order_relaxed);
         const auto used = w - read.load(std::memory_order_acquire);
         if (used == ring.size())
             return 0;
         ring[w % ring.size()] = std::move(frame);
+        if (stampEnqueue)
+            enqueuedUs[w % ring.size()] = rt::monotonicUs();
         write.store(w + 1, std::memory_order_release);
         return used + 1;
     }
 
-    PreparedPtr pop() {
+    PreparedPtr pop(std::uint64_t *publishedUs = nullptr) {
         const auto r = read.load(std::memory_order_relaxed);
         if (r == write.load(std::memory_order_acquire))
             return {};
         auto frame = std::move(ring[r % ring.size()]);
+        if (publishedUs)
+            *publishedUs = enqueuedUs[r % ring.size()];
         read.store(r + 1, std::memory_order_release);
         return frame;
     }
@@ -228,6 +233,7 @@ struct Session::Impl {
     std::thread worker;
     ProducerStop producerStop;
     const std::atomic<bool> &stopRequested = producerStop.flag();
+    std::atomic<bool> abortRequested{false};
     std::atomic<bool> active{false};
     mutable std::mutex mutex;
     std::shared_ptr<const State> state = std::make_shared<const State>();
@@ -318,10 +324,12 @@ void Session::Impl::source(Config c, unsigned id, std::uint64_t origin, SourceMa
             epTemplate.emplace(replay.empty() ? std::move(ep) : std::move(replay));
         const auto hz = id == 1 ? c.ndiHz : c.epHz;
         const auto phase = id == 1 ? c.ndiPhaseUs : c.epPhaseUs;
-        ProducerWait sampleWait(producerStop, stats.wait, hz);
+        ProducerWait sampleWait(producerStop, stats.wait, hz, ProducerWait::Timer::Automatic,
+                                c.sampleLeadCapUs);
         const bool ringPath = c.mailboxFastPath && !c.handoffTrace;
         std::uint64_t slot = 0;
         std::uint64_t previous = 0;
+        std::uint64_t nextStatsUs = 0;
         auto advance = [&](std::uint64_t now, PreparedPtr p = {}) {
             auto next = slot + 1;
             const auto latest = (now - origin - phase) * hz / 1000000ULL + 1;
@@ -334,39 +342,38 @@ void Session::Impl::source(Config c, unsigned id, std::uint64_t origin, SourceMa
                 mail.nextSample.store(origin + phase + (slot * 1000000ULL) / hz,
                                       std::memory_order_release);
                 if (p) {
-                    const auto depth = mail.push(std::move(p));
+                    const auto depth = mail.push(std::move(p), c.fragmentTrace && id == 1);
                     if (!depth)
                         ++stats.queueDrops;
                     stats.queueHighWater = std::max<std::uint64_t>(stats.queueHighWater, depth);
                 }
                 wake.notify();
-                // Snapshot data still have a mutex: no concurrent unsynchronised
-                // copy of strings or histogram storage. Final publish is unconditional.
-                publish();
-                return;
-            }
-            stats.intervals = interval.summary();
-            stats.deviation = deviation.summary();
-            stats.lateness = late.summary();
-            auto ticket = c.handoffTrace && p ? std::make_shared<TraceTicket>() : nullptr;
-            {
-                std::lock_guard<std::mutex> lock(mail.mutex);
-                if (p) {
-                    if (mail.queue.size() == 4) {
-                        ++stats.queueDrops;
-                        ticket.reset();
-                    } else {
-                        mail.queue.push_back({std::move(p), ticket});
-                        if (ticket)
-                            ticket->handoff.enqueuedUs = rt::monotonicUs();
+            } else {
+                auto ticket = c.handoffTrace && p ? std::make_shared<TraceTicket>() : nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(mail.mutex);
+                    if (p) {
+                        if (mail.queue.size() == 4) {
+                            ++stats.queueDrops;
+                            ticket.reset();
+                        } else {
+                            mail.queue.push_back({std::move(p), ticket});
+                            if (ticket)
+                                ticket->handoff.enqueuedUs = rt::monotonicUs();
+                        }
                     }
+                    stats.queueHighWater =
+                        std::max<std::uint64_t>(stats.queueHighWater, mail.queue.size());
+                    mail.nextSample = origin + phase + (slot * 1000000ULL) / hz;
                 }
-                stats.queueHighWater =
-                    std::max<std::uint64_t>(stats.queueHighWater, mail.queue.size());
-                mail.stats = stats;
-                mail.nextSample = origin + phase + (slot * 1000000ULL) / hz;
+                wake.notify(ticket ? &ticket->notifyIssueUs : nullptr);
             }
-            wake.notify(ticket ? &ticket->notifyIssueUs : nullptr);
+            // Publish distributions after the frame is visible to the sender.
+            // Every slot is measured; the final source publication is unconditional.
+            if (now >= nextStatsUs) {
+                publish();
+                nextStatsUs = now + 100000;
+            }
         };
         while (!stopRequested.load(std::memory_order_acquire)) {
             const auto planned = origin + phase + (slot * 1000000ULL) / hz;
@@ -487,6 +494,13 @@ void Session::Impl::source(Config c, unsigned id, std::uint64_t origin, SourceMa
 
 void Session::Impl::execute(Config c) {
     State local;
+#ifdef _WIN32
+    // This dedicated sender thread exits with the session.
+    local.senderPriorityRaised =
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL) != FALSE;
+    if (!local.senderPriorityRaised)
+        local.senderPriorityError = GetLastError();
+#endif
     local.config = c;
     std::array<SourceMailbox, 2> sources;
     std::array<std::thread, 2> producers;
@@ -513,6 +527,8 @@ void Session::Impl::execute(Config c) {
         auto next = std::make_shared<State>(local);
         if (engine)
             next->engine = engine->snapshot();
+        if (udp)
+            next->operationStorage = udp->operationStorageStats();
         for (unsigned i = 0; i < 2; ++i) {
             std::lock_guard<std::mutex> lock(sources[i].mutex);
             next->sources[i] = sources[i].stats;
@@ -553,6 +569,8 @@ void Session::Impl::execute(Config c) {
         transportConfig.bindIp = c.bindIp;
         transportConfig.targetPort = c.targetPort;
         transportConfig.commandPort = c.commandPort;
+        if (c.asioPooledHandler)
+            udp->setOperationStorageReuse(true);
         udp->open(transportConfig);
         local.localPort = udp->localPort();
         local.df = udp->dfEnabled();
@@ -596,7 +614,9 @@ void Session::Impl::execute(Config c) {
         std::uint64_t nextPublish = 0;
         std::uint64_t nextStatus = c.statusIntervalUs ? local.startedUs : UINT64_MAX;
         std::uint64_t drainStart = 0;
-        const auto stopAt = c.durationUs ? local.startedUs + c.durationUs + 100000 : UINT64_MAX;
+        constexpr std::uint64_t drainLimitUs = 2000000;
+        auto stopAt = c.durationUs ? local.startedUs + c.durationUs + drainLimitUs : UINT64_MAX;
+        bool finishing = false;
         constexpr unsigned maxDispatchesPerPoll = 8;
         std::uint64_t lastServiceUs = 0;
         unsigned dispatchesSinceService = 0;
@@ -604,16 +624,28 @@ void Session::Impl::execute(Config c) {
             return lastServiceUs + (packetDue == UINT64_MAX ? 500u : 100u);
         };
         const bool ringPath = c.mailboxFastPath && !c.handoffTrace;
+        // An idle sender may briefly check the mailbox around a published NDI sample slot.
+        // At the maximum rate, cap pre/post-slot checks at 1/32 and 1/64 of a period.
+        const auto ndiLeadUs = std::min(c.ndiHandoffGuardUs, 1000000u / c.ndiHz / 32);
+        const auto ndiTailUs = ndiLeadUs / 2;
+        std::uint64_t lastGuardSlot = 0;
         SenderWait lastWait;
-        while (!stopRequested.load(std::memory_order_acquire)) {
+        while (!abortRequested.load(std::memory_order_acquire)) {
             auto now = rt::monotonicUs();
+            if (!finishing && stopRequested.load(std::memory_order_acquire)) {
+                finishing = true;
+                nextStatus = UINT64_MAX;
+                stopAt = std::min(stopAt, now + drainLimitUs);
+            }
             bool sizeChanged = false;
             for (unsigned i = 0; i < 2; ++i) {
                 PreparedPtr p;
                 std::shared_ptr<TraceTicket> ticket;
+                std::uint64_t publishedUs = 0;
+                std::uint64_t ndiDequeuedUs = 0;
                 std::uint64_t nextSample = 0;
                 if (ringPath) {
-                    p = sources[i].pop();
+                    p = sources[i].pop(c.fragmentTrace && i == 0 ? &publishedUs : nullptr);
                     nextSample = sources[i].nextSample.load(std::memory_order_acquire);
                 } else {
                     auto &sourceBox = sources[i];
@@ -645,6 +677,15 @@ void Session::Impl::execute(Config c) {
                     nextSample = sourceBox.nextSample;
                 }
                 if (p) {
+                    if (i == 0) {
+                        const auto dequeued = rt::monotonicUs();
+                        ndiDequeuedUs = dequeued;
+                        local.ndiReadyToDequeueMaxUs =
+                            std::max(local.ndiReadyToDequeueMaxUs, dequeued - p->readyUs);
+                        if (lastGuardSlot && p->plannedSampleUs == lastGuardSlot &&
+                            dequeued <= lastGuardSlot + ndiTailUs)
+                            ++local.ndiGuardHits;
+                    }
                     auto &known = i == 0 ? knownNdiBytes : knownEpBytes;
                     if (known != p->payload->byteSize) {
                         known = p->payload->byteSize;
@@ -656,6 +697,11 @@ void Session::Impl::execute(Config c) {
                             ticket, &ticket->notifyIssueUs);
                         h.submittedUs = rt::monotonicUs();
                         engine.submit(std::move(p), std::move(h));
+                    } else if (publishedUs) {
+                        FrameHandoff handoff;
+                        handoff.enqueuedUs = publishedUs;
+                        handoff.dequeuedUs = ndiDequeuedUs;
+                        engine.submit(std::move(p), std::move(handoff));
                     } else
                         engine.submit(std::move(p));
                 }
@@ -698,20 +744,33 @@ void Session::Impl::execute(Config c) {
             // boundary.
             const auto stepUs = now;
             const bool sent = engine.stepTransport(stepUs, *udp, rt::monotonicUs);
-            if (sent)
+            if (sent) {
+                drainStart = 0;
                 ++dispatchesSinceService;
+            }
             now = rt::monotonicUs();
             auto packetDue = engine.nextDueUs();
+            const auto ndiSlot = ndiLeadUs && !finishing && packetDue == UINT64_MAX
+                                     ? sources[0].nextSample.load(std::memory_order_acquire)
+                                     : 0;
+            const auto guardBegin = ndiSlot > ndiLeadUs ? ndiSlot - ndiLeadUs : 0;
+            const auto guardEnd = ndiSlot + ndiTailUs;
+            const bool nearNdi = ndiSlot && now >= guardBegin && now < guardEnd;
+            // Publish between bursts where possible. A continuously busy stream
+            // still publishes within 100 ms of the normal reporting deadline.
+            const bool publishDue = now >= nextPublish &&
+                                    ((packetDue == UINT64_MAX && !nearNdi) ||
+                                     now - nextPublish >= 100000);
             // A short pacing gap does not end a burst. Bound feedback latency by
             // both dispatch count and elapsed time, then give the socket an idle poll.
             if (dispatchesSinceService >= maxDispatchesPerPoll || now >= nextService(packetDue) ||
-                now >= nextPublish || now >= stopAt ||
+                publishDue || now >= stopAt ||
                 (packetDue == UINT64_MAX && dispatchesSinceService)) {
                 lastServiceUs = rt::monotonicUs();
                 dispatchesSinceService = 0;
                 IncomingDatagram incoming;
                 for (unsigned n = 0;
-                     n < 4 && !stopRequested && (!n || rt::monotonicUs() - lastServiceUs < 40);
+                     n < 4 && !abortRequested && (!n || rt::monotonicUs() - lastServiceUs < 40);
                      ++n) {
                     ++local.feedbackPollCalls;
                     const auto outcome = udp->receiveFeedback(incoming);
@@ -734,14 +793,17 @@ void Session::Impl::execute(Config c) {
                         break;
                 }
                 now = rt::monotonicUs();
-                if (now >= nextPublish) {
+                if (publishDue) {
                     publish(&engine);
                     nextPublish = now + 100000;
                 }
                 const bool done = sources[0].done && sources[1].done &&
-                                  (c.ndiEnabled || c.epEnabled ||
+                                  (finishing || c.ndiEnabled || c.epEnabled ||
                                    (c.durationUs && now >= local.startedUs + c.durationUs));
-                if (done && !engine.pendingInitial() && !udp->inFlight()) {
+                if (done)
+                    nextStatus = UINT64_MAX;
+                if (done && engine.nextDueUs() == UINT64_MAX && !udp->inFlight() &&
+                    !hasStatus.load(std::memory_order_acquire)) {
                     bool empty = true;
                     for (auto &box : sources) {
                         if (ringPath)
@@ -755,13 +817,16 @@ void Session::Impl::execute(Config c) {
                         if (!drainStart)
                             drainStart = now;
                         if (now - drainStart >= 100000) {
-                            local.endedReason = "sources_finished_and_retry_grace_elapsed";
+                            local.endedReason = finishing
+                                                    ? "user_finish_drained"
+                                                    : "sources_finished_and_retry_grace_elapsed";
                             break;
                         }
                     }
                 }
                 if (now >= stopAt) {
-                    local.endedReason = "duration_expired";
+                    local.endedReason = "drain_timeout";
+                    local.error = "Timed out draining accepted work and receiver feedback";
                     break;
                 }
                 packetDue = engine.nextDueUs(); // Feedback may have scheduled a retry.
@@ -774,8 +839,24 @@ void Session::Impl::execute(Config c) {
             // opportunity. Pace short on-wire gaps as before. With no pending
             // packets, wait on the wake event until the next idle feedback poll.
             auto due = packetDue <= now ? now + 20 : packetDue;
-            due = std::min({due, nextStatus, nextPublish, nextService(packetDue), stopAt});
-            if (packetDue != UINT64_MAX && due <= now + 180) {
+            const auto publishWake = now < nextPublish ? nextPublish : nextPublish + 100000;
+            due = std::min({due, nextStatus, publishWake, nextService(packetDue), stopAt});
+            if (packetDue == UINT64_MAX && ndiSlot && now < guardBegin)
+                due = std::min(due, guardBegin);
+            if (packetDue == UINT64_MAX && ndiSlot && now >= guardBegin && now < guardEnd) {
+                // Never hold the sender until the NDI slot: revisit EP, status, feedback
+                // and stop between short checks, even if the NDI source stalls.
+                if (lastGuardSlot != ndiSlot) {
+                    lastGuardSlot = ndiSlot;
+                    ++local.ndiGuardWindows;
+                }
+                const auto begin = rt::monotonicUs();
+                rt::waitBrieflyUntil(std::min({due, now + 25, guardEnd}));
+                const auto end = rt::monotonicUs();
+                local.ndiGuardWaitWallUs += end - begin;
+                if (c.handoffTrace)
+                    lastWait = {"ndi_handoff_guard", "guard_return", begin, end};
+            } else if (packetDue != UINT64_MAX && due <= now + 180) {
                 if (c.handoffTrace) {
                     lastWait.kind = "brief_pacing";
                     lastWait.beginUs = rt::monotonicUs();
@@ -882,6 +963,7 @@ void Session::start(const Config &config) {
         p_->rejectedStatuses = 0;
         p_->cancelledStatuses = 0;
     }
+    p_->abortRequested = false;
     p_->producerStop.reset();
     p_->active = true;
     try {
@@ -894,9 +976,14 @@ void Session::start(const Config &config) {
     }
 }
 
-void Session::stop() noexcept {
+void Session::finish() noexcept {
     p_->producerStop.request();
     p_->wake.notify();
+}
+
+void Session::stop() noexcept {
+    p_->abortRequested.store(true, std::memory_order_release);
+    finish();
 }
 
 bool Session::busy() const noexcept {

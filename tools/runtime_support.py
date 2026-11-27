@@ -13,6 +13,15 @@ import time
 from pathlib import Path
 
 
+def built_executable(build, name, subdir="src"):
+    """Resolve the flat Windows release and the standard CMake build/install layouts."""
+    filename = name + (".exe" if os.name == "nt" else "")
+    for directory in (build, build / subdir, build / "bin"):
+        if (directory / filename).is_file():
+            return directory / filename
+    return build / filename
+
+
 def probe_udp_loopback():
     """Measure local IPv4 UDP delivery in both directions using live, bound endpoints."""
     report = {"address": "127.0.0.1", "available": False, "exchanges": []}

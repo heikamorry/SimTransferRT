@@ -6,7 +6,9 @@ else()
     find_path(_sim_asio_include boost/asio.hpp NO_CACHE
         HINTS "${PROJECT_SOURCE_DIR}/build/asio-deps/boost_1_88_0"
               "$ENV{LOCALAPPDATA}/SimTransferRT/deps/boost_1_88_0"
-              "$ENV{HOME}/.cache/SimTransferRT/deps/boost_1_88_0")
+              "$ENV{HOME}/.cache/SimTransferRT/deps/boost_1_88_0"
+              "$ENV{HOME}/.cache/SimTransferRT/sources/boost_1_88_0"
+              "$ENV{XDG_CACHE_HOME}/SimTransferRT/sources/boost_1_88_0")
 endif()
 set(_sim_boost_ver "")
 set(_sim_asio_ver "")
@@ -15,7 +17,7 @@ if(EXISTS "${_sim_asio_include}/boost/version.hpp" AND EXISTS "${_sim_asio_inclu
     file(STRINGS "${_sim_asio_include}/boost/asio/version.hpp" _sim_asio_ver REGEX "^#define BOOST_ASIO_VERSION[ \t]+103402([ \t]|$)")
 endif()
 if(NOT _sim_boost_ver OR NOT _sim_asio_ver)
-    message(FATAL_ERROR "Expected Boost 1.88.0 / Boost.Asio 1.34.2 headers, not '${_sim_asio_include}'. On Windows run scripts/setup-asio-deps.ps1 using an authorized PowerShell session and configure again. For an offline installation, pass -DSIM_BOOST_ROOT=<directory containing boost/asio.hpp>.")
+    message(FATAL_ERROR "Expected Boost 1.88.0 / Boost.Asio 1.34.2 headers in '${_sim_asio_include}'. Run scripts/setup-asio-deps.ps1 on Windows or bash scripts/linux-release.sh core on Linux. For a preinstalled SDK pass -DSIM_BOOST_ROOT=<directory containing boost/asio.hpp>.")
 endif()
 add_library(sim_asio_headers INTERFACE)
 target_include_directories(sim_asio_headers SYSTEM INTERFACE "${_sim_asio_include}")

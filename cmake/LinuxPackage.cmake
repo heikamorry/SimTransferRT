@@ -1,0 +1,21 @@
+install(FILES "${PROJECT_SOURCE_DIR}/resources/linux/simtransferrt.desktop"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+install(FILES "${PROJECT_SOURCE_DIR}/resources/icons/app-256.png"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps" RENAME simtransferrt.png)
+set(sim_doc_dir "${CMAKE_INSTALL_DATADIR}/doc/simtransferrt")
+install(FILES "${_sim_asio_include}/LICENSE_1_0.txt" DESTINATION "${sim_doc_dir}/Boost")
+# The native SDK installs the notices for VTK and its bundled third-party modules here.
+get_filename_component(vtk_sdk_root "${VTK_DIR}/../../.." ABSOLUTE)
+install(DIRECTORY "${vtk_sdk_root}/share/licenses/" DESTINATION "${sim_doc_dir}/licenses")
+set(CPACK_GENERATOR DEB)
+set(CPACK_PACKAGE_NAME simtransferrt)
+set(CPACK_PACKAGE_CONTACT "SimTransferRT project")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Real-time NDI and EP UDP communication simulator")
+set(CPACK_DEBIAN_PACKAGE_SECTION science)
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "qt6-qpa-plugins, qt6-wayland, libgl1-mesa-dri")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "fonts-noto-cjk")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+set(CPACK_PACKAGE_CHECKSUM SHA256)
+include(CPack)

@@ -21,6 +21,8 @@ target_compile_definitions(sim_rt_v2 PRIVATE SIM_BUILD_TYPE="$<CONFIG>" SIM_SOUR
 set_target_properties(sim_rt_v2 PROPERTIES AUTOMOC OFF AUTORCC OFF)
 if(WIN32)
     target_link_libraries(sim_rt_v2 PRIVATE iphlpapi ws2_32)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(sim_rt_v2 PRIVATE v2/LinuxLink.cpp)
 endif()
 
 add_library(sim_rt_native STATIC network/NativeUdpTransport.cpp)
@@ -51,6 +53,7 @@ if(SIM_WITH_ASIO)
     target_link_libraries(SimRtProbe PRIVATE sim_rt_asio)
 endif()
 set_target_properties(SimRtProbe PROPERTIES AUTOMOC OFF AUTORCC OFF)
+install(TARGETS SimRtProbe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 if(SIM_WITH_QT)
     qt_add_executable(SimTransfer
@@ -77,7 +80,7 @@ if(SIM_WITH_QT)
     endif()
     set_target_properties(SimTransferCli PROPERTIES AUTOMOC OFF AUTORCC OFF)
 
-    install(TARGETS SimTransfer SimTransferCli SimRtProbe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS SimTransfer SimTransferCli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(WIN32 AND SIM_DEPLOY_QT)
         qt_generate_deploy_app_script(TARGET SimTransfer OUTPUT_SCRIPT deploy_script NO_UNSUPPORTED_PLATFORM_ERROR)
         install(SCRIPT ${deploy_script})

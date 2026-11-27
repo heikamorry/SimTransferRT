@@ -22,6 +22,32 @@
       "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}
     },
     {
+      "name": "linux-release",
+      "displayName": "Linux native Release with Qt, Asio and model preview",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"},
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "/usr",
+        "SIM_WITH_QT": "ON", "SIM_WITH_ASIO": "ON",
+        "SIM_MODEL_PREVIEW": "ON", "SIM_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "linux-arm64-core",
+      "displayName": "Debian x86-64 to ARM64 transport tests under QEMU",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"},
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-arm64-core",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release", "CMAKE_SYSTEM_NAME": "Linux",
+        "CMAKE_SYSTEM_PROCESSOR": "aarch64", "CMAKE_CXX_COMPILER": "aarch64-linux-gnu-g++",
+        "CMAKE_CROSSCOMPILING_EMULATOR": "qemu-aarch64;-L;/usr/aarch64-linux-gnu",
+        "SIM_WITH_QT": "OFF", "SIM_WITH_ASIO": "ON", "SIM_BUILD_TESTS": "ON"
+      }
+    },
+    {
       "name": "core-only",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/core",
@@ -29,11 +55,15 @@
     }
   ],
   "buildPresets": [
+    {"name": "linux-release", "configurePreset": "linux-release", "targets": ["all", "SimAppMemoryTests"]},
+    {"name": "linux-arm64-core", "configurePreset": "linux-arm64-core"},
     {"name": "windows-debug", "configurePreset": "windows-debug"},
     {"name": "windows-release", "configurePreset": "windows-release"},
     {"name": "core-only", "configurePreset": "core-only"}
   ],
   "testPresets": [
+    {"name": "linux-release", "configurePreset": "linux-release", "output": {"outputOnFailure": true}},
+    {"name": "linux-arm64-core", "configurePreset": "linux-arm64-core", "output": {"outputOnFailure": true}},
     {"name": "windows-debug", "configurePreset": "windows-debug", "output": {"outputOnFailure": true}},
     {"name": "windows-release", "configurePreset": "windows-release", "output": {"outputOnFailure": true}},
     {"name": "core-only", "configurePreset": "core-only", "output": {"outputOnFailure": true}}

@@ -1,4 +1,4 @@
-// Opt-in native Windows GUI memory run. The paired sender and receiver use separate processes.
+// Native Qt GUI diagnostics, including a paired sender/receiver soak in one window.
 #include "cycle_memory.h"
 #include "core/SamplingClock.h"
 #include "model/PreviewPanel.h"
@@ -26,6 +26,7 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QSurfaceFormat>
+#include <QSysInfo>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTest>
@@ -39,6 +40,7 @@
 #include <iostream>
 #include <map>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -213,11 +215,11 @@ class SoakApplication final : public QApplication {
         compose_.spans.reserve(ViewportCompose::limit);
         viewportName_ = viewport.objectName();
         connect(&viewport, &QOpenGLWidget::aboutToCompose, this, [this] {
-            if (enabled_.load(std::memory_order_relaxed) && GetCurrentThreadId() == guiTid_)
+            if (enabled_.load(std::memory_order_relaxed) && std::this_thread::get_id() == guiTid_)
                 compose_.begin(rt::monotonicUs());
         }, Qt::DirectConnection);
         connect(&viewport, &QOpenGLWidget::frameSwapped, this, [this] {
-            if (enabled_.load(std::memory_order_relaxed) && GetCurrentThreadId() == guiTid_)
+            if (enabled_.load(std::memory_order_relaxed) && std::this_thread::get_id() == guiTid_)
                 compose_.finish(rt::monotonicUs());
         }, Qt::DirectConnection);
         // Resolve names once, before the measurement. Index zero covers unnamed/new targets.
@@ -272,7 +274,7 @@ class SoakApplication final : public QApplication {
 
   protected:
     bool notify(QObject *receiver, QEvent *event) override {
-        if (!enabled_.load(std::memory_order_relaxed) || GetCurrentThreadId() != guiTid_ ||
+        if (!enabled_.load(std::memory_order_relaxed) || std::this_thread::get_id() != guiTid_ ||
             !receiver || !event)
             return QApplication::notify(receiver, event);
         if (inNotify_) {
@@ -377,7 +379,7 @@ class SoakApplication final : public QApplication {
                            {"events", events}, {"gaps", gaps}};
     }
 
-    const DWORD guiTid_ = GetCurrentThreadId();
+    const std::thread::id guiTid_ = std::this_thread::get_id();
     std::atomic<bool> enabled_{false};
     bool inNotify_ = false;
     bool inUpdate_ = false, inPaint_ = false;
@@ -399,6 +401,7 @@ template <class T> T *control(QWidget &window, const char *name = nullptr) {
 
 QJsonObject reading() {
     const auto memory = cycle_memory::readCurrent();
+#ifdef _WIN32
     const auto process = GetCurrentProcess();
     DWORD handles = 0;
     check(GetProcessHandleCount(process, &handles), "GetProcessHandleCount");
@@ -407,13 +410,21 @@ QJsonObject reading() {
             {"handles", static_cast<qint64>(handles)},
             {"gdiObjects", static_cast<qint64>(GetGuiResources(process, GR_GDIOBJECTS))},
             {"userObjects", static_cast<qint64>(GetGuiResources(process, GR_USEROBJECTS))}};
+#else
+    return {{"rssBytes", qint64(memory.workingSetBytes)}, {"anonymousRssBytes", qint64(memory.privateBytes)}};
+#endif
 }
 
 QJsonObject peak(cycle_memory::Sampler &sampler) {
     const auto result = sampler.finish();
+#ifdef _WIN32
     return {{"workingSetBytes", result.workingSetBytes},
             {"privateBytes", result.privateBytes},
             {"samples", result.samples}};
+#else
+    return {{"rssBytes", qint64(result.workingSetBytes)}, {"anonymousRssBytes", qint64(result.privateBytes)},
+            {"samples", qint64(result.samples)}};
+#endif
 }
 
 class WindowRun : public QObject {
@@ -650,6 +661,8 @@ QJsonObject runLoopback(rt::V2Window &window, int port, int seconds) {
           "receiver did not stop");
     auto report = window.reportForExport();
     report["test_duration_seconds"] = seconds;
+    report["test_qt_platform"] = QApplication::platformName();
+    report["test_cpu_architecture"] = QSysInfo::currentCpuArchitecture();
     report["test_window_residency"] = residency.json();
     const auto tx = report["sender"].toObject();
     bool passed = tx["finished"].toBool() && tx["error"].toString().isEmpty() &&
@@ -696,7 +709,9 @@ QJsonObject run(rt::V2Window &window, const QString &role, int port, int jointBl
                     {"startedUtc", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
                     {"home", reading()},
                     {"targetSampleIntervalMs", cycle_memory::Peaks::intervalMs}};
-    check(QApplication::platformName() == "windows", "requires the Windows graphics platform");
+    const auto backend = QApplication::platformName();
+    check(backend == "windows" || backend == "xcb" || backend.startsWith("wayland"),
+          "requires a native desktop graphics platform");
     const auto config = window.selectedConfig();
     out["load"] = QJsonObject{{"linkMbps", static_cast<int>(config.linkMbps)},
                               {"ndiHz", static_cast<int>(config.ndiHz)},
@@ -793,10 +808,9 @@ int main(int argc, char **argv) {
         app.setOrganizationName("SimTransferTests");
         app.setApplicationName("AppMemory");
         QStandardPaths::setTestModeEnabled(true);
-        const auto base = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-        check(QDir().mkpath(base), "could not create test directory");
-        QTemporaryDir work(base + "/run-XXXXXX");
+        QTemporaryDir work(QDir::tempPath() + "/simtransfer-run-XXXXXX");
         check(work.isValid(), "could not create private run directory");
+        options.archiveDirectory = work.filePath("v2-runs");
         app.setApplicationName("AppMemory/" + QDir(work.path()).dirName());
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, work.path());

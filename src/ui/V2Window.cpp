@@ -598,7 +598,7 @@ QWidget *V2Window::createSendPage() {
     targets->addWidget(chip(QStringLiteral("< 1 ms"), QStringLiteral("采样与包间隔抖动")));
     targets->addStretch(1);
     auto *targetNote =
-        new QLabel(QStringLiteral("计时为 Windows 用户态观测；真实网卡出线时刻需独立验证。"));
+        new QLabel(QStringLiteral("计时为本机用户态观测；真实网卡出线时刻需独立验证。"));
     targetNote->setObjectName("muted");
     targetNote->setWordWrap(true);
     targets->addWidget(targetNote);
@@ -1433,8 +1433,9 @@ void V2Window::archiveRun() {
     if (!p_->archivePending)
         return;
     p_->archiveDueUs = monotonicUs() + 30000000;
-    const auto directory =
-        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/v2-runs";
+    const auto directory = p_->options.archiveDirectory.isEmpty()
+        ? QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/v2-runs"
+        : p_->options.archiveDirectory;
     const auto id = p_->senderReport["run_id"].toString();
     if (id.isEmpty() || !QDir().mkpath(directory)) {
         p_->log->appendPlainText(QStringLiteral("自动归档失败，请手动导出当前报告。"));

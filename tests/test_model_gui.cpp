@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QLabel>
 #include <QOpenGLFunctions>
+#include <QOpenGLContext>
 #include <QOpenGLWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -226,6 +227,13 @@ int main(int argc, char **argv) {
         testPreviewQueue();
         auto dark = viewport->grabFramebuffer();
         expect(!dark.isNull(), "OpenGL readback");
+#ifdef Q_OS_LINUX
+        const auto *context = viewport->context();
+        expect(context && context->isValid(), "valid native graphics context");
+        if (QSurfaceFormat::defaultFormat().renderableType() == QSurfaceFormat::OpenGLES)
+            expect(context->isOpenGLES() && context->format().majorVersion() >= 3,
+                   "VTK GLES build requires an actual OpenGL ES 3 context");
+#endif
         // A complete multi-frame BX object over V2 must use the same decoder.
         auto bxFrame = [](std::uint32_t id, float x) {
             rt::aurora::Reply reply;
@@ -475,17 +483,27 @@ int main(int argc, char **argv) {
         auto frame = viewport->grabFramebuffer();
         int sky = 0;
         int colored = 0;
+        int modelColored = 0;
+        const QRect modelArea(frame.width() / 4, frame.height() / 4, frame.width() / 2,
+                              frame.height() / 2);
         for (int y = 0; y < frame.height(); y += 3)
             for (int x = 0; x < frame.width(); x += 3) {
                 auto c = frame.pixelColor(x, y);
                 if (std::abs(c.red() - 183) < 4 && std::abs(c.green() - 213) < 4 &&
                     std::abs(c.blue() - 234) < 4)
                     ++sky;
-                else if (c.green() > 25 && c.green() < 190 && std::abs(c.red() - c.blue()) > 15)
+                else if (c.green() > 25 && c.green() < 190 && std::abs(c.red() - c.blue()) > 15) {
                     ++colored;
+                    if (modelArea.contains(x, y))
+                        ++modelColored;
+                }
             }
-        expect(sky > 40 && colored > 5,
-               QString("framebuffer sky=%1 color=%2").arg(sky).arg(colored));
+        expect(sky > 40 && colored > 5 && modelColored > 5,
+               QString("framebuffer sky=%1 color=%2 model=%3 center=%4")
+                   .arg(sky).arg(colored).arg(modelColored)
+                   .arg(frame.pixelColor(frame.rect().center()).name(QColor::HexArgb)));
+        std::cout << "Surface framebuffer samples: sky=" << sky << " color=" << colored
+                  << " model=" << modelColored << '\n';
         saveShot("local-surface.png");
         const auto selectors = panel->findChildren<QComboBox *>();
         auto mode = std::find_if(selectors.begin(), selectors.end(), [](auto combo) {
@@ -586,6 +604,7 @@ int main(int argc, char **argv) {
         QJsonObject result{{"platform", QGuiApplication::platformName()},
                            {"skySamples", sky},
                            {"coloredSamples", colored},
+                           {"modelAreaColoredSamples", modelColored},
                            {"GLRenderer", renderer},
                            {"GLVendor", vendor}};
         if (args.size() > 3) {

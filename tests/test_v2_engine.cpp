@@ -3,8 +3,13 @@
 #include "protocol/Checksum.h"
 #include <algorithm>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <utility>
+#ifdef __linux__
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#endif
 using namespace rt::v2;
 
 namespace {
@@ -257,6 +262,35 @@ void testPreflight() {
     c.pathLimitMbps = 50;
     require(effectiveMbps(c) == 50, "path lower cap wins");
 }
+
+#ifdef __linux__
+void testLinuxLink() {
+    Config config;
+    config.targetIp = "127.0.0.2";
+    config.bindIp = "0.0.0.0";
+    const auto loop = observeLink(config);
+    require(loop.loopback && !loop.physical && !loop.mbps, "127/8 must not claim wire speed");
+    config.targetIp = "127.invalid";
+    const auto invalid = observeLink(config);
+    require(!invalid.loopback && !invalid.physical && !invalid.mbps, "invalid IPv4 observation");
+    ifaddrs *addresses = nullptr;
+    require(getifaddrs(&addresses) == 0, "could not enumerate local interfaces");
+    std::unique_ptr<ifaddrs, decltype(&freeifaddrs)> list(addresses, freeifaddrs);
+    for (auto *a = addresses; a; a = a->ifa_next) {
+        if (!a->ifa_addr || a->ifa_addr->sa_family != AF_INET)
+            continue;
+        const auto ip = reinterpret_cast<const sockaddr_in *>(a->ifa_addr)->sin_addr;
+        if ((ntohl(ip.s_addr) >> 24) == 127)
+            continue;
+        char text[INET_ADDRSTRLEN]{};
+        require(inet_ntop(AF_INET, &ip, text, sizeof(text)), "IPv4 address conversion");
+        config.targetIp = text;
+        const auto local = observeLink(config);
+        require(local.loopback && !local.physical && !local.mbps, "host-local route is not Ethernet");
+        break;
+    }
+}
+#endif
 
 void testLateStatusAndFaults() {
     Config c;
@@ -1101,6 +1135,9 @@ int main() {
         testBudget();
         testCacheStopAndLate();
         testPreflight();
+#ifdef __linux__
+        testLinuxLink();
+#endif
         testLateStatusAndFaults();
         testRetryDuringDelayedAcquisition();
         testInitialDeadlineEvidence();

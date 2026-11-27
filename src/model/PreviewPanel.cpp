@@ -37,6 +37,11 @@
 namespace rt::model {
 void PreviewPanel::setDefaultSurfaceFormat() {
     auto format = QVTKOpenGLNativeWidget::defaultFormat();
+#ifdef SIM_VTK_GLES
+    format.setRenderableType(QSurfaceFormat::OpenGLES);
+    format.setProfile(QSurfaceFormat::NoProfile);
+    format.setVersion(3, 0);
+#endif
 #ifdef SIM_GUI_IMMEDIATE_SWAP
     format.setSwapInterval(0);
 #endif

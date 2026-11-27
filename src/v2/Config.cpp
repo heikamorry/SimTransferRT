@@ -10,6 +10,9 @@
 #endif
 
 namespace rt::v2 {
+#ifdef __linux__
+void observeLinuxLink(const Config &config, LinkObservation &out);
+#endif
 unsigned parseNetworkProfile(const std::string &text) {
     if (text == "100m" || text == "100" || text == "100Mbps")
         return 100;
@@ -105,11 +108,13 @@ Preflight preflight(const Config &c, std::size_t ndi, std::size_t ep, unsigned l
 LinkObservation observeLink(const Config &c) {
     LinkObservation out;
     out.observedAtUs = rt::monotonicUs();
+#ifndef __linux__
     if (c.targetIp.rfind("127.", 0) == 0) {
         out.loopback = true;
-        out.reason = "Windows/host loopback; no physical link or wire timing evidence";
+        out.reason = "Host loopback; no physical link or wire timing evidence";
         return out;
     }
+#endif
 #ifdef _WIN32
     WSADATA w{};
     if (WSAStartup(MAKEWORD(2, 2), &w)) {
@@ -184,8 +189,10 @@ LinkObservation observeLink(const Config &c) {
     out.reason = out.physical
                      ? "Observed local Ethernet hop only; remote path and egress time unverified"
                      : "Wireless/virtual interface; Ethernet serialization model is conditional";
+#elif defined(__linux__)
+    observeLinuxLink(c, out);
 #else
-    out.reason = "Automatic route/link observation is currently implemented for Windows only";
+    out.reason = "Route/link observation is unavailable on this platform";
 #endif
     return out;
 }

@@ -9,6 +9,7 @@ namespace rt {
 struct V2WindowRunOptions {
     bool fragmentTrace = false;
     bool asioPooledHandler = false;
+    QString archiveDirectory;
 };
 
 class V2Window final : public QMainWindow {

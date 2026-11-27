@@ -1,4 +1,7 @@
 #include "ui/V2Window.h"
+#ifdef SIM_MODEL_PREVIEW
+#include "model/PreviewPanel.h"
+#endif
 #include "asio_test_socket.h"
 #include "core/SamplingClock.h"
 #include "ui/MedicalBackdrop.h"
@@ -340,12 +343,14 @@ void widgetFrameTimingTrace() {
 
 void liveLifecycle() {
     QSettings().clear();
+    QTemporaryDir reports;
+    require(reports.isValid(), "could not create temporary report directory");
     rt::V2WindowRunOptions options;
     options.fragmentTrace = true;
+    options.archiveDirectory = reports.path();
     rt::V2Window w(nullptr, options);
     w.show();
-    const QDir archive(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) +
-                       "/v2-runs");
+    const QDir archive(options.archiveDirectory);
     const auto archivedBefore = archive.entryList({"*.json"}, QDir::Files).size();
     test::UdpSocket reserve(0, 1);
     const auto port = reserve.localPort();
@@ -555,6 +560,9 @@ void liveLifecycle() {
 } // namespace
 
 int main(int argc, char **argv) {
+#ifdef SIM_MODEL_PREVIEW
+    rt::model::PreviewPanel::setDefaultSurfaceFormat();
+#endif
     QApplication app(argc, argv);
     app.setOrganizationName("SimTransferTests");
     app.setApplicationName("V2UiTests");

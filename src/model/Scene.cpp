@@ -5,6 +5,9 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QOpenGLContext>
+#ifdef SIM_VTK_GLES
+#include <QOpenGLExtraFunctions>
+#endif
 #include <QPalette>
 #include <QShowEvent>
 #include <QScopeGuard>
@@ -48,6 +51,45 @@ class QtRenderWindow final : public vtkGenericOpenGLRenderWindow {
                 this->Superclass::Render();
         }
     }
+
+#ifdef SIM_VTK_GLES
+    int GetColorBufferSizes(int *rgba) override {
+        if (!rgba || !this->GetInitialized())
+            return this->Superclass::GetColorBufferSizes(rgba);
+
+        this->MakeCurrent();
+        auto *context = QOpenGLContext::currentContext();
+        std::fill_n(rgba, 4, 0);
+        if (!context || !this->IsCurrent())
+            return 0;
+        auto *gl = context->extraFunctions();
+        if (gl->glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            return 0;
+
+        // ES uses GL_BACK for the default framebuffer. Qt's widget framebuffer
+        // has a color attachment instead. VTK 9.4.2 asks for GL_BACK_LEFT.
+        GLint framebuffer = 0, attachment = GL_BACK;
+        gl->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
+        if (framebuffer) {
+            gl->glGetIntegerv(GL_DRAW_BUFFER0, &attachment);
+            if (attachment == GL_NONE)
+                attachment = GL_COLOR_ATTACHMENT0;
+        }
+        GLint type = GL_NONE;
+        gl->glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment,
+                                                 GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
+        if (type == GL_NONE)
+            return 0;
+        constexpr GLenum sizeQueries[]{GL_FRAMEBUFFER_ATTACHMENT_RED_SIZE,
+                                       GL_FRAMEBUFFER_ATTACHMENT_GREEN_SIZE,
+                                       GL_FRAMEBUFFER_ATTACHMENT_BLUE_SIZE,
+                                       GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE};
+        for (int i = 0; i < 4; ++i)
+            gl->glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment,
+                                                     sizeQueries[i], &rgba[i]);
+        return rgba[0] + rgba[1] + rgba[2] + rgba[3];
+    }
+#endif
 };
 
 vtkStandardNewMacro(QtRenderWindow);
@@ -358,8 +400,14 @@ QJsonObject Scene::timingReport() const {
                        {"widget_context_swap_interval", QJsonValue::Null}};
     if (const auto *native = window()->windowHandle(); native && native->handle())
         report["top_level_window_swap_interval"] = native->format().swapInterval();
-    if (p->widget && p->widget->isValid())
-        report["widget_context_swap_interval"] = p->widget->context()->format().swapInterval();
+    if (p->widget && p->widget->isValid()) {
+        const auto *context = p->widget->context();
+        const auto format = context->format();
+        report["widget_context_swap_interval"] = format.swapInterval();
+        report["widget_context_api"] = context->isOpenGLES() ? "OpenGL ES" : "OpenGL";
+        report["widget_context_major"] = format.majorVersion();
+        report["widget_context_minor"] = format.minorVersion();
+    }
     return report;
 }
 
@@ -481,6 +529,10 @@ void Scene::select(int field, int rep) {
         auto m = vtkPolyDataMapper::SafeDownCast(a->GetMapper());
         m->ScalarVisibilityOff();
         a->GetProperty()->LightingOn();
+#ifdef SIM_VTK_GLES
+        a->GetProperty()->SetAmbient(0.0);
+        a->GetProperty()->SetDiffuse(1.0);
+#endif
         a->GetProperty()->SetRepresentation(rep == 1   ? VTK_POINTS
                                             : rep == 2 ? VTK_WIREFRAME
                                                        : VTK_SURFACE);
@@ -517,7 +569,14 @@ void Scene::select(int field, int rep) {
         m->ScalarVisibilityOn();
         if (field == -1) {
             m->SetColorModeToDirectScalars();
+#ifdef SIM_VTK_GLES
+            // The 9.4.2 GLES mapper skips its material and opacity uniforms when
+            // lighting is off. Ambient-only shading preserves vertex RGBA.
+            a->GetProperty()->SetAmbient(1.0);
+            a->GetProperty()->SetDiffuse(0.0);
+#else
             a->GetProperty()->LightingOff();
+#endif
         } else {
             m->SetColorModeToMapScalars();
             m->SetArrayComponent(0);

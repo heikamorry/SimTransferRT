@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SimTransferRT
+Comment=NDI and EP real-time communication simulator
+Comment[zh_CN]=NDI 与 EP 实时通信模拟器
+Exec=SimTransfer
+Icon=simtransferrt
+Terminal=false
+Categories=Science;Utility;

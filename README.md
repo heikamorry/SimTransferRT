@@ -3,7 +3,41 @@
 C++17 / Qt 6 / Boost.Asio 的多模块 UDP 传输模拟器。本分支只保留 V2 双模块链路，
 GUI 的发送与接收均固定使用 Boost.Asio，不再链接 Qt Network；三维模型/BX 预览保持不变。
 
-## 依赖
+## Raspberry Pi OS / Debian 13（64 位）
+
+在树莓派 5 的桌面版系统或 Debian 13 的项目目录内运行以下命令。首次构建会校验 Boost 1.88.0 头文件包，并从经过校验的源码编译 VTK 9.4.2 和 HDF5 1.14.6。Qt 6 来自系统。树莓派默认用两个并行任务，依赖缓存位于 Linux 用户目录。
+
+```bash
+bash scripts/linux-release.sh prerequisites
+bash scripts/linux-release.sh release
+```
+
+Release 步骤构建中文 GUI、两个命令行程序和正式环回测试驱动，运行 CTest、生成本机架构的 Debian 安装包和 SHA-256 清单，然后解包启动程序做冒烟测试。无桌面的构建机可用脚本自带的 Xvfb 测试路径。可用 `bash scripts/linux-release.sh core` 单独构建和测试 Asio 收发核心。设置 `SIM_LINUX_BUILD_DIR` 可更改应用构建目录，设置 `SIM_ARCHIVE_DIR` 可使用本机已有的同名源码压缩包。
+
+在树莓派本机构建后，用以下命令校验并安装 ARM64 包。安装后可从桌面应用菜单或终端启动 `SimTransfer`。笔记本的 x86-64 Debian 构建会生成 `amd64` 包。
+
+```bash
+cd build/linux-release/packages
+sha256sum -c simtransferrt_0.3.2_arm64.deb.sha256
+sudo apt install ./simtransferrt_0.3.2_arm64.deb
+```
+
+做真机时序验收时，在树莓派已登录的桌面终端回到项目根目录，执行 `bash scripts/linux-release.sh soak`，保持接收页可见。测试通过同一套应用控件在 `127.0.0.1` 收发 600 秒，日志会给出 `joint.json` 和 `run.json` 路径。前者保留每项验收的实测值和判定，后者记录架构、程序哈希和运行条件。物理网口收发需要另做两机测试。
+
+原生 ARM64 构建默认让 VTK 和 Qt 请求匹配的 OpenGL ES 3 上下文，x86-64 默认使用桌面 OpenGL。可用 `SIM_VTK_GLES=OFF` 或 `ON` 构建对应的 SDK，应用会读取该 SDK 的实际图形配置。
+
+在 x86-64 Debian 上验证 ARM64 指令和 Asio 协议行为，可在准备好上述 Boost 头文件后交叉编译并用 QEMU 运行核心测试。树莓派图形驱动和实时时序仍需真机测量。
+
+```bash
+sudo apt install g++-aarch64-linux-gnu qemu-user
+cmake --preset linux-arm64-core
+cmake --build --preset linux-arm64-core --parallel 2
+ctest --preset linux-arm64-core
+```
+
+树莓派离线时，可在 Debian 13 的 x86-64 笔记本上运行 `bash scripts/linux-arm64-package.sh`。脚本在 `/var/cache/simtransferrt-arm64` 建立独立的 ARM64 Debian 构建环境，使用目标架构的 Qt、VTK 和 HDF5。它在 QEMU 下运行同一套测试并验证包内程序，成品与校验文件位于 `build/linux-release-arm64/packages/`。模拟环境中的时序只用于诊断。
+
+## Windows 依赖
 
 | 依赖 | 版本 / 获取方式 |
 |---|---|

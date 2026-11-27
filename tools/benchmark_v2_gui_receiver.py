@@ -1,4 +1,4 @@
-"""Compare isolated Windows Release CLI + GUI receiver runs at fixed loopback pacing."""
+"""Compare isolated Release CLI and desktop GUI receiver runs at fixed loopback pacing."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -6,9 +6,10 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 from run_diagnostics import free_ports, write_json
-from runtime_support import probe_udp_loopback
+from runtime_support import built_executable, probe_udp_loopback
 
 
 def verify_loopback():
@@ -17,14 +18,16 @@ def verify_loopback():
         raise RuntimeError(f"IPv4 UDP loopback unavailable for benchmark: {json.dumps(result)}")
 
 
-def run_rate(binaries, sender_cli, output, rate, startup, legacy_driver):
+def run_rate(driver, sender_cli, output, rate, startup, legacy_driver):
     run_dir = output / f"{rate}Mbps"
     run_dir.mkdir()
     port, command_port = free_ports()
     receiver_file = run_dir / "receiver.json"
     sender_file = run_dir / "sender.json"
-    env = {**os.environ, "QT_QPA_PLATFORM": "windows"}
-    receiver = [binaries / "SimAppMemoryTests.exe", "receiver", str(port), receiver_file, "1", "1"]
+    env = os.environ.copy()
+    if os.name == "nt":
+        env["QT_QPA_PLATFORM"] = "windows"
+    receiver = [driver, "receiver", str(port), receiver_file, "1", "1"]
     if not legacy_driver:
         receiver.append("--include-receiver-report")
     sender = [sender_cli, "--transport", "asio-async", "--bind", "127.0.0.1",
@@ -78,31 +81,37 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bin", type=Path, help="Release directory with SimAppMemoryTests and SimTransferCli")
     parser.add_argument("output", type=Path, help="new output directory for per-run reports")
-    parser.add_argument("--sender-cli", type=Path, help="use a specific installed SimTransferCli.exe")
+    parser.add_argument("--sender-cli", type=Path, help="use a specific installed SimTransferCli")
     parser.add_argument("--rates", type=int, nargs="+", default=[200, 300])
     parser.add_argument("--legacy-driver", action="store_true",
                         help="0.3.0 receiver driver exports only consumed counts")
     args = parser.parse_args()
-    if os.name != "nt" or any(rate < 100 or rate > 1000 for rate in args.rates):
-        parser.error("requires Windows and path limits between 100 and 1000 Mbps")
+    if (os.name != "nt" and not sys.platform.startswith("linux")) or any(
+            rate < 100 or rate > 1000 for rate in args.rates):
+        parser.error("requires Windows or Linux and path limits between 100 and 1000 Mbps")
+    if os.name != "nt" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        parser.error("requires an X11 or Wayland desktop, or launch using xvfb-run")
     if len(set(args.rates)) != len(args.rates):
         parser.error("rate list must be unique")
     binaries = args.bin.resolve()
-    sender_cli = args.sender_cli.resolve() if args.sender_cli else binaries / "SimTransferCli.exe"
+    driver = built_executable(binaries, "SimAppMemoryTests", "tests")
+    sender_cli = args.sender_cli.resolve() if args.sender_cli else built_executable(binaries, "SimTransferCli")
     output = args.output.resolve()
     if output.exists():
         parser.error(f"output already exists: {output}")
     hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-              for path in (binaries / "SimAppMemoryTests.exe", sender_cli)}
+              for path in (driver, sender_cli)}
     verify_loopback()
     output.mkdir(parents=True, exist_ok=False)
-    startup = subprocess.STARTUPINFO()
-    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    startup.wShowWindow = subprocess.SW_HIDE
+    startup = None
+    if os.name == "nt":
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = subprocess.SW_HIDE
     result = {"duration_seconds": 24, "endpoint": "127.0.0.1", "transport": "asio-async",
               "binary_sha256": hashes, "runs": []}
     for rate in args.rates:
-        run = run_rate(binaries, sender_cli, output, rate, startup, args.legacy_driver)
+        run = run_rate(driver, sender_cli, output, rate, startup, args.legacy_driver)
         result["runs"].append(run)
         write_json(output / "comparison.json", result)
         print(json.dumps(run), flush=True)

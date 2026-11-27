@@ -615,7 +615,7 @@ bool Engine::stepInternal(
         originalTick_ = original + cost;
     // At most one datagram of catch-up credit. Long stalls cannot release an entire frame burst.
     const auto actual = start * rate_;
-    const auto floor = actual > cost ? actual - cost : 0;
+    const std::uint64_t floor = actual > cost ? actual - cost : 0;
     allowedTick_ = std::max(allowedTick_, floor) + cost;
     if (retry)
         retries_.pop_front();

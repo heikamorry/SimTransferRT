@@ -3,6 +3,11 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
+#elif defined(__linux__)
+#include <fstream>
+#include <sstream>
+#include <string>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -10,6 +15,7 @@
 #include <cstdint>
 #include <exception>
 #include <mutex>
+#include <stdexcept>
 #include <system_error>
 #include <thread>
 
@@ -20,6 +26,7 @@ struct Reading {
 };
 
 inline Reading readCurrent() {
+#ifdef _WIN32
     PROCESS_MEMORY_COUNTERS_EX counters{};
     if (!GetProcessMemoryInfo(GetCurrentProcess(),
                               reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&counters),
@@ -29,6 +36,23 @@ inline Reading readCurrent() {
     }
     return {static_cast<std::int64_t>(counters.WorkingSetSize),
             static_cast<std::int64_t>(counters.PrivateUsage)};
+#else
+    std::ifstream status("/proc/self/status");
+    std::int64_t rss = -1, anonymous = -1;
+    std::string line;
+    while (std::getline(status, line)) {
+        if (line.compare(0, 6, "VmRSS:") != 0 && line.compare(0, 8, "RssAnon:") != 0)
+            continue;
+        std::istringstream values(line);
+        std::string field, unit;
+        std::int64_t kib = 0;
+        if (values >> field >> kib >> unit && unit == "kB")
+            (field == "VmRSS:" ? rss : anonymous) = kib * 1024;
+        if (rss >= 0 && anonymous >= 0)
+            return {rss, anonymous};
+    }
+    throw std::runtime_error("VmRSS or RssAnon unavailable in /proc/self/status");
+#endif
 }
 
 struct Peaks {
@@ -110,4 +134,3 @@ class Sampler {
     std::thread worker_;
 };
 } // namespace cycle_memory
-#endif

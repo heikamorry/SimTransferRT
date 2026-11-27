@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
+import shutil
 import socket
 import subprocess
 import sys
@@ -13,7 +15,7 @@ import time
 from datetime import datetime, timezone
 
 from run_diagnostics import cpu_seconds
-from runtime_support import atomic_json, probe_udp_loopback
+from runtime_support import atomic_json, built_executable, probe_udp_loopback
 
 
 def compare_reports(baseline, current, baseline_visible, current_visible,
@@ -83,6 +85,13 @@ def compare_reports(baseline, current, baseline_visible, current_visible,
     right = summarize(current, current_visible)
     reasons = ["baseline: " + reason for reason in left[1]]
     reasons.extend("current: " + reason for reason in right[1])
+    # Reports without platform metadata came from the Windows-only driver.
+    for key in ("test_qt_platform", "test_cpu_architecture"):
+        before, after = baseline.get(key), current.get(key)
+        if key == "test_qt_platform":
+            before, after = before or "windows", after or "windows"
+        if before and after and before != after:
+            reasons.append("measurement environment changed: " + key)
     reasons.extend("changed workload: " + k for k in left[0] if left[0][k] != right[0][k])
     controls = {
         name: {side: report.get("sender", {}).get("config", {}).get(name)
@@ -185,7 +194,8 @@ def run_diagnostic_first(args, build, output):
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--build", type=Path, default=root / "build/windows-release")
+    default_build = "windows-release" if os.name == "nt" else "linux-release"
+    parser.add_argument("--build", type=Path, default=root / "build" / default_build)
     parser.add_argument("--seconds", type=int, default=600)
     parser.add_argument("--diagnostic-first", type=int, metavar="SECONDS",
                         help="run a traced diagnostic first, then the untraced formal interval; "
@@ -212,10 +222,26 @@ def main():
     if args.ndi_handoff_guard_us is not None and (
             args.probe_only or not 0 <= args.ndi_handoff_guard_us <= 400):
         parser.error("--ndi-handoff-guard-us requires a measured run and a value of 0..400")
-    if os.name != "nt" or not 1 <= args.seconds <= 3600:
-        parser.error("requires Windows and a duration of 1..3600 seconds")
+    if (os.name != "nt" and not sys.platform.startswith("linux")) or not 1 <= args.seconds <= 3600:
+        parser.error("requires Windows or Linux and a duration of 1..3600 seconds")
     build = args.build.resolve()
-    driver = build / "SimAppMemoryTests.exe"
+    driver = built_executable(build, "SimAppMemoryTests", "tests")
+    env = os.environ.copy()
+    display_command = []
+    if os.name == "nt":
+        env["QT_QPA_PLATFORM"] = "windows"
+    elif not args.probe_only:
+        if args.visible:
+            if not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")):
+                parser.error("--visible requires a logged-in X11 or Wayland desktop")
+            backend = env.get("QT_QPA_PLATFORM", "").split(":")[0]
+            if backend and backend != "xcb" and not backend.startswith("wayland"):
+                parser.error("--visible requires the xcb or Wayland Qt platform")
+        else:
+            if not shutil.which("xvfb-run"):
+                parser.error("install xvfb and xauth for virtual display tests, or use --visible on a desktop")
+            display_command = ["xvfb-run", "-a", "-s", "-screen 0 1280x800x24"]
+            env["QT_QPA_PLATFORM"] = "xcb"
     if args.probe_only and (args.basic_tests or args.compare_to or args.fragment_trace
                             or args.asio_pooled_handler):
         parser.error("--probe-only cannot use GUI run options")
@@ -251,9 +277,10 @@ def main():
         ctest = next(line.split("=", 1)[1] for line in cache.splitlines()
                      if line.startswith("CMAKE_CTEST_COMMAND:"))
         print(f"Running basic Release tests. Log: {output / 'ctest.log'}", flush=True)
-        basic = subprocess.run([ctest, "--test-dir", str(build), "-C", "Release", "-j", "1",
+        basic = subprocess.run(display_command + [ctest, "--test-dir", str(build), "-C", "Release", "-j", "1",
                                 "--no-tests=error", "--output-on-failure",
-                                "--output-log", str(output / "ctest.log")], timeout=300)
+                                "--output-log", str(output / "ctest.log")], env=env,
+                               timeout=300 if os.name == "nt" else 900)
         (output / "basic-tests.json").write_text(
             json.dumps({"exit_code": basic.returncode}, indent=2), encoding="utf-8")
         if basic.returncode:
@@ -271,35 +298,42 @@ def main():
     if args.asio_pooled_handler:
         command.append("--asio-pooled-handler")
     artifacts = {}
-    for name in ("SimTransfer.exe", "SimTransferCli.exe", driver.name):
-        with (build / name).open("rb") as stream:
-            artifacts[name] = hashlib.file_digest(stream, "sha256").hexdigest()
+    for binary in (built_executable(build, "SimTransfer"), built_executable(build, "SimTransferCli"), driver):
+        with binary.open("rb") as stream:
+            artifacts[binary.name] = hashlib.file_digest(stream, "sha256").hexdigest()
     manifest = {
         "started_utc": datetime.now(timezone.utc).isoformat(), "seconds": args.seconds,
         "endpoint": "127.0.0.1", "port": port, "sha256": artifacts, "command": command,
         "visible": args.visible, "fragment_trace": args.fragment_trace,
+        "system": platform.system(), "architecture": platform.machine(),
+        "virtual_display": bool(display_command),
         "asio_pooled_handler": args.asio_pooled_handler,
         "ndi_handoff_guard_us": args.ndi_handoff_guard_us,
         "measurement_mode": "fragment_trace_diagnostic" if args.fragment_trace else "untraced",
     }
     (output / "run.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(f"IPv4 UDP loopback for {args.seconds} seconds. Results: {output}", flush=True)
-    startup = subprocess.STARTUPINFO()
-    if not args.visible:
+    startup = subprocess.STARTUPINFO() if os.name == "nt" else None
+    if os.name == "nt" and not args.visible:
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = subprocess.SW_HIDE
     started = time.monotonic()
+    # No other child runs during this interval. A virtual display has a separate X server.
+    child_times = os.times() if os.name == "posix" and not display_command else None
     with (output / "driver.log").open("wb") as log:
-        with subprocess.Popen(command, cwd=build, stdout=log, stderr=subprocess.STDOUT,
-                              startupinfo=startup,
-                              env={**os.environ, "QT_QPA_PLATFORM": "windows"}) as process:
+        with subprocess.Popen(display_command + command, cwd=build, stdout=log, stderr=subprocess.STDOUT,
+                              startupinfo=startup, env=env, start_new_session=bool(display_command)) as process:
             deadline = started + args.seconds + 60
             timed_out = False
             while process.poll() is None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     timed_out = True
-                    process.kill()
+                    if display_command:
+                        import signal
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
                     process.wait()
                     break
                 try:
@@ -310,6 +344,10 @@ def main():
                           f"process {process.pid}; awaiting final report", flush=True)
             exit_code = process.returncode
             driver_cpu_seconds = cpu_seconds(process)
+            if child_times is not None:
+                after = os.times()
+                driver_cpu_seconds = round(after.children_user - child_times.children_user +
+                                           after.children_system - child_times.children_system, 3)
     manifest.update({
         "finished_utc": datetime.now(timezone.utc).isoformat(),
         "wall_seconds": round(time.monotonic() - started, 3),

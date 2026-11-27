@@ -8,6 +8,7 @@
 #include "protocol/PacketCodec.h"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>

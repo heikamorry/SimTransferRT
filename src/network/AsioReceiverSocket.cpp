@@ -99,6 +99,12 @@ void AsioReceiverSocket::waitReadable(std::uint64_t deadlineUs) {
     if (::select(0, &ready, nullptr, nullptr, &timeout) == SOCKET_ERROR &&
         WSAGetLastError() != WSAEINTR)
         throw std::system_error(WSAGetLastError(), std::system_category(), "select");
+#elif defined(__linux__)
+    pollfd ready{fd, POLLIN, 0};
+    const timespec timeout{static_cast<time_t>(remaining / 1000000),
+                           static_cast<long>((remaining % 1000000) * 1000)};
+    if (::ppoll(&ready, 1, &timeout, nullptr) < 0 && errno != EINTR)
+        throw std::system_error(errno, std::generic_category(), "ppoll");
 #else
     pollfd ready{fd, POLLIN, 0};
     if (::poll(&ready, 1, static_cast<int>((remaining + 999) / 1000)) < 0 && errno != EINTR)
